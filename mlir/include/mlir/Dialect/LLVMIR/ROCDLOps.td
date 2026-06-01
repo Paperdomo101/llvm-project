@@ -135,6 +135,8 @@ def ROCDL_Dialect : Dialect {
     static constexpr unsigned kConstantMemoryAddressSpace = 4;
     /// The address space value that represents private memory.
     static constexpr unsigned kPrivateMemoryAddressSpace = 5;
+    /// The address space value that represents barriers.
+    static constexpr unsigned kBarrierAddressSpace = 15;
   }];
 
   let discardableAttrs = (ins
@@ -551,10 +553,10 @@ def ROCDL_WaveBarrierOp : ROCDL_ConcreteNonMemIntrOp<"wave.barrier", [], 0> {
 
 def ROCDLGlobalBuffer : LLVM_PointerInAddressSpace<1>;
 def ROCDLBufferLDS : LLVM_PointerInAddressSpace<3>;
-def ROCDLExecSync : LLVM_PointerInAddressSpace<15>;
+def ROCDLBarrier : LLVM_PointerInAddressSpace<15>;
 
 def ROCDL_BarrierInitOp : ROCDL_IntrOp<"s.barrier.init", [], [], [], 0, 0, 0, 0, [1], ["memberCnt"]>,
-  Arguments<(ins Arg<ROCDLExecSync, "", []>:$ptr, I32Attr:$memberCnt)> {
+  Arguments<(ins Arg<ROCDLBarrier, "", []>:$ptr, I32Attr:$memberCnt)> {
   let description = [{
     Available on gfx1250+.
 
@@ -584,7 +586,7 @@ def ROCDL_BarrierSignalOp : ROCDL_ConcreteNonMemIntrOp<"s.barrier.signal", [], 0
 }
 
 def ROCDL_BarrierSignalVarOp : ROCDL_IntrOp<"s.barrier.signal.var", [], [], [], 0, 0, 0, 0, [1], ["memberCnt"]>,
-  Arguments<(ins Arg<ROCDLExecSync, "", []>:$ptr, I32Attr:$memberCnt)> {
+  Arguments<(ins Arg<ROCDLBarrier, "", []>:$ptr, I32Attr:$memberCnt)> {
   let description = [{
     Available on gfx1250+.
 
@@ -601,7 +603,7 @@ def ROCDL_BarrierSignalVarOp : ROCDL_IntrOp<"s.barrier.signal.var", [], [], [], 
 }
 
 def ROCDL_BarrierJoinOp : ROCDL_IntrOp<"s.barrier.join", [], [], [], 0>,
-  Arguments<(ins Arg<ROCDLExecSync, "", []>:$ptr)> {
+  Arguments<(ins Arg<ROCDLBarrier, "", []>:$ptr)> {
   let description = [{
     Available on gfx1250+.
 
@@ -676,7 +678,7 @@ def ROCDL_GetBarrierStateOp : ROCDL_ConcreteNonMemIntrOp<"s.get.barrier.state", 
 }
 
 def ROCDL_GetNamedBarrierStateOp : ROCDL_ConcreteNonMemIntrOp<"s.get.named.barrier.state", [], 1, [], []>,
-  Arguments<(ins Arg<ROCDLExecSync, "", []>:$ptr)> {
+  Arguments<(ins Arg<ROCDLBarrier, "", []>:$ptr)> {
   let description = [{
     Available on gfx1250+.
 
@@ -691,7 +693,7 @@ def ROCDL_GetNamedBarrierStateOp : ROCDL_ConcreteNonMemIntrOp<"s.get.named.barri
 }
 
 def ROCDL_WakeupBarrierOp : ROCDL_ConcreteNonMemIntrOp<"s.wakeup.barrier", [], 0, [], []>,
-  Arguments<(ins Arg<ROCDLExecSync, "", []>:$ptr)> {
+  Arguments<(ins Arg<ROCDLBarrier, "", []>:$ptr)> {
   let description = [{
     Wakes up waves associated with a given named barrier. Note, This op does not release waves waiting
     at the barrier. It just signal other waves in the same work-group waiting on the indicated named barrier
