@@ -1934,6 +1934,86 @@ Parser::ParsePostfixExpressionSuffix(ExprResult LHS) {
 
       break;
     }
+    case tok::coloncolon: {
+        // if (!getLangOpts().C4)
+        //         break;
+
+        Expr *Receiver = LHS.get();
+
+        ConsumeToken(); // ::
+
+        if (Tok.isNot(tok::identifier))
+            return ExprError();
+
+        IdentifierInfo &II = *Tok.getIdentifierInfo();
+        SourceLocation ILoc = ConsumeToken();
+
+        UnqualifiedId Name;
+        CXXScopeSpec ScopeSpec;
+        SourceLocation TemplateKWLoc;
+
+        Name.setIdentifier(&II, ILoc);
+
+        ExprResult Callee =
+            Actions.ActOnIdExpression(
+                getCurScope(),
+                ScopeSpec,
+                TemplateKWLoc,
+                Name,
+                true,
+                false,
+                nullptr,
+                false);
+
+        if (Callee.isInvalid()) {
+            LHS = ExprError();
+            break;
+        }
+
+        if (Tok.isNot(tok::l_paren)) {
+            Diag(Tok, diag::err_expected) << tok::l_paren;
+            LHS = ExprError();
+            break;
+        }
+
+        BalancedDelimiterTracker PT(*this, tok::l_paren);
+        PT.consumeOpen();
+
+        ExprVector ArgExprs;
+
+        bool ExpressionListIsInvalid = false;
+
+        if (Tok.isNot(tok::r_paren))
+            ExpressionListIsInvalid = ParseExpressionList(ArgExprs);
+
+        if (ExpressionListIsInvalid) {
+            LHS = ExprError();
+            SkipUntil(tok::r_paren, StopAtSemi);
+            break;
+        }
+
+        if (Tok.isNot(tok::r_paren)) {
+            PT.consumeClose();
+            LHS = ExprError();
+            break;
+        }
+
+        SourceLocation RParLoc = Tok.getLocation();
+
+        ArgExprs.insert(ArgExprs.begin(), Receiver);
+
+        LHS = Actions.ActOnCallExpr(
+            getCurScope(),
+            Callee.get(),
+            ILoc,
+            ArgExprs,
+            RParLoc,
+            nullptr);
+
+        PT.consumeClose();
+
+        break;
+    }
     case tok::arrow:
     case tok::period: {
       // postfix-expression: p-e '->' template[opt] id-expression
