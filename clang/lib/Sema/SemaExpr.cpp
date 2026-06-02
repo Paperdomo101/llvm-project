@@ -7576,8 +7576,8 @@ Sema::ActOnInitList(SourceLocation LBraceLoc, MultiExprArg InitArgList,
       if (FirstDesignator.isInvalid())
         FirstDesignator = DIE->getBeginLoc();
 
-      if (!getLangOpts().CPlusPlus)
-        break;
+      // if (!getLangOpts().CPlusPlus)
+      //   break;
 
       if (!DiagnosedNestedDesignator && DIE->size() > 1) {
         DiagnosedNestedDesignator = true;

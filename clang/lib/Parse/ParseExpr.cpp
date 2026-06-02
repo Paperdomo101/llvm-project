@@ -3333,11 +3333,14 @@ bool Parser::ParseExpressionList(SmallVectorImpl<Expr *> &Exprs,
       ExpressionStarts();
 
     ExprResult Expr;
-    if (getLangOpts().CPlusPlus11 && Tok.is(tok::l_brace)) {
-      Diag(Tok, diag::warn_cxx98_compat_generalized_initializer_lists);
+    if ((getLangOpts().CPlusPlus11 || !getLangOpts().CPlusPlus) && Tok.is(tok::l_brace)) {
+      if (getLangOpts().CPlusPlus11) {
+        Diag(Tok, diag::warn_cxx98_compat_generalized_initializer_lists);
+      }
       Expr = ParseBraceInitializer();
     } else
       Expr = ParseAssignmentExpression();
+
 
     if (Tok.is(tok::ellipsis))
       Expr = Actions.ActOnPackExpansion(Expr.get(), ConsumeToken());
