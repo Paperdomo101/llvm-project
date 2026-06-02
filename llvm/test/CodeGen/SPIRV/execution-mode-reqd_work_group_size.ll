@@ -15,21 +15,21 @@
 ; CHECK-DAG: OpExecutionMode %[[#ENTRY2]] LocalSize 2 3 1
 ; CHECK-DAG: OpExecutionMode %[[#ENTRY3]] LocalSize 3 1 1
 
-define spir_kernel void @test1() !reqd_work_group_size !1 {
+define spir_kernel void @test1() "amdgpu-flat-work-group-size"="6,6" !reqd_work_group_size !1 {
 entry:
   ret void
 }
 
-define spir_kernel void @test2() !reqd_work_group_size !2 {
+define spir_kernel void @test2() "amdgpu-flat-work-group-size"="6,6" !reqd_work_group_size !2 {
 entry:
   ret void
 }
 
-define spir_kernel void @test3() !reqd_work_group_size !3 {
+define spir_kernel void @test3() "amdgpu-flat-work-group-size"="3,3" !reqd_work_group_size !3 {
 entry:
   ret void
 }
 
 !1 = !{i32 1, i32 2, i32 3}
-!2 = !{i32 2, i32 3}
-!3 = !{i32 3}
+!2 = !{i32 2, i32 3, i32 1}
+!3 = !{i32 3, i32 1, i32 1}
