@@ -25,12 +25,18 @@ float *clamp(float *f, min, max)
 
 int main( int argc, char **argv )
 {
-    a := 20;
+    a := 20ul;
     b := "hi!\n";
 
     "%d\n"::printf( argc );
 
     "%d\n"::printf( -2::add(4) );
+
+    if !(a == 10)
+        "wow!\n"::printf()
+    else {
+        "oof!\n"::printf()
+    }
 
     pos := (Vector2){0, 0};
     &pos::Vector2_add( {40, 50} ); // <-- type inferred
@@ -42,7 +48,10 @@ int main( int argc, char **argv )
     FLAG_WINDOW_RESIZABLE::SetConfigFlags();
     InitWindow( 800, 450, "Hello, raylib!" );
 
-    Texture tex_test = LoadTexture("test.png");
+    tex_test := LoadTexture( "test.png" );
+
+    if !(tex_test::IsTextureValid())
+        EXIT_FAILURE::exit()
 
     GetCurrentMonitor()::GetMonitorRefreshRate()::SetTargetFPS();
 

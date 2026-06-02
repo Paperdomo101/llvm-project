@@ -1488,7 +1488,9 @@ StmtResult Parser::ParseIfStatement(SourceLocation *TrailingElseLoc) {
       ConsumeToken();
     }
   } else {
-    if (Tok.is(tok::exclaim)) {
+    // 💡 FIX: Only treat '!' as a special keyword parser hook if it is
+    // directly followed by 'consteval' (C++20 if !consteval syntax)
+    if (Tok.is(tok::exclaim) && GetLookAheadToken(1).is(tok::kw_consteval)) {
       NotLocation = ConsumeToken();
     }
 
@@ -1504,7 +1506,12 @@ StmtResult Parser::ParseIfStatement(SourceLocation *TrailingElseLoc) {
       return StmtError();
     }
   }
-  if (!IsConsteval && (NotLocation.isValid() || Tok.isNot(tok::l_paren))) {
+
+  // 💡 PATCH: Detect if the condition starts with '(' or '!('
+  bool HasParens = !IsConsteval && (Tok.is(tok::l_paren) ||
+                   (Tok.is(tok::exclaim) && GetLookAheadToken(1).is(tok::l_paren)));
+
+  if (!IsConsteval && !HasParens && NotLocation.isValid()) {
     Diag(Tok, diag::err_expected_lparen_after) << "if";
     SkipUntil(tok::semi);
     return StmtError();
@@ -1512,39 +1519,51 @@ StmtResult Parser::ParseIfStatement(SourceLocation *TrailingElseLoc) {
 
   bool C99orCXX = getLangOpts().C99 || getLangOpts().CPlusPlus;
 
-  // C99 6.8.4p3 - In C99, the if statement is a block.  This is not
-  // the case for C90.
-  //
-  // C++ 6.4p3:
-  // A name introduced by a declaration in a condition is in scope from its
-  // point of declaration until the end of the substatements controlled by the
-  // condition.
-  // C++ 3.3.2p4:
-  // Names declared in the for-init-statement, and in the condition of if,
-  // while, for, and switch statements are local to the if, while, for, or
-  // switch statement (including the controlled statement).
-  //
   ParseScope IfScope(this, Scope::DeclScope | Scope::ControlScope, C99orCXX);
 
-  // Parse the condition.
   StmtResult InitStmt;
   Sema::ConditionResult Cond;
   SourceLocation LParen;
   SourceLocation RParen;
   std::optional<bool> ConstexprCondition;
-  if (!IsConsteval) {
 
-    if (ParseParenExprOrCondition(&InitStmt, Cond, IfLoc,
-                                  IsConstexpr ? Sema::ConditionKind::ConstexprIf
-                                              : Sema::ConditionKind::Boolean,
-                                  LParen, RParen))
-      return StmtError();
+  if (!IsConsteval) {
+    // 💡 PATCH: Use ParseParenExprOrCondition only if the token is LITERALLY a paren.
+    // If it's a '!', we treat it as an unparenthesized outer expression to parse it correctly.
+    if (HasParens && Tok.is(tok::l_paren)) {
+      if (ParseParenExprOrCondition(&InitStmt, Cond, IfLoc,
+                                    IsConstexpr ? Sema::ConditionKind::ConstexprIf
+                                                : Sema::ConditionKind::Boolean,
+                                    LParen, RParen))
+        return StmtError();
+    } else {
+      // Handles unparenthesized code AND '!(expr)' styles cleanly
+      ExprResult CondExpr = ParseExpression();
+      if (CondExpr.isInvalid()) {
+        SkipUntil(tok::l_brace, StopAtSemi);
+        return StmtError();
+      }
+
+      Cond = Actions.ActOnCondition(getCurScope(), IfLoc, CondExpr.get(),
+                                    IsConstexpr ? Sema::ConditionKind::ConstexprIf
+                                                : Sema::ConditionKind::Boolean);
+      if (Cond.isInvalid())
+        return StmtError();
+    }
 
     if (IsConstexpr)
       ConstexprCondition = Cond.getKnownValue();
   }
 
   bool IsBracedThen = Tok.is(tok::l_brace);
+
+  // 💡 PATCH: Enforce braces ONLY if the expression was truly unparenthesized
+  if (!HasParens && !IsBracedThen) {
+    Diag(Tok, diag::err_expected) << tok::l_brace;
+    SkipUntil(tok::semi);
+    return StmtError();
+  }
+
 
   // C99 6.8.4p3 - In C99, the body of the if statement is a scope, even if
   // there is no compound stmt.  C90 does not have this clause.  We only do this
