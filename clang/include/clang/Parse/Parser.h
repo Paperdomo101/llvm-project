@@ -369,6 +369,10 @@ public:
     return true;
   }
 
+  ExprResult ParseMethodDispatch(
+      ExprResult Receiver,
+      Token OpToken);
+
   /// ConsumeAnyToken - Dispatch to the right Consume* method based on the
   /// current token type.  This should only be used in cases where the type of
   /// the token really isn't known, e.g. in error recovery.

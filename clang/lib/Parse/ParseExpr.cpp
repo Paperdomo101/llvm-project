@@ -333,6 +333,22 @@ Parser::ParseRHSOfBinaryExpression(ExprResult LHS, prec::Level MinPrec) {
     Token OpToken = Tok;
     ConsumeToken();
 
+
+    if (OpToken.is(tok::coloncolon)) {
+        LHS = ParseMethodDispatch(LHS, OpToken);
+
+        if (LHS.isInvalid())
+            return ExprError();
+
+        NextTokPrec =
+            getBinOpPrecedence(
+                Tok.getKind(),
+                GreaterThanIsOperator,
+                getLangOpts().CPlusPlus11);
+
+        continue;
+    }
+
     // The reflection operator is not valid here (i.e., in the place of the
     // operator token in a binary expression), so if reflection and blocks are
     // enabled, we split caretcaret into two carets: the first being the binary
@@ -542,6 +558,7 @@ Parser::ParseRHSOfBinaryExpression(ExprResult LHS, prec::Level MinPrec) {
 
     if (!LHS.isInvalid()) {
       // Combine the LHS and RHS into the LHS (e.g. build AST).
+
       if (RHS.isInvalid()) {
         LHS = Actions.CreateRecoveryExpr(LHS.get()->getBeginLoc(),
                                          PrevTokLocation,
@@ -585,6 +602,81 @@ Parser::ParseRHSOfBinaryExpression(ExprResult LHS, prec::Level MinPrec) {
     }
   }
 }
+
+ExprResult Parser::ParseMethodDispatch(
+    ExprResult Receiver,
+    Token OpToken)
+{
+    // if (!getLangOpts().C4)
+    //         break;
+
+    if (Tok.isNot(tok::identifier))
+        return ExprError();
+
+    IdentifierInfo &II = *Tok.getIdentifierInfo();
+    SourceLocation ILoc = ConsumeToken();
+
+    UnqualifiedId Name;
+    CXXScopeSpec ScopeSpec;
+    SourceLocation TemplateKWLoc;
+
+    Name.setIdentifier(&II, ILoc);
+
+    ExprResult Callee =
+        Actions.ActOnIdExpression(
+            getCurScope(),
+            ScopeSpec,
+            TemplateKWLoc,
+            Name,
+            true,
+            false,
+            nullptr,
+            false);
+
+    if (Callee.isInvalid())
+        return ExprError();
+
+    if (Tok.isNot(tok::l_paren)) {
+        Diag(Tok, diag::err_expected) << tok::l_paren;
+        return ExprError();
+    }
+
+    BalancedDelimiterTracker PT(*this, tok::l_paren);
+    PT.consumeOpen();
+
+    ExprVector ArgExprs;
+
+    bool ExpressionListIsInvalid = false;
+
+    if (Tok.isNot(tok::r_paren))
+        ExpressionListIsInvalid = ParseExpressionList(ArgExprs);
+
+    if (ExpressionListIsInvalid) {
+        SkipUntil(tok::r_paren, StopAtSemi);
+        return ExprError();
+    }
+
+    if (Tok.isNot(tok::r_paren))
+        return ExprError();
+
+    SourceLocation RParLoc = Tok.getLocation();
+
+    ArgExprs.insert(ArgExprs.begin(), Receiver.get());
+
+    ExprResult Result =
+        Actions.ActOnCallExpr(
+            getCurScope(),
+            Callee.get(),
+            ILoc,
+            ArgExprs,
+            RParLoc,
+            nullptr);
+
+    PT.consumeClose();
+
+    return Result;
+}
+
 
 ExprResult
 Parser::ParseCastExpression(CastParseKind ParseKind, bool isAddressOfOperand,
@@ -1933,86 +2025,6 @@ Parser::ParsePostfixExpressionSuffix(ExprResult LHS) {
       }
 
       break;
-    }
-    case tok::coloncolon: {
-        // if (!getLangOpts().C4)
-        //         break;
-
-        Expr *Receiver = LHS.get();
-
-        ConsumeToken(); // ::
-
-        if (Tok.isNot(tok::identifier))
-            return ExprError();
-
-        IdentifierInfo &II = *Tok.getIdentifierInfo();
-        SourceLocation ILoc = ConsumeToken();
-
-        UnqualifiedId Name;
-        CXXScopeSpec ScopeSpec;
-        SourceLocation TemplateKWLoc;
-
-        Name.setIdentifier(&II, ILoc);
-
-        ExprResult Callee =
-            Actions.ActOnIdExpression(
-                getCurScope(),
-                ScopeSpec,
-                TemplateKWLoc,
-                Name,
-                true,
-                false,
-                nullptr,
-                false);
-
-        if (Callee.isInvalid()) {
-            LHS = ExprError();
-            break;
-        }
-
-        if (Tok.isNot(tok::l_paren)) {
-            Diag(Tok, diag::err_expected) << tok::l_paren;
-            LHS = ExprError();
-            break;
-        }
-
-        BalancedDelimiterTracker PT(*this, tok::l_paren);
-        PT.consumeOpen();
-
-        ExprVector ArgExprs;
-
-        bool ExpressionListIsInvalid = false;
-
-        if (Tok.isNot(tok::r_paren))
-            ExpressionListIsInvalid = ParseExpressionList(ArgExprs);
-
-        if (ExpressionListIsInvalid) {
-            LHS = ExprError();
-            SkipUntil(tok::r_paren, StopAtSemi);
-            break;
-        }
-
-        if (Tok.isNot(tok::r_paren)) {
-            PT.consumeClose();
-            LHS = ExprError();
-            break;
-        }
-
-        SourceLocation RParLoc = Tok.getLocation();
-
-        ArgExprs.insert(ArgExprs.begin(), Receiver);
-
-        LHS = Actions.ActOnCallExpr(
-            getCurScope(),
-            Callee.get(),
-            ILoc,
-            ArgExprs,
-            RParLoc,
-            nullptr);
-
-        PT.consumeClose();
-
-        break;
     }
     case tok::arrow:
     case tok::period: {

@@ -3904,6 +3904,7 @@ public:
 
   void ProcessPragmaExport(DeclaratorDecl *newDecl);
 
+
   Decl *ActOnDeclarator(Scope *S, Declarator &D);
 
   NamedDecl *HandleDeclarator(Scope *S, Declarator &D,
@@ -15750,6 +15751,13 @@ public:
   void addDeclWithEffects(const Decl *D, const FunctionEffectsRef &FX);
 
   void performFunctionEffectAnalysis(TranslationUnitDecl *TU);
+
+
+  Decl *ActOnInferredVarDecl(
+      Scope *S,
+      IdentifierInfo *II,
+      SourceLocation NameLoc,
+      Expr *Init);
 
   ///@}
 };

@@ -21331,3 +21331,29 @@ bool Sema::isRedefinitionAllowedFor(NamedDecl *D, NamedDecl **Suggested,
   // D is defined in the global module of other module units.
   return D->isInAnotherModuleUnit() || !Visible;
 }
+
+Decl *Sema::ActOnInferredVarDecl(
+    Scope *S,
+    IdentifierInfo *II,
+    SourceLocation NameLoc,
+    Expr *Init)
+{
+    QualType T = Init->getType();
+
+    VarDecl *VD =
+        VarDecl::Create(
+            Context,
+            CurContext,
+            NameLoc,
+            NameLoc,
+            &Context.Idents.get(II->getName()),
+            T,
+            nullptr,
+            SC_None);
+
+    VD->setInit(Init);
+
+    PushOnScopeChains(VD, S);
+
+    return VD;
+}

@@ -1,10 +1,26 @@
 #define NOB_IMPLEMENTATION
 #include <nob.h>
 
-static char *run_and_capture(const char *cmd){    FILE *pipe = popen(cmd, "r");    if (!pipe) return NULL;
-    char *buf = NULL;    size_t len = 0;    char tmp[256];
-    while (fgets(tmp, sizeof tmp, pipe)) {        size_t add = strlen(tmp);        char *newbuf = realloc(buf, len + add + 1);        if (!newbuf) { free(buf); pclose(pipe); return NULL; }        buf = newbuf;        memcpy(buf + len, tmp, add);        len += add;        buf[len] = '\0';    }
-    pclose(pipe);    /* strip trailing newline if there is one */    if (len && buf[len - 1] == '\n')        buf[len - 1] = '\0';    return buf;}
+static char *run_and_capture(const char *cmd){
+    FILE *pipe = popen(cmd, "r");
+    if (!pipe) return NULL;
+    char *buf = NULL;
+    size_t len = 0;
+    char tmp[256];
+    while (fgets(tmp, sizeof tmp, pipe)) {
+        size_t add = strlen(tmp);
+        char *newbuf = realloc(buf, len + add + 1);
+        if (!newbuf) { free(buf); pclose(pipe); return NULL; }
+        buf = newbuf;
+        memcpy(buf + len, tmp, add);
+        len += add;
+        buf[len] = '\0';
+    }
+    pclose(pipe);    /* strip trailing newline if there is one */
+    if (len && buf[len - 1] == '\n')
+        buf[len - 1] = '\0';
+    return buf;
+}
 
 int main( int argc, char **argv )
 {
@@ -12,7 +28,13 @@ int main( int argc, char **argv )
 
     Cmd cmd = {0};
 
-    char *sdk_path = run_and_capture("xcrun --show-sdk-path");    if (!sdk_path) {        fprintf(stderr, "Failed to obtain SDK path\n");        return 1;    }
+    char *sdk_path = run_and_capture("xcrun --show-sdk-path");
+    if (!sdk_path) {
+        fprintf(stderr, "Failed to obtain SDK path\n");
+        return 1;
+    }
+
+    // -isysroot $(xcrun --show-sdk-path)
 
     cmd_append( &cmd, "../build/bin/clang",
         "-o", "test",

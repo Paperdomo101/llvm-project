@@ -7751,6 +7751,56 @@ void Parser::ParseParameterDeclarationClause(
       // added to the current scope.
       Decl *Param =
           Actions.ActOnParamDeclarator(getCurScope(), ParmDeclarator, ThisLoc);
+
+        while (ParmII && Tok.is(tok::comma)) {
+
+            if (NextToken().isNot(tok::identifier))
+            break;
+
+            if (NextToken().getIdentifierInfo() &&
+                NextToken().getIdentifierInfo()->isKeyword(getLangOpts()))
+            break;
+
+            // --- FIX: Evaluate the token AFTER the comma ---
+            bool NextIsDeclSpec = false;
+            {
+            // Create a tentative action to safely look past the comma
+            TentativeParsingAction PA(*this);
+
+            // Consume the comma token to move Tok to the next identifier
+            ConsumeToken();
+
+            // Now Tok points to the upcoming token (e.g. 'int' or 'size_t')
+            if (isDeclarationSpecifier(/*DisambiguatingWithExpression=*/ImplicitTypenameContext::No,
+                                        /*ImplicitTypename=*/false)) {
+                NextIsDeclSpec = true;
+            }
+
+            // Revert the parser state so Tok goes back to pointing at the comma
+            PA.Revert();
+            }
+
+            // If the token following the comma starts a new type declaration, stop chaining!
+            if (NextIsDeclSpec)
+            break;
+            // --- END OF FIX ---
+
+            ParamInfo.push_back(DeclaratorChunk::ParamInfo(ParmII,
+                                                        ParmDeclarator.getIdentifierLoc(),
+                                                        Param,
+                                                        std::move(DefArgToks)));
+
+            ConsumeToken(); // Safely consume the comma for real now
+
+            Declarator NewParmDeclarator(DS, ArgDeclAttrs, DeclaratorContext::Prototype);
+            ParseDeclarator(NewParmDeclarator);
+
+            ParmII = NewParmDeclarator.getIdentifier();
+            Param = Actions.ActOnParamDeclarator(getCurScope(), NewParmDeclarator, SourceLocation());
+            DefArgToks = nullptr;
+        }
+
+
       // Parse the default argument, if any. We parse the default
       // arguments in all dialects; the semantic analysis in
       // ActOnParamDefaultArgument will reject the default argument in

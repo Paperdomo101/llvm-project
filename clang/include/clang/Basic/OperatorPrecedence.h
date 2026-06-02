@@ -39,7 +39,8 @@ namespace prec {
     Shift           = 12,   // <<, >>
     Additive        = 13,   // -, +
     Multiplicative  = 14,   // *, /, %
-    PointerToMember = 15    // .*, ->*
+    MethodDispatch  = 15,   // ::
+    PointerToMember = 16    // .*, ->*
   };
 }
 

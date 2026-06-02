@@ -170,6 +170,10 @@ Retry:
       // identifier ':' statement
       return ParseLabeledStatement(CXX11Attrs, StmtCtx);
     }
+/*
+    if (Next.is(tok::colonequal))
+      return ParseInferredDeclaration();
+*/
 
     // Look up the identifier, and typo-correct it to a keyword if it's not
     // found.
