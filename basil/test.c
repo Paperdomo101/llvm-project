@@ -5,12 +5,11 @@
 
 #define IsHeld IsKeyDown
 
-int add( int a, b )
-{
+add (int a, b) int {
     return a + b;
 }
 
-Vector2 *Vector2_add(Vector2 *a, b)
+Vector2 *Vector2_add (Vector2 *a, b)
 {
     a->x += b.x;
     a->y += b.y;
@@ -23,8 +22,7 @@ float *clamp(float *f, min, max)
     return f;
 }
 
-int main( int argc, char **argv )
-{
+main (int argc, char **argv) int {
     a := 20ul;
     b := "hi!\n";
 

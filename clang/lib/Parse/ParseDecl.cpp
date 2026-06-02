@@ -3426,6 +3426,49 @@ void Parser::ParseDeclarationSpecifiers(
 
     SourceLocation Loc = Tok.getLocation();
 
+    // 💡 PATCH: Implicit Void Return Types for Functions
+    // Safeguarded against system headers, struct fields, function pointers, AND right-side lookups
+    if (!DS.hasTypeSpecifier() &&
+        DSContext != DeclSpecContext::DSC_normal && // 👈 FIX: Prevent intercepting your right-side lookups
+        Tok.is(tok::identifier) &&
+        GetLookAheadToken(1).is(tok::l_paren)) {
+
+
+      // Safety 1: Never apply this feature inside system header files
+      bool IsInSystemHeader = Actions.getASTContext().getSourceManager().isInSystemHeader(Loc);
+
+      // Safety 2: Check the declaration context to ensure we aren't inside a struct field layout
+      bool IsStructOrUnionContext = (DSContext == DeclSpecContext::DSC_class ||
+                                     DSContext == DeclSpecContext::DSC_trailing);
+
+      // Safety 3: Scan ahead to confirm this is a real function definition or top-level decl,
+      // rather than a nested function pointer declaration (which uses (*ptr)(args) layout)
+      bool IsFunctionPointerOrCast = false;
+      unsigned LookAheadIndex = 2;
+      while (true) {
+        const Token &AheadTok = GetLookAheadToken(LookAheadIndex++);
+        if (AheadTok.is(tok::r_paren)) {
+          // If the parameters end and we see an opening parenthesis next,
+          // it's a function pointer layout like: (*identifier)(args), skip it!
+          if (GetLookAheadToken(LookAheadIndex).is(tok::l_paren)) {
+            IsFunctionPointerOrCast = true;
+          }
+          break;
+        }
+        // Safety break if we overrun a statement boundary
+        if (AheadTok.isOneOf(tok::semi, tok::l_brace, tok::eof)) break;
+      }
+
+      if (!IsInSystemHeader && !IsStructOrUnionContext && !IsFunctionPointerOrCast) {
+        // Programmatically inject 'void' as the default return type specifier
+        isInvalid = DS.SetTypeSpecType(DeclSpec::TST_void, Loc, PrevSpec, DiagID, Policy);
+        if (isInvalid) return;
+
+        break;
+      }
+    }
+
+
     // Helper for image types in OpenCL.
     auto handleOpenCLImageKW = [&] (StringRef Ext, TypeSpecifierType ImageTypeSpec) {
       // Check if the image type is supported and otherwise turn the keyword into an identifier
@@ -7482,6 +7525,35 @@ void Parser::ParseFunctionDeclarator(Declarator &D,
              D2->getLocation().getRawEncoding();
     });
   }
+
+
+
+// 💡 PATCH: Handle Trailing Return Type for C
+bool TypeWasOmittedOnLeft = (D.getDeclSpec().getSourceRange().getBegin() == D.getIdentifierLoc());
+
+if (!getLangOpts().CPlusPlus && TypeWasOmittedOnLeft &&
+    isDeclarationSpecifier(ImplicitTypenameContext::No)) {
+
+
+    // 1. Capture the active, mutable DeclSpec context from the declarator
+    DeclSpec &TargetDS = D.getMutableDeclSpec();
+
+    // 2. Clear out the initial temporary 'void' type specifier state
+    // This safely resets the internal tracker fields so ParseDeclarationSpecifiers
+    // accepts a fresh type on the right without triggering an internal redefinition error.
+    TargetDS.ClearTypeSpecType();
+
+    // 3. Setup empty template state configurations matching the standard function signature
+    ParsedTemplateInfo EmptyTemplateInfo;
+
+    // 4. Invoke the parser directly onto the TargetDS memory footprint.
+    // This natively parses the trailing token (e.g. 'int' or a struct) into the right place!
+    ParseDeclarationSpecifiers(TargetDS, EmptyTemplateInfo, AS_none,
+                                DeclSpecContext::DSC_normal);
+
+
+}
+
 
   // Remember that we parsed a function type, and remember the attributes.
   D.AddTypeInfo(DeclaratorChunk::getFunction(

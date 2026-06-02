@@ -38,6 +38,7 @@ int main( int argc, char **argv )
 
     cmd_append( &cmd, "../build/bin/clang",
         "-o", "test",
+        "-O2",
         "test.c",
         "-lraylib",
         "-I.",
