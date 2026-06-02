@@ -53,12 +53,42 @@ StmtResult Parser::ParseStatement(SourceLocation *TrailingElseLoc,
   return Res;
 }
 
+
+StmtResult Parser::ParseTypeInferredAssignment() {
+  assert(Tok.is(tok::identifier) && NextToken().is(tok::colonequal));
+
+  // 1. Capture the identifier token and its info
+  IdentifierInfo *Name = Tok.getIdentifierInfo();
+  SourceLocation NameLoc = ConsumeToken(); // Consumes the identifier
+
+  SourceLocation ColonEqualLoc = ConsumeToken(); // Consumes ':='
+
+  // 2. Parse the right hand side expression (e.g., "40")
+  ExprResult InitExpr = ParseAssignmentExpression();
+  if (InitExpr.isInvalid()) {
+    SkipUntil(tok::semi);
+    return StmtError();
+  }
+
+  // 3. Delegate AST building to Sema
+  return Actions.ActOnTypeInferredAssignment(getCurScope(), Name, NameLoc, InitExpr.get());
+}
+
+
 StmtResult Parser::ParseStatementOrDeclaration(StmtVector &Stmts,
                                                ParsedStmtContext StmtCtx,
                                                SourceLocation *TrailingElseLoc,
                                                LabelDecl *PrecedingLabel) {
 
   ParenBraceBracketBalancer BalancerRAIIObj(*this);
+
+  if (Tok.is(tok::identifier) && GetLookAheadToken(1).is(tok::colonequal)) {
+        StmtResult AssignmentRes = ParseTypeInferredAssignment();
+        if (AssignmentRes.isUsable()) {
+        Stmts.push_back(AssignmentRes.get());
+        }
+        return AssignmentRes;
+    }
 
   // Because we're parsing either a statement or a declaration, the order of
   // attribute parsing is important. [[]] attributes at the start of a
@@ -558,16 +588,42 @@ StmtResult Parser::ParseExprStatement(ParsedStmtContext StmtCtx) {
 
   Token *CurTok = nullptr;
 
-
   // If the semicolon is missing at the end of REPL input, we want to print
   // the result. Note we shouldn't eat the token since the callback needs it.
-  if (Tok.is(tok::annot_repl_input_end))
+  if (Tok.is(tok::annot_repl_input_end)) {
     CurTok = &Tok;
-  else
-    // Otherwise, eat the semicolon.
-    ExpectAndConsumeSemi(diag::err_expected_semi_after_expr);
+  } else {
+    // Look back at the token that physically terminated the expression
+    SourceLocation EndLoc = Expr.get()->getEndLoc();
+    tok::TokenKind FinalExprTok = tok::unknown;
+
+    if (EndLoc.isValid()) {
+      Token TheTrailingToken;
+      // Access the SourceManager via Actions.getASTContext()
+      SourceManager &SM = Actions.getASTContext().getSourceManager();
+      SourceLocation SpellingLoc = SM.getSpellingLoc(EndLoc);
+
+      // Use the Preprocessor to look up the raw token from the source file
+      if (!PP.getRawToken(SpellingLoc, TheTrailingToken, /*IgnoreEOD=*/true)) {
+        FinalExprTok = TheTrailingToken.getKind();
+      }
+    }
+
+    // Determine if the semicolon is legally optional
+    bool SemicolonIsOptional = (FinalExprTok == tok::r_brace ||
+                                FinalExprTok == tok::r_square ||
+                                FinalExprTok == tok::r_paren);
+
+    if (Tok.is(tok::semi)) {
+      ConsumeToken(); // Semicolon is present, safely eat it
+    } else if (!SemicolonIsOptional) {
+      // Semicolon is missing, and the expression did NOT end with }, ], or )
+      ExpectAndConsumeSemi(diag::err_expected_semi_after_expr);
+    }
+  }
 
   StmtResult R = handleExprStmt(Expr, StmtCtx);
+
   if (CurTok && !R.isInvalid())
     CurTok->setAnnotationValue(R.get());
 

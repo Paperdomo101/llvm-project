@@ -6043,6 +6043,8 @@ private:
 
   enum class ParsedStmtContext;
 
+  StmtResult ParseTypeInferredAssignment();
+
   StmtResult ParseObjCAtStatement(SourceLocation atLoc,
                                   ParsedStmtContext StmtCtx);
 

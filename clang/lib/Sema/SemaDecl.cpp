@@ -6981,6 +6981,43 @@ Sema::CheckTypedefForVariablyModifiedType(Scope *S, TypedefNameDecl *NewTD) {
   }
 }
 
+StmtResult Sema::ActOnTypeInferredAssignment(Scope *S, IdentifierInfo *Name,
+                                             SourceLocation NameLoc, Expr *InitExpr) {
+  if (!InitExpr) return StmtError();
+
+  // 1. Deduce the target type directly from the evaluated initializer expression
+  QualType InferredType = InitExpr->getType();
+
+  // Prevent invalid assignments from things like "void" returning functions
+  if (InferredType->isVoidType()) {
+    Diag(NameLoc, diag::err_typecheck_decl_incomplete_type) << InferredType;
+    return StmtError();
+  }
+
+  // 2. Resolve the active declaration context (where the variable is being defined)
+  DeclContext *DC = CurContext;
+
+  // 3. Create the VarDecl directly using the AST Context
+  VarDecl *NewVD = VarDecl::Create(
+      Context, DC, NameLoc, NameLoc, Name, InferredType,
+      Context.getTrivialTypeSourceInfo(InferredType, NameLoc), SC_None);
+
+  // Mark the variable as a local block auto variable
+  NewVD->setLocalExternDecl();
+
+  // 4. Register the variable into the active scope so future code can look it up
+  PushOnScopeChains(NewVD, S);
+
+  // 5. Attach the initializer expression to our fresh variable declaration
+  AddInitializerToDecl(NewVD, InitExpr, /*DirectInit=*/false);
+
+  // 6. Wrap the declaration in a standard C statement group wrapper
+  DeclGroupRef DG(NewVD);
+  return ActOnDeclStmt(ConvertDeclToDeclGroup(NewVD), NameLoc, InitExpr->getEndLoc());
+}
+
+
+
 NamedDecl*
 Sema::ActOnTypedefNameDecl(Scope *S, DeclContext *DC, TypedefNameDecl *NewTD,
                            LookupResult &Previous, bool &Redeclaration) {
@@ -21330,30 +21367,4 @@ bool Sema::isRedefinitionAllowedFor(NamedDecl *D, NamedDecl **Suggested,
   // The redefinition of D in the **current** TU is allowed if D is invisible or
   // D is defined in the global module of other module units.
   return D->isInAnotherModuleUnit() || !Visible;
-}
-
-Decl *Sema::ActOnInferredVarDecl(
-    Scope *S,
-    IdentifierInfo *II,
-    SourceLocation NameLoc,
-    Expr *Init)
-{
-    QualType T = Init->getType();
-
-    VarDecl *VD =
-        VarDecl::Create(
-            Context,
-            CurContext,
-            NameLoc,
-            NameLoc,
-            &Context.Idents.get(II->getName()),
-            T,
-            nullptr,
-            SC_None);
-
-    VD->setInit(Init);
-
-    PushOnScopeChains(VD, S);
-
-    return VD;
 }

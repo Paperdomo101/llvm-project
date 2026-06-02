@@ -3399,6 +3399,9 @@ void Parser::ParseDeclarationSpecifiers(
   ParsedAttributes attrs(AttrFactory);
   // We use Sema's policy to get bool macros right.
   PrintingPolicy Policy = Actions.getPrintingPolicy();
+
+
+
   while (true) {
     bool isInvalid = false;
     bool isStorageClass = false;
@@ -4845,6 +4848,7 @@ void Parser::ParseStructDeclaration(
 
     FirstDeclarator = false;
   }
+
 }
 
 // TODO: All callers of this function should be moved to
@@ -5043,7 +5047,7 @@ void Parser::ParseStructUnionBody(SourceLocation RecordLoc,
       continue;
 
     if (Tok.is(tok::r_brace)) {
-      ExpectAndConsume(tok::semi, diag::ext_expected_semi_decl_list);
+      // ExpectAndConsume(tok::semi, diag::ext_expected_semi_decl_list);
       break;
     }
 

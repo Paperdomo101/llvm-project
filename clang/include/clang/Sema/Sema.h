@@ -15753,11 +15753,8 @@ public:
   void performFunctionEffectAnalysis(TranslationUnitDecl *TU);
 
 
-  Decl *ActOnInferredVarDecl(
-      Scope *S,
-      IdentifierInfo *II,
-      SourceLocation NameLoc,
-      Expr *Init);
+  StmtResult ActOnTypeInferredAssignment(Scope *S, IdentifierInfo *Name,
+                                             SourceLocation NameLoc, Expr *InitExpr);
 
   ///@}
 };

@@ -1,6 +1,9 @@
 #define NOB_IMPLEMENTATION
 #include "nob.h"
 #include "raylib.h"
+#include "raymath.h"
+
+#define IsHeld IsKeyDown
 
 int add( int a, b )
 {
@@ -22,12 +25,17 @@ float *clamp(float *f, min, max)
 
 int main( int argc, char **argv )
 {
+    a := 20;
+    b := "hi!\n";
+
     "%d\n"::printf( argc );
 
     "%d\n"::printf( -2::add(4) );
 
-    Vector2 pos = {0, 0};
+    pos := (Vector2){0, 0};
     &pos::Vector2_add( {40, 50} ); // <-- type inferred
+
+    struct Point { int x; int y } p = { 2, 3 };
 
     "%g, %g\n"::printf(pos.x, pos.y);
 
@@ -49,16 +57,16 @@ int main( int argc, char **argv )
         if (scale < 1) scale = 1;
 
 
-        Vector2 input = {
-            KEY_RIGHT::IsKeyDown() - KEY_LEFT::IsKeyDown(),
-             KEY_DOWN::IsKeyDown() - KEY_UP::IsKeyDown(),
-        };
+        Vector2 positive = { KEY_RIGHT::IsHeld(), KEY_DOWN::IsHeld() };
+        Vector2 negative = { KEY_LEFT ::IsHeld(), KEY_UP  ::IsHeld() };
 
-        pos.x += input.x * delta_time * 150;
-        pos.y += input.y * delta_time * 150;
+        Vector2 input = positive::Vector2Subtract( negative );
+        Vector2 input_norm = input::Vector2Normalize();
 
-        &pos.x::clamp( 0, 400 * scale );
-        &pos.y::clamp( 0, 200 * scale );
+        Vector2 vel = input_norm::Vector2Scale( 150 * scale );
+
+        pos = pos::Vector2Add( vel::Vector2Scale(delta_time) )
+                 ::Vector2Clamp( {0, 0}, {400 * scale, 200 * scale} );
 
         BeginDrawing();
 
@@ -81,6 +89,8 @@ int main( int argc, char **argv )
 
         "This is so fucking cool holy"::DrawText( pos.x, pos.y, scale * 10, RED );
 
+
+        DrawLineEx( pos, pos::Vector2Add(vel), scale, YELLOW );
 
         DrawFPS(10, 10);
 
