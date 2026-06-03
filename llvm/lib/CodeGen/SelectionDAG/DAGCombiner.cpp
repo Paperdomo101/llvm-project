@@ -27606,8 +27606,7 @@ SDValue DAGCombiner::visitEXTRACT_SUBVECTOR(SDNode *N) {
           (InsIdx - ExtIdx) % NumInsElts == 0 &&
           hasOperation(ISD::INSERT_SUBVECTOR, NVT)) {
         SDValue NewExtract = DAG.getExtractSubvector(DL, NVT, Src, ExtIdx);
-        return DAG.getNode(ISD::INSERT_SUBVECTOR, DL, NVT, NewExtract, InsSub,
-                           DAG.getVectorIdxConstant(InsIdx - ExtIdx, DL));
+        return DAG.getInsertSubvector(DL, NewExtract, InsSub, InsIdx - ExtIdx);
       }
     }
   }
