@@ -122,14 +122,27 @@ bool OriginManager::hasOrigins(QualType QT) const {
   // stored lambda's origins.
   if (isStdCallableWrapperType(RD))
     return true;
-  // TODO: Limit to lambdas for now. This will be extended to user-defined
-  // structs with pointer-like fields.
-  if (!RD->isLambda())
+  // A lambda has origins when any capture has a tracked type; the lambda
+  // itself is tracked as a single origin.
+  if (RD->isLambda()) {
+    for (const auto *FD : RD->fields())
+      if (hasOrigins(FD->getType()))
+        return true;
+    return false;
+  }
+  // TODO: Unions are not tracked.
+  if (RD->isUnion())
     return false;
   for (const auto *FD : RD->fields())
-    if (hasOrigins(FD->getType()))
+    if (FD->getAccess() == AS_public && hasOrigins(FD->getType()))
       return true;
   return false;
+}
+
+bool OriginManager::isTrackedField(const CXXRecordDecl *RD,
+                                   const FieldDecl *FD) const {
+  return FD->getAccess() == AS_public && hasOrigins(FD->getType()) &&
+         isAccessedField(FD);
 }
 
 /// Determines if an expression has origins that need to be tracked.
@@ -208,9 +221,37 @@ void OriginManager::attachPointeeChild(OriginNode *Parent,
   Parent->setChildren({E, 1});
 }
 
+void OriginManager::attachChildren(OriginNode *Parent,
+                                   llvm::ArrayRef<OriginNode::Edge> Children) {
+  Parent->setChildren(Children.copy(Allocator));
+}
+
 template <typename T>
 OriginNode *OriginManager::buildNodeForType(QualType QT, const T *Node) {
-  assert(hasOrigins(QT) && "buildNodeForType called for non-pointer type");
+  llvm::SmallPtrSet<const Type *, 4> Visited;
+  return buildNodeForTypeImpl(QT, Node, Visited, 0);
+}
+
+template <typename T>
+OriginNode *
+OriginManager::buildNodeForTypeImpl(QualType QT, const T *Node,
+                                    llvm::SmallPtrSet<const Type *, 4> &Visited,
+                                    unsigned FieldDepth) {
+  assert(hasOrigins(QT) && "buildNodeForType called for type without origins");
+
+  const auto *RD = QT->getAsCXXRecordDecl();
+  const Type *Canonical = QT.getCanonicalType().getTypePtr();
+  // Cycle cut: only records enter Visited; re-entering one returns a
+  // leaf to stop descending further. Loans landing on the cut leaf are
+  // dropped (e.g., through `n->next->next`).
+  //
+  // Pointer/reference types stay transparent: including them in Visited
+  // would make the same record's shape depend on the entry path. E.g.,
+  // Node's Sub_next would have length 2 from a Node start but length 1
+  // from a Node* start, breaking flow's length assertion.
+  if (RD && !Visited.insert(Canonical).second)
+    return createNode(Node, QT);
+
   OriginNode *Head = createNode(Node, QT);
 
   if (QT->isPointerOrReferenceType()) {
@@ -218,8 +259,28 @@ OriginNode *OriginManager::buildNodeForType(QualType QT, const T *Node) {
     // We recurse if the pointee type is pointer-like, to build the next
     // level in the origin tree. E.g., for T*& / View&.
     if (hasOrigins(PointeeTy))
-      attachPointeeChild(Head, buildNodeForType(PointeeTy, Node));
+      attachPointeeChild(
+          Head, buildNodeForTypeImpl(PointeeTy, Node, Visited, FieldDepth));
+  } else if (RD) {
+    bool WithinFieldDepthLimit = !MaxFieldDepth || FieldDepth < *MaxFieldDepth;
+    bool shouldExpandFields =
+        !(isGslPointerType(QT) || isStdCallableWrapperType(RD) ||
+          LifetimeAnnotatedOriginTypes.contains(Canonical) || RD->isLambda()) &&
+        WithinFieldDepthLimit;
+    if (shouldExpandFields) {
+      SmallVector<OriginNode::Edge, 4> FieldChildren;
+      for (const FieldDecl *F : RD->fields())
+        if (isTrackedField(RD, F)) {
+          OriginNode *Sub =
+              buildNodeForTypeImpl(F->getType(), Node, Visited, FieldDepth + 1);
+          FieldChildren.push_back({F, Sub});
+        }
+      attachChildren(Head, FieldChildren);
+    }
   }
+
+  if (RD)
+    Visited.erase(Canonical);
   return Head;
 }
 
@@ -283,6 +344,30 @@ OriginNode *OriginManager::getOrCreateNode(const Expr *E) {
     }
     return ExprToNode[E] = Head;
   }
+
+  // For a MemberExpr whose base is not `this` (handled above), look up the
+  // field child in the base's per-instance origin tree. This makes loans
+  // flowing into one occurrence of `s.v` visible at later occurrences.
+  if (auto *ME = dyn_cast<MemberExpr>(E))
+    if (auto *FD = dyn_cast<FieldDecl>(ME->getMemberDecl()))
+      if (OriginNode *Base =
+              getOrCreateNode(ME->getBase()->IgnoreParenImpCasts()))
+        if (OriginNode *Sub = Base->getFieldChildInChain(FD)) {
+          // For non-reference fields (e.g., `View v;` in a record), the
+          // MemberExpr `s.v` is an lvalue (addressable) that can be
+          // borrowed, so we create an outer origin for the lvalue itself,
+          // with the pointee being the field's shared subtree. `&s.v` borrows
+          // the storage of the v-slot in s, not what v refers to.
+          if (doesDeclHaveStorage(FD)) {
+            OriginNode *Outer = createNode(E, QualType{});
+            attachPointeeChild(Outer, Sub);
+            return ExprToNode[E] = Outer;
+          }
+          // For reference-typed fields (e.g., `int& r;` in a record) which
+          // have no storage, the MemberExpr `s.r` directly reuses the
+          // field's subtree.
+          return ExprToNode[E] = Sub;
+        }
 
   // If E is an lvalue , it refers to storage. We model this storage as the
   // first level of origin list, as if it were a reference, because l-values are

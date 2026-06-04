@@ -221,9 +221,19 @@ private:
   OriginNode *createNode(const Expr *E, QualType QT);
 
   void attachPointeeChild(OriginNode *Parent, OriginNode *Pointee);
+  void attachChildren(OriginNode *Parent,
+                      llvm::ArrayRef<OriginNode::Edge> Children);
 
   template <typename T>
   OriginNode *buildNodeForType(QualType QT, const T *Node);
+  template <typename T>
+  OriginNode *buildNodeForTypeImpl(QualType QT, const T *Node,
+                                   llvm::SmallPtrSet<const Type *, 4> &Visited,
+                                   unsigned FieldDepth);
+
+  /// Whether a record field participates in origin tracking. Plain records
+  /// only track public fields; lambdas track all fields.
+  bool isTrackedField(const CXXRecordDecl *RD, const FieldDecl *FD) const;
 
   void initializeThisOrigins(const Decl *D);
 
@@ -252,6 +262,13 @@ private:
   /// Fields accessed in the function body (or constructor init lists).
   /// Fields outside this set are excluded from origin tracking.
   llvm::SmallPtrSet<const FieldDecl *, 8> AccessedFields;
+
+  /// Field-edge depth limit when building origin trees for record types:
+  ///   - `std::nullopt`: no limit (full field tree).
+  ///   - `0`: disable field tracking (records become single-origin).
+  ///   - `N > 0`: track up to N levels of field edges.
+  /// Pointee edges are not subject to this limit.
+  std::optional<size_t> MaxFieldDepth = std::nullopt;
 };
 } // namespace clang::lifetimes::internal
 
