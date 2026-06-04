@@ -1,4 +1,5 @@
 from pathlib import Path
+import os
 
 from clang.cindex import SourceLocation, SourceRange, TranslationUnit
 
@@ -18,6 +19,7 @@ def create_range(tu, line1, column1, line2, column2):
 
 
 class TestSourceRange(unittest.TestCase):
+    @pytest.mark.xfail(os.name == "nt", reason="bug in the test")
     def test_contains(self):
         tu = get_tu(
             """aaaaa

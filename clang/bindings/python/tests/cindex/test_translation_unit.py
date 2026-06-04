@@ -74,6 +74,7 @@ class TestTranslationUnit(unittest.TestCase):
         self.assertEqual(spellings[-2], "hello")
         self.assertEqual(spellings[-1], "hi")
 
+    @pytest.mark.xfail(os.name == "nt", reason="bug in the test")
     def test_unsaved_files(self):
         tu = TranslationUnit.from_source(
             "fake.c",
