@@ -28,7 +28,6 @@ int main( int argc, char **argv )
     GO_REBUILD_URSELF( argc, argv );
 
 
-
     String_View filename = {0};
     for (int i = 1; i < argc; ++i)
     {
@@ -67,7 +66,7 @@ int main( int argc, char **argv )
 
     String_View filename_no_ext = filename;
 
-    if (!inferred_extension) {
+    if (!strcmp(inferred_extension, "")) {
         if (!nob_sv_chop_suffix(&filename_no_ext, sv_from_cstr(".c4"))
         && !nob_sv_chop_suffix(&filename_no_ext, sv_from_cstr(".civ")))
             exit( EXIT_FAILURE );
@@ -100,9 +99,9 @@ int main( int argc, char **argv )
         "-framework", "Cocoa",
         "-Wno-nullability-completeness"
     );
-    da_foreach( const char *, item, &cmd ) {
-        printf("%s\n", *item);
-    }
+    // da_foreach( const char *, item, &cmd ) {
+    //     printf("%s\n", *item);
+    // }
     if (!cmd_run( &cmd ))
         return 1;
 

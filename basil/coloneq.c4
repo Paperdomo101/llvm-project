@@ -1,0 +1,11 @@
+#include <stdio.h>
+
+do_thing () float {
+    fprintf(stderr, "do thing!\n");
+    return 20;
+}
+
+main () int {
+    a := do_thing()
+    return 0;
+}

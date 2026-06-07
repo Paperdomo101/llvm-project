@@ -6981,6 +6981,7 @@ Sema::CheckTypedefForVariablyModifiedType(Scope *S, TypedefNameDecl *NewTD) {
   }
 }
 
+//// C4 FEATURE ////
 StmtResult Sema::ActOnTypeInferredAssignment(Scope *S, IdentifierInfo *Name,
                                              SourceLocation NameLoc, Expr *InitExpr) {
   if (!InitExpr) return StmtError();
@@ -7010,6 +7011,7 @@ StmtResult Sema::ActOnTypeInferredAssignment(Scope *S, IdentifierInfo *Name,
 
   // 5. Attach the initializer expression to our fresh variable declaration
   AddInitializerToDecl(NewVD, InitExpr, /*DirectInit=*/false);
+  // NewVD->dump(); // DEBUG DUMP AST
 
   // 6. Wrap the declaration in a standard C statement group wrapper
   DeclGroupRef DG(NewVD);

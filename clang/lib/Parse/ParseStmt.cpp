@@ -55,6 +55,7 @@ StmtResult Parser::ParseStatement(SourceLocation *TrailingElseLoc,
 
 
 StmtResult Parser::ParseTypeInferredAssignment() {
+
   assert(Tok.is(tok::identifier) && NextToken().is(tok::colonequal));
 
   // 1. Capture the identifier token and its info
@@ -62,6 +63,7 @@ StmtResult Parser::ParseTypeInferredAssignment() {
   SourceLocation NameLoc = ConsumeToken(); // Consumes the identifier
 
   SourceLocation ColonEqualLoc = ConsumeToken(); // Consumes ':='
+  (void)ColonEqualLoc; // silence warning
 
   // 2. Parse the right hand side expression (e.g., "40")
   ExprResult InitExpr = ParseAssignmentExpression();
@@ -85,10 +87,17 @@ StmtResult Parser::ParseStatementOrDeclaration(StmtVector &Stmts,
   if (Tok.is(tok::identifier) && GetLookAheadToken(1).is(tok::colonequal)) {
         StmtResult AssignmentRes = ParseTypeInferredAssignment();
         if (AssignmentRes.isUsable()) {
-        Stmts.push_back(AssignmentRes.get());
+          Stmts.push_back(AssignmentRes.get());
+
+          // --- C4 THE ULTIMATE IR FIX ---
+          // Return an EMPTY StmtResult. This prevents the parent compound
+          // statement loop from pushing this statement into the AST a second time.
+          // fixes `a := do_thing()` from calling do_thing() twice
+          return StmtResult();
         }
         return AssignmentRes;
     }
+
 
   // Because we're parsing either a statement or a declaration, the order of
   // attribute parsing is important. [[]] attributes at the start of a

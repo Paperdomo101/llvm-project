@@ -661,6 +661,23 @@ ExprResult Parser::ParseMethodDispatch(
 
     SourceLocation RParLoc = Tok.getLocation();
 
+    // --- CRITICAL UNPACKING FLATTENER FIX ---
+    // Safely decompose any nested member groups before building the final call.
+    ExprVector FlattenedArgs;
+    for (Expr *Arg : ArgExprs) {
+        if (Arg && isa<ParenListExpr>(Arg)) {
+            auto *PLE = cast<ParenListExpr>(Arg);
+            for (unsigned i = 0, e = PLE->getNumExprs(); i != e; ++i) {
+                FlattenedArgs.push_back(PLE->getExpr(i));
+            }
+        } else if (Arg) {
+            FlattenedArgs.push_back(Arg);
+        }
+    }
+    // Swap the processed arguments back into the active vector array
+    ArgExprs = std::move(FlattenedArgs);
+    // ----------------------------------------
+
     ArgExprs.insert(ArgExprs.begin(), Receiver.get());
 
     ExprResult Result =
@@ -676,6 +693,7 @@ ExprResult Parser::ParseMethodDispatch(
 
     return Result;
 }
+
 
 
 ExprResult
@@ -1913,245 +1931,304 @@ Parser::ParsePostfixExpressionSuffix(ExprResult LHS) {
     }
 
     case tok::l_paren:         // p-e: p-e '(' argument-expression-list[opt] ')'
-    case tok::lesslessless: {  // p-e: p-e '<<<' argument-expression-list '>>>'
-                               //   '(' argument-expression-list[opt] ')'
-      tok::TokenKind OpKind = Tok.getKind();
-      InMessageExpressionRAIIObject InMessage(*this, false);
+        case tok::lesslessless: {  // p-e: p-e '<<<' argument-expression-list '>>>'
+                                   //   '(' argument-expression-list[opt] ')'
+          tok::TokenKind OpKind = Tok.getKind();
+          InMessageExpressionRAIIObject InMessage(*this, false);
 
-      Expr *ExecConfig = nullptr;
+          Expr *ExecConfig = nullptr;
 
-      BalancedDelimiterTracker PT(*this, tok::l_paren);
+          BalancedDelimiterTracker PT(*this, tok::l_paren);
 
-      if (OpKind == tok::lesslessless) {
-        ExprVector ExecConfigExprs;
-        SourceLocation OpenLoc = ConsumeToken();
+          if (OpKind == tok::lesslessless) {
+            ExprVector ExecConfigExprs;
+            SourceLocation OpenLoc = ConsumeToken();
 
-        if (ParseSimpleExpressionList(ExecConfigExprs)) {
-          LHS = ExprError();
-        }
+            if (ParseSimpleExpressionList(ExecConfigExprs)) {
+              LHS = ExprError();
+            }
 
-        SourceLocation CloseLoc;
-        if (TryConsumeToken(tok::greatergreatergreater, CloseLoc)) {
-        } else if (LHS.isInvalid()) {
-          SkipUntil(tok::greatergreatergreater, StopAtSemi);
-        } else {
-          // There was an error closing the brackets
-          Diag(Tok, diag::err_expected) << tok::greatergreatergreater;
-          Diag(OpenLoc, diag::note_matching) << tok::lesslessless;
-          SkipUntil(tok::greatergreatergreater, StopAtSemi);
-          LHS = ExprError();
-        }
+            SourceLocation CloseLoc;
+            if (TryConsumeToken(tok::greatergreatergreater, CloseLoc)) {
+            } else if (LHS.isInvalid()) {
+              SkipUntil(tok::greatergreatergreater, StopAtSemi);
+            } else {
+              // There was an error closing the brackets
+              Diag(Tok, diag::err_expected) << tok::greatergreatergreater;
+              Diag(OpenLoc, diag::note_matching) << tok::lesslessless;
+              SkipUntil(tok::greatergreatergreater, StopAtSemi);
+              LHS = ExprError();
+            }
 
-        if (!LHS.isInvalid()) {
-          if (ExpectAndConsume(tok::l_paren))
-            LHS = ExprError();
-          else
-            Loc = PrevTokLocation;
-        }
+            if (!LHS.isInvalid()) {
+              if (ExpectAndConsume(tok::l_paren))
+                LHS = ExprError();
+              else
+                Loc = PrevTokLocation;
+            }
 
-        if (!LHS.isInvalid()) {
-          ExprResult ECResult = Actions.CUDA().ActOnExecConfigExpr(
-              getCurScope(), OpenLoc, ExecConfigExprs, CloseLoc);
-          if (ECResult.isInvalid())
-            LHS = ExprError();
-          else
-            ExecConfig = ECResult.get();
-        }
-      } else {
-        PT.consumeOpen();
-        Loc = PT.getOpenLocation();
-      }
-
-      ExprVector ArgExprs;
-      auto RunSignatureHelp = [&]() -> QualType {
-        QualType PreferredType =
-            Actions.CodeCompletion().ProduceCallSignatureHelp(
-                LHS.get(), ArgExprs, PT.getOpenLocation());
-        CalledSignatureHelp = true;
-        return PreferredType;
-      };
-      bool ExpressionListIsInvalid = false;
-      if (OpKind == tok::l_paren || !LHS.isInvalid()) {
-        if (Tok.isNot(tok::r_paren)) {
-          if ((ExpressionListIsInvalid = ParseExpressionList(ArgExprs, [&] {
-                 PreferredType.enterFunctionArgument(Tok.getLocation(),
-                                                     RunSignatureHelp);
-               }))) {
-            // If we got an error when parsing expression list, we don't call
-            // the CodeCompleteCall handler inside the parser. So call it here
-            // to make sure we get overload suggestions even when we are in the
-            // middle of a parameter.
-            if (PP.isCodeCompletionReached() && !CalledSignatureHelp)
-              RunSignatureHelp();
+            if (!LHS.isInvalid()) {
+              ExprResult ECResult = Actions.CUDA().ActOnExecConfigExpr(
+                  getCurScope(), OpenLoc, ExecConfigExprs, CloseLoc);
+              if (ECResult.isInvalid())
+                LHS = ExprError();
+              else
+                ExecConfig = ECResult.get();
+            }
+          } else {
+            PT.consumeOpen();
+            Loc = PT.getOpenLocation();
           }
-        }
-      }
 
-      // Match the ')'.
-      if (LHS.isInvalid()) {
-        SkipUntil(tok::r_paren, StopAtSemi);
-      } else if (ExpressionListIsInvalid) {
-        Expr *Fn = LHS.get();
-        ArgExprs.insert(ArgExprs.begin(), Fn);
-        LHS = Actions.CreateRecoveryExpr(Fn->getBeginLoc(), Tok.getLocation(),
-                                         ArgExprs);
-        SkipUntil(tok::r_paren, StopAtSemi);
-      } else if (Tok.isNot(tok::r_paren)) {
-        bool HadErrors = false;
-        if (LHS.get()->containsErrors())
-          HadErrors = true;
-        for (auto &E : ArgExprs)
-          if (E->containsErrors())
-            HadErrors = true;
-        // If there were errors in the LHS or ArgExprs, call SkipUntil instead
-        // of PT.consumeClose() to avoid emitting extra diagnostics for the
-        // unmatched l_paren.
-        if (HadErrors)
-          SkipUntil(tok::r_paren, StopAtSemi);
-        else
-          PT.consumeClose();
-        LHS = ExprError();
-      } else {
-        Expr *Fn = LHS.get();
-        SourceLocation RParLoc = Tok.getLocation();
-        LHS = Actions.ActOnCallExpr(getCurScope(), Fn, Loc, ArgExprs, RParLoc,
-                                    ExecConfig);
-        if (LHS.isInvalid()) {
-          ArgExprs.insert(ArgExprs.begin(), Fn);
-          LHS =
-              Actions.CreateRecoveryExpr(Fn->getBeginLoc(), RParLoc, ArgExprs);
-        }
-        PT.consumeClose();
-      }
+          ExprVector ArgExprs;
+          auto RunSignatureHelp = [&]() -> QualType {
+            QualType PreferredType =
+                Actions.CodeCompletion().ProduceCallSignatureHelp(
+                    LHS.get(), ArgExprs, PT.getOpenLocation());
+            CalledSignatureHelp = true;
+            return PreferredType;
+          };
+          bool ExpressionListIsInvalid = false;
+          if (OpKind == tok::l_paren || !LHS.isInvalid()) {
+            if (Tok.isNot(tok::r_paren)) {
+              if ((ExpressionListIsInvalid = ParseExpressionList(ArgExprs, [&] {
+                     PreferredType.enterFunctionArgument(Tok.getLocation(),
+                                                         RunSignatureHelp);
+                   }))) {
+                if (PP.isCodeCompletionReached() && !CalledSignatureHelp)
+                  RunSignatureHelp();
+              }
+            }
+          }
 
-      break;
-    }
+          // Match the ')'.
+          if (LHS.isInvalid()) {
+            SkipUntil(tok::r_paren, StopAtSemi);
+          } else if (ExpressionListIsInvalid) {
+            Expr *Fn = LHS.get();
+            ArgExprs.insert(ArgExprs.begin(), Fn);
+            LHS = Actions.CreateRecoveryExpr(Fn->getBeginLoc(), Tok.getLocation(),
+                                             ArgExprs);
+            SkipUntil(tok::r_paren, StopAtSemi);
+          } else if (Tok.isNot(tok::r_paren)) {
+            bool HadErrors = false;
+            if (LHS.get()->containsErrors())
+              HadErrors = true;
+            for (auto &E : ArgExprs)
+              if (E->containsErrors())
+                HadErrors = true;
+            if (HadErrors)
+              SkipUntil(tok::r_paren, StopAtSemi);
+            else
+              PT.consumeClose();
+            LHS = ExprError();
+          } else {
+            Expr *Fn = LHS.get();
+            SourceLocation RParLoc = Tok.getLocation();
+
+            // --- C4 CRITICAL UNPACKING FLATTENER FIX FOR STANDARD CALLS ---
+            // Recursively unpack any bracketed ParenListExpr packets generated
+            // by the bob.{x, y, z} expander before sending them down to Sema.
+            ExprVector FlattenedArgs;
+            for (Expr *Arg : ArgExprs) {
+                if (Arg && isa<ParenListExpr>(Arg)) {
+                    auto *PLE = cast<ParenListExpr>(Arg);
+                    for (unsigned i = 0, e = PLE->getNumExprs(); i != e; ++i) {
+                        FlattenedArgs.push_back(PLE->getExpr(i));
+                    }
+                } else if (Arg) {
+                    FlattenedArgs.push_back(Arg);
+                }
+            }
+            ArgExprs = std::move(FlattenedArgs);
+            // -----------------------------------------------------------
+
+            LHS = Actions.ActOnCallExpr(getCurScope(), Fn, Loc, ArgExprs, RParLoc,
+                                        ExecConfig);
+            if (LHS.isInvalid()) {
+              ArgExprs.insert(ArgExprs.begin(), Fn);
+              LHS =
+                  Actions.CreateRecoveryExpr(Fn->getBeginLoc(), RParLoc, ArgExprs);
+            }
+            PT.consumeClose();
+          }
+
+          break;
+        }
+
     case tok::arrow:
-    case tok::period: {
-      // postfix-expression: p-e '->' template[opt] id-expression
-      // postfix-expression: p-e '.' template[opt] id-expression
-      tok::TokenKind OpKind = Tok.getKind();
-      SourceLocation OpLoc = ConsumeToken();  // Eat the "." or "->" token.
+        case tok::period: {
+          // postfix-expression: p-e '->' template[opt] id-expression
+          // postfix-expression: p-e '.' template[opt] id-expression
+          tok::TokenKind OpKind = Tok.getKind();
+          SourceLocation OpLoc = ConsumeToken();  // Eat the "." or "->" token.
 
-      CXXScopeSpec SS;
-      ParsedType ObjectType;
-      bool MayBePseudoDestructor = false;
-      Expr* OrigLHS = !LHS.isInvalid() ? LHS.get() : nullptr;
+          Expr* OrigLHS = !LHS.isInvalid() ? LHS.get() : nullptr;
 
-      PreferredType.enterMemAccess(Actions, Tok.getLocation(), OrigLHS);
+          // --- FEATURE 1: OPTIONAL POINTER INDIRECTION (-> BECOMES .) ---
+          // If the developer typed a dot '.' but the LHS evaluates to a pointer type,
+          // dynamically upgrade the operation to an arrow '->' lookup under the hood.
+          if (OpKind == tok::period && OrigLHS) {
+            QualType LHSType = OrigLHS->getType();
+            // Unwrap any local reference type wrappers first to see the underlying type
+            if (LHSType->isReferenceType()) {
+              LHSType = LHSType.getNonReferenceType();
+            }
+            if (LHSType->isPointerType()) {
+              OpKind = tok::arrow;
+            }
+          }
+          // -------------------------------------------------------------
 
-      if (getLangOpts().CPlusPlus && !LHS.isInvalid()) {
-        Expr *Base = OrigLHS;
-        const Type* BaseType = Base->getType().getTypePtrOrNull();
-        if (BaseType && Tok.is(tok::l_paren) &&
-            (BaseType->isFunctionType() ||
-             BaseType->isSpecificPlaceholderType(BuiltinType::BoundMember))) {
-          Diag(OpLoc, diag::err_function_is_not_record)
-              << OpKind << Base->getSourceRange()
-              << FixItHint::CreateRemoval(OpLoc);
-          return ParsePostfixExpressionSuffix(Base);
-        }
+          // --- FEATURE 2: MEMBER GROUP EXPANSION (bob.{x, y, z}) ---
+          // If the next token is an opening brace, intercept it immediately and bypass
+          // Clang's default single-identifier member access engine.
+          if (Tok.is(tok::l_brace)) {
+            SourceLocation LBraceLoc = ConsumeToken(); // Consume '{'
+            SmallVector<Expr *, 4> ExpandedMembers;
 
-        LHS = Actions.ActOnStartCXXMemberReference(getCurScope(), Base, OpLoc,
-                                                   OpKind, ObjectType,
-                                                   MayBePseudoDestructor);
-        if (LHS.isInvalid()) {
-          // Clang will try to perform expression based completion as a
-          // fallback, which is confusing in case of member references. So we
-          // stop here without any completions.
+            while (true) {
+              if (Tok.isNot(tok::identifier)) {
+                Diag(Tok, diag::err_expected_member_name_or_semi);
+                return ExprError();
+              }
+
+              IdentifierInfo *MemberName = Tok.getIdentifierInfo();
+              SourceLocation MemberLoc = ConsumeToken();
+
+              // Build an independent lookup name structure for this specific field
+              UnqualifiedId Name;
+              Name.setIdentifier(MemberName, MemberLoc);
+
+              // Build a single MemberAccessExpr for the active field using our resolved OpKind
+              CXXScopeSpec EmptySS;
+              ExprResult MemberExpr = Actions.ActOnMemberAccessExpr(
+                  getCurScope(), OrigLHS, OpLoc, OpKind, EmptySS,
+                  SourceLocation(), Name, CurParsedObjCImpl ? CurParsedObjCImpl->Dcl : nullptr);
+
+              if (!MemberExpr.isInvalid()) {
+                ExpandedMembers.push_back(MemberExpr.get());
+              }
+
+              if (Tok.is(tok::comma)) {
+                ConsumeToken();
+                continue;
+              }
+              if (Tok.is(tok::r_brace)) {
+                ConsumeToken(); // Consume '}'
+                break;
+              }
+
+              Diag(Tok, diag::err_expected_comma_or_rsquare);
+              return ExprError();
+            }
+
+            // Bundle our collection into a ParenListExpr layout container.
+            // This is safe because its memory is flattened out inside your method/call lists later.
+            LHS = Actions.ActOnParenListExpr(LBraceLoc, Tok.getLocation(), ExpandedMembers);
+            break;
+          }
+          // ---------------------------------------------------------
+
+          // Rest of your completely unmodified Clang member lookup engine continues below...
+          CXXScopeSpec SS;
+          ParsedType ObjectType;
+          bool MayBePseudoDestructor = false;
+
+          PreferredType.enterMemAccess(Actions, Tok.getLocation(), OrigLHS);
+
+          if (getLangOpts().CPlusPlus && !LHS.isInvalid()) {
+            Expr *Base = OrigLHS;
+            const Type* BaseType = Base->getType().getTypePtrOrNull();
+            if (BaseType && Tok.is(tok::l_paren) &&
+                (BaseType->isFunctionType() ||
+                 BaseType->isSpecificPlaceholderType(BuiltinType::BoundMember))) {
+              Diag(OpLoc, diag::err_function_is_not_record)
+                  << OpKind << Base->getSourceRange()
+                  << FixItHint::CreateRemoval(OpLoc);
+              return ParsePostfixExpressionSuffix(Base);
+            }
+
+            LHS = Actions.ActOnStartCXXMemberReference(getCurScope(), Base, OpLoc,
+                                                       OpKind, ObjectType,
+                                                       MayBePseudoDestructor);
+            if (LHS.isInvalid()) {
+              if (Tok.is(tok::code_completion)) {
+                cutOffParsing();
+                return ExprError();
+              }
+              break;
+            }
+            ParseOptionalCXXScopeSpecifier(
+                SS, ObjectType, LHS.get() && LHS.get()->containsErrors(),
+                /*EnteringContext=*/false, &MayBePseudoDestructor);
+            if (SS.isNotEmpty())
+              ObjectType = nullptr;
+          }
+
           if (Tok.is(tok::code_completion)) {
+            tok::TokenKind CorrectedOpKind =
+                OpKind == tok::arrow ? tok::period : tok::arrow;
+            ExprResult CorrectedLHS(/*Invalid=*/true);
+            if (getLangOpts().CPlusPlus && OrigLHS) {
+              Sema::TentativeAnalysisScope Trap(Actions);
+              CorrectedLHS = Actions.ActOnStartCXXMemberReference(
+                  getCurScope(), OrigLHS, OpLoc, CorrectedOpKind, ObjectType,
+                  MayBePseudoDestructor);
+            }
+
+            Expr *Base = LHS.get();
+            Expr *CorrectedBase = CorrectedLHS.get();
+            if (!CorrectedBase && !getLangOpts().CPlusPlus)
+              CorrectedBase = Base;
+
             cutOffParsing();
+            Actions.CodeCompletion().CodeCompleteMemberReferenceExpr(
+                getCurScope(), Base, CorrectedBase, OpLoc, OpKind == tok::arrow,
+                Base && ExprStatementTokLoc == Base->getBeginLoc(),
+                PreferredType.get(Tok.getLocation()));
+
             return ExprError();
+          }
+
+          if (MayBePseudoDestructor && !LHS.isInvalid()) {
+            LHS = ParseCXXPseudoDestructor(LHS.get(), OpLoc, OpKind, SS,
+                                           ObjectType);
+            break;
+          }
+
+          SourceLocation TemplateKWLoc;
+          UnqualifiedId Name;
+          if (getLangOpts().ObjC && OpKind == tok::period &&
+              Tok.is(tok::kw_class)) {
+            IdentifierInfo *Id = Tok.getIdentifierInfo();
+            SourceLocation Loc = ConsumeToken();
+            Name.setIdentifier(Id, Loc);
+          } else if (ParseUnqualifiedId(
+                         SS, ObjectType, LHS.get() && LHS.get()->containsErrors(),
+                         /*EnteringContext=*/false,
+                         /*AllowDestructorName=*/true,
+                         /*AllowConstructorName=*/
+                         getLangOpts().MicrosoftExt && SS.isNotEmpty(),
+                         /*AllowDeductionGuide=*/false, &TemplateKWLoc, Name)) {
+            LHS = ExprError();
+          }
+
+          if (!LHS.isInvalid())
+            LHS = Actions.ActOnMemberAccessExpr(getCurScope(), LHS.get(), OpLoc,
+                                                OpKind, SS, TemplateKWLoc, Name,
+                                     CurParsedObjCImpl ? CurParsedObjCImpl->Dcl
+                                                       : nullptr);
+          if (!LHS.isInvalid()) {
+            if (Tok.is(tok::less))
+              checkPotentialAngleBracket(LHS);
+          } else if (OrigLHS && Name.isValid()) {
+            LHS = Actions.CreateRecoveryExpr(OrigLHS->getBeginLoc(),
+                                             Name.getEndLoc(), {OrigLHS});
           }
           break;
         }
-        ParseOptionalCXXScopeSpecifier(
-            SS, ObjectType, LHS.get() && LHS.get()->containsErrors(),
-            /*EnteringContext=*/false, &MayBePseudoDestructor);
-        if (SS.isNotEmpty())
-          ObjectType = nullptr;
-      }
 
-      if (Tok.is(tok::code_completion)) {
-        tok::TokenKind CorrectedOpKind =
-            OpKind == tok::arrow ? tok::period : tok::arrow;
-        ExprResult CorrectedLHS(/*Invalid=*/true);
-        if (getLangOpts().CPlusPlus && OrigLHS) {
-          // FIXME: Creating a TentativeAnalysisScope from outside Sema is a
-          // hack.
-          Sema::TentativeAnalysisScope Trap(Actions);
-          CorrectedLHS = Actions.ActOnStartCXXMemberReference(
-              getCurScope(), OrigLHS, OpLoc, CorrectedOpKind, ObjectType,
-              MayBePseudoDestructor);
-        }
-
-        Expr *Base = LHS.get();
-        Expr *CorrectedBase = CorrectedLHS.get();
-        if (!CorrectedBase && !getLangOpts().CPlusPlus)
-          CorrectedBase = Base;
-
-        // Code completion for a member access expression.
-        cutOffParsing();
-        Actions.CodeCompletion().CodeCompleteMemberReferenceExpr(
-            getCurScope(), Base, CorrectedBase, OpLoc, OpKind == tok::arrow,
-            Base && ExprStatementTokLoc == Base->getBeginLoc(),
-            PreferredType.get(Tok.getLocation()));
-
-        return ExprError();
-      }
-
-      if (MayBePseudoDestructor && !LHS.isInvalid()) {
-        LHS = ParseCXXPseudoDestructor(LHS.get(), OpLoc, OpKind, SS,
-                                       ObjectType);
-        break;
-      }
-
-      // Either the action has told us that this cannot be a
-      // pseudo-destructor expression (based on the type of base
-      // expression), or we didn't see a '~' in the right place. We
-      // can still parse a destructor name here, but in that case it
-      // names a real destructor.
-      // Allow explicit constructor calls in Microsoft mode.
-      // FIXME: Add support for explicit call of template constructor.
-      SourceLocation TemplateKWLoc;
-      UnqualifiedId Name;
-      if (getLangOpts().ObjC && OpKind == tok::period &&
-          Tok.is(tok::kw_class)) {
-        // Objective-C++:
-        //   After a '.' in a member access expression, treat the keyword
-        //   'class' as if it were an identifier.
-        //
-        // This hack allows property access to the 'class' method because it is
-        // such a common method name. For other C++ keywords that are
-        // Objective-C method names, one must use the message send syntax.
-        IdentifierInfo *Id = Tok.getIdentifierInfo();
-        SourceLocation Loc = ConsumeToken();
-        Name.setIdentifier(Id, Loc);
-      } else if (ParseUnqualifiedId(
-                     SS, ObjectType, LHS.get() && LHS.get()->containsErrors(),
-                     /*EnteringContext=*/false,
-                     /*AllowDestructorName=*/true,
-                     /*AllowConstructorName=*/
-                     getLangOpts().MicrosoftExt && SS.isNotEmpty(),
-                     /*AllowDeductionGuide=*/false, &TemplateKWLoc, Name)) {
-        LHS = ExprError();
-      }
-
-      if (!LHS.isInvalid())
-        LHS = Actions.ActOnMemberAccessExpr(getCurScope(), LHS.get(), OpLoc,
-                                            OpKind, SS, TemplateKWLoc, Name,
-                                 CurParsedObjCImpl ? CurParsedObjCImpl->Dcl
-                                                   : nullptr);
-      if (!LHS.isInvalid()) {
-        if (Tok.is(tok::less))
-          checkPotentialAngleBracket(LHS);
-      } else if (OrigLHS && Name.isValid()) {
-        // Preserve the LHS if the RHS is an invalid member.
-        LHS = Actions.CreateRecoveryExpr(OrigLHS->getBeginLoc(),
-                                         Name.getEndLoc(), {OrigLHS});
-      }
-      break;
-    }
     case tok::plusplus:    // postfix-expression: postfix-expression '++'
     case tok::minusminus:  // postfix-expression: postfix-expression '--'
       if (!LHS.isInvalid()) {
