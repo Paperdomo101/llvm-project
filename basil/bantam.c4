@@ -1,0 +1,240 @@
+// > bantam <
+
+#define NOB_IMPLEMENTATION
+#include <nob.h>
+
+#define STD_IO_IMPLEMENTATION
+#include <std/io>
+
+test (const char *input, const char *expected);
+int passed = 0;
+int failed = 0;
+
+main () int {
+
+    /// Function calls
+                    "a()"::test( "a()" )
+                   "a(b)"::test( "a(b)" )
+                "a(b, c)"::test( "a(b, c)" )
+                "a(b)(c)"::test( "a(b)(c)" )
+            "a(b) + c(d)"::test( "(a(b) + c(d))" )
+    "a(b ? c : d, e + f)"::test( "a((b ? c : d), (e + f))" )
+
+    /// Unary precedence
+    "~!-+a"::test( "(~(!(-(+a))))" )
+     "a!!!"::test( "(((a!)!)!)" )
+
+
+    /// Unary and binary precedence
+    "-a * b"::test( "((-a) * b)" )
+    "!a + b"::test( "((!a) + b)" )
+    "~a ^ b"::test( "((~a) ^ b)" )
+       "-a!"::test( "(-(a!))" )
+       "!a!"::test( "(!(a!))" )
+
+    /// Binary precedence
+    "a = b + c * d ^ e - f / g"::test( "(a = ((b + (c * (d ^ e))) - (f / g)))" )
+
+    /// Binary associativity
+    "a = b = c"::test( "(a = (b = c))" )
+    "a + b - c"::test( "((a + b) - c)" )
+    "a + b * c"::test( "(a + (b * c))" )
+        "a*b+c"::test( "((a * b) + c)" )
+    "a * b / c"::test( "((a * b) / c)" )
+    "a ^ b ^ c"::test( "(a ^ (b ^ c))" )
+
+
+    /// Conditional operator
+        "a ? b : c ? d : e"::test( "(a ? b : (c ? d : e))" )
+        "a ? b ? c : d : e"::test( "(a ? (b ? c : d) : e)" )
+    "a + b ? c * d : e / f"::test( "((a + b) ? (c * d) : (e / f))" )
+
+    /*~~~~~~~~~~*\
+    \* Grouping */
+    "a + (b + c) + d"::test( "((a + (b + c)) + d)" )
+        "a ^ (b + c)"::test( "(a ^ (b + c))" )
+              "(!a)!"::test( "((!a)!)" )
+
+    if failed {
+        "----"::printl()
+        "Failed %d out of %d tests."::printl( failed, failed+passed )
+        EXIT_FAILURE::exit()
+    }
+
+    "Passed all %d tests."::printl( passed )
+    EXIT_SUCCESS::exit()
+}
+
+typedef struct {
+    const char *src;
+    int start;
+    int pos;
+} Lexer;
+
+make_lexer (const char *src) Lexer {
+    Lexer lexer = {0};
+    lexer.src = src;
+    return lexer;
+}
+
+#define TOKEN_TYPES \
+x(EOF)   x(ERROR) x(L_PAREN) x(R_PAREN) \
+x(BANG)  x(QMARK) x(COLON)   x(CARET) \
+x(PLUS)  x(MINUS) x(SLASH)   x(STAR) \
+x(COMMA) x(EQUAL) x(TILDE)   x(IDENTIFIER)
+
+typedef enum {
+    #define x(name) TOK_##name,
+    TOKEN_TYPES
+    #undef x
+    TOK__MAX__
+} Token_Type;
+
+const char *token_strings[TOK__MAX__] = {
+    #define x(name) #name,
+    TOKEN_TYPES
+    #undef x
+};
+
+
+typedef struct {
+    Token_Type type;
+    const char *start;
+    int length;
+} Token;
+
+typedef struct {
+    Lexer *lexer;
+    struct {
+        size_t count, capacity;
+        Token *items;
+    } tokens;
+} Parser;
+
+make_parser (Lexer *lexer) Parser {
+    Parser parser = {0};
+    parser.lexer = lexer;
+    return parser;
+}
+
+is_whitespace (char c) bool {
+    return c == ' ' || c == '\t' || c == '\n';
+}
+
+is_alpha (char c) bool {
+    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_';
+}
+
+is_numeric (char c) bool {
+    return (c >= '0' && c <= '9');
+}
+
+make_token (Parser *parser, Token_Type type) Token {
+    return (Token) {
+        .start = &parser->lexer->src[parser->lexer->start],
+        .length = parser->lexer->pos - parser->lexer->start,
+        .type = type
+    };
+}
+
+scan_tokens (Parser *parser) {
+
+    l := parser->lexer;
+    l->pos = l->start = 0;
+
+    for (;;) {
+        if l->src[l->pos]::is_whitespace() {
+            ++l->pos;
+            continue;
+        }
+
+        if !l->src[l->pos] {
+            l->start = l->pos;
+            da_append( &parser->tokens, parser::make_token(TOK_EOF) );
+            return;
+        }
+
+        l->start = l->pos;
+
+        if l->src[l->pos]::is_alpha()
+        {
+            while (l->src[l->pos]::is_alpha() || l->src[l->pos]::is_numeric())
+                ++l->pos;
+
+            da_append( &parser->tokens, parser::make_token(TOK_IDENTIFIER) );
+            continue;
+        }
+
+        switch (l->src[l->pos++])
+        {
+            default:  da_append( &parser->tokens, parser::make_token(TOK_ERROR)   ); break;
+            case '(': da_append( &parser->tokens, parser::make_token(TOK_L_PAREN) ); break;
+            case ')': da_append( &parser->tokens, parser::make_token(TOK_R_PAREN) ); break;
+            case '~': da_append( &parser->tokens, parser::make_token(TOK_TILDE)   ); break;
+            case '?': da_append( &parser->tokens, parser::make_token(TOK_QMARK)   ); break;
+            case ',': da_append( &parser->tokens, parser::make_token(TOK_COMMA)   ); break;
+            case '!': da_append( &parser->tokens, parser::make_token(TOK_BANG)    ); break;
+            case '=': da_append( &parser->tokens, parser::make_token(TOK_EQUAL)   ); break;
+            case ':': da_append( &parser->tokens, parser::make_token(TOK_COLON)   ); break;
+            case '^': da_append( &parser->tokens, parser::make_token(TOK_CARET)   ); break;
+            case '+': da_append( &parser->tokens, parser::make_token(TOK_PLUS)    ); break;
+            case '-': da_append( &parser->tokens, parser::make_token(TOK_MINUS)   ); break;
+            case '*': da_append( &parser->tokens, parser::make_token(TOK_STAR)    ); break;
+            case '/': da_append( &parser->tokens, parser::make_token(TOK_SLASH)   ); break;
+        }
+    }
+}
+
+parse_expression (Parser *parser) String_View {
+
+    parser::scan_tokens()
+
+    da_foreach( Token, token, &parser->tokens )
+    {
+        "%s '%.*s'\n"::printf( token_strings[token->type], token->length, token->start );
+
+    }
+
+    return sv_from_cstr(parser->lexer->src);
+}
+
+
+static int test_number = 0;
+test (const char *src, const char *expected) {
+    "\033[32m=== TEST %d ===\033[0m\n"::printf( ++test_number );
+    l := make_lexer( src )
+    p := make_parser( &l )
+
+    "%s\n"::printf( src );
+
+    // FAILURE [T] ( T value ) {
+    //     ++failed;
+    //     "[FAIL] Expected: %"::printl( value )
+    //     "%>15: %"::printl( $$value::title(), value )
+    //     return;
+    // }
+    /*
+    @macro FAILURE( value ) {
+        ++failed;
+        "[FAIL] Expected: `expected`"::printl()
+        "`$$value::title()`>15: `value`"::printl()
+        return;
+    @}
+    */
+    #define FAILURE(value) do { \
+        ++failed; \
+        "[FAIL] Expected: %s"::printl(expected) \
+    } while(0);
+
+
+    printf( "begin parse\n");
+    String_View result = &p::parse_expression();
+    printf( "end\n");
+
+    got := temp_sv_to_cstr( result );
+
+    if (strcmp( expected, got ))
+        FAILURE( actual )
+    else
+        ++passed;
+}

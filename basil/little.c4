@@ -1,0 +1,14 @@
+#include <stdio.h>
+
+bob (int a, b, c) int {
+    return a + b * c;
+}
+
+print_int (int value) {
+    "%d\n"::printf(value)
+}
+
+main () int {
+    bob(1, 2, 3)::bob(4, 5)::print_int()
+    return 0;
+}

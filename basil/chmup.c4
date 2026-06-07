@@ -1,0 +1,85 @@
+// # bang chmup.c -o chmup -lraylib -L. -I. -isysroot $(xcrun --show-sdk-path) -framework Cocoa -framework IOKit
+#include "raylib.h"
+#include <stdbool.h>
+
+typedef struct {
+    float x, y, u, v;
+    int animIndex;
+    int size;
+    bool isActive, isVacuum;
+    Rectangle collisionRec;
+    enum {
+        BULLET_SMALL,
+        BULLET_LARGE,
+    } type;
+} Bullet;
+
+#define MAX_BULLETS 128
+Bullet bullets[MAX_BULLETS];
+Texture texSprites;
+
+bool showArrays = true;
+
+DrawSprite (int u, v, x, y, size, bool flip, Color tint) {
+    texSprites::DrawTexturePro(
+        {u * size, v * size, size * (-1 + flip * 2), size},
+        {x, y, size, size}, {size/2, size/2},
+        0, tint );
+}
+
+DrawHitbox (int x, y, Rectangle rec, Color color) {
+    DrawRectangleLinesEx({x + rec.x, y + rec.y, rec.width, rec.height}, 1, color);
+}
+
+/*"""""""""""*\
+\*____ C ____*/
+
+void DrawBullets( void ) {
+
+    for (int i = 0; i < MAX_BULLETS; ++i) {
+        b := &bullets[i];
+
+		if b->isActive {
+            DrawSprite( b->u + (int)b->animIndex, b->v, b->x, b->y, b->size, false, b->isVacuum ? GetColor(0xffffff44) : WHITE );
+            DrawHitbox( b->x, b->y, b->collisionRec, LIME );
+        }
+
+    	if (showArrays)
+    		DrawPixel( (256 - 16) + (i % 16), 32 + (i / 16), bullets[i].type == BULLET_SMALL ? ORANGE : SKYBLUE );
+    }
+}
+
+main () int {
+
+    InitWindow( 450, 800, "CHMUP" )
+
+    GetCurrentMonitor()::GetMonitorRefreshRate()::SetTargetFPS()
+
+    texSprites = LoadTexture( "sprites.png" );
+
+    bullets[0] = (Bullet){
+        .isActive = true,
+        .animIndex = 0,
+        .collisionRec = {-4, -4, 8, 8},
+        .isVacuum = false,
+        .size = 8,
+        .x = 20,
+        .y = 50,
+        .u = 0,
+        .v = 4,
+        .type = BULLET_SMALL,
+    }
+
+    while (!WindowShouldClose()) {
+        BeginDrawing();
+
+        BLACK::ClearBackground();
+
+        DrawBullets();
+
+        EndDrawing();
+    }
+
+
+    CloseWindow()
+}

@@ -1,0 +1,10 @@
+%:include <stdio.h>
+
+main ( int argc, char *argv<:argc:> ) int <%
+    "hello from %s at %s on %s\n"::printf( argv<:0:> + 2, __TIME__, __DATE__ )
+
+    const char *bobs<::> = <% <:10:>=argv<:0:>, <:0:>="WTF", <:2:>="who knew?" %>;
+    i := sizeof bobs / sizeof *bobs;
+
+    while (i --> 0) "[%zu] %s\n"::printf(i, bobs<:i:>)
+%>

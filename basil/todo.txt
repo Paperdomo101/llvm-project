@@ -1,0 +1,139 @@
+
+
+
+
+# ===|===|=== TODO ===|===|===
+
+
+## FIX THIS SHIT
+```
+result := &p::parse_expression()             // evaluates the function THREE times!?
+
+String_View result = &p::parse_expression(); // evaluates it ONCE and requires ';'
+```
+
+
+
+## ||== / ||!=
+
+if l->src[pos] == ' ' || == '\t' || == '\n' {
+
+
+## pointer return types on procedures
+```
+parse_expression (struct Parser *parser, int a) const char * {  // <- currently error: Expected function body after function declarator
+
+```
+
+## implicit return variables
+```
+bob (int a, b, c) int result {
+    result = a + b * c;
+}
+```
+
+## defer
+```
+data := new_data()
+->} data::free()
+```
+
+
+## optional parens + := in for statement
+```
+for i := 0; i < 10; ++i { ... }
+
+```
+
+## struct initializer type inference
+```
+bullets[0] = {
+   .isActive = true;
+}
+```
+
+## default parameters
+```
+some_proc (int a, b, c = 255) { ... }
+
+main () int {
+	some_proc( 4, 5 )
+	some_proc( 9, 10, 0 )
+}
+```
+
+
+## default members
+```
+typedef struct {
+	unsigned int
+		r : 8,
+		g : 8,
+		b : 8,
+		a : 8 = 255;
+} Color;
+```
+
+## units
+```
+< std/io >
+
+```
+
+## generics
+```
+List[int] bob;
+bob::append( 30, 40, 50 )
+```
+
+## Struct arithmetic
+```
+Vector2 a = {0, 5}, b = {-4, 20};
+Vector3 c = a + b; // c = {-4, 25}
+```
+
+
+## Automatic pointer indirection
+
+I'd like to make it so typing `->` is optional, so you can just use `.` instead. This just makes refactoring easier.
+
+```
+some_pointer->value = 10;
+some_pointer.value = 10;    // exactly the same as the other
+```
+
+## Bounds-checked arrays
+
+
+## ^ pointers
+
+## @. pointer dereferencing
+
+
+## new loops
+```
+loop i := 0..10 { ... }
+loop if condition { }
+```
+
+
+# ===|===|=== DONE ===|===|===
+
+## optional parens if statement has { }
+
+## Struct initializer type inference
+```
+tex_test::DrawTexturePro( {0,0,16,16}, {0,40,16,16}, {8,8}, 0, WHITE );
+```
+
+
+
+
+## Implicit void
+
+```
+// automatically inserts void
+main () int {
+
+}
+```

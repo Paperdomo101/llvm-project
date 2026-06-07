@@ -271,7 +271,7 @@ IncludeCategoryManager::IncludeCategoryManager(const IncludeStyle &Style,
   IsMainFile = FileName.ends_with(".c") || FileName.ends_with(".cc") ||
                FileName.ends_with(".cpp") || FileName.ends_with(".c++") ||
                FileName.ends_with(".cxx") || FileName.ends_with(".m") ||
-               FileName.ends_with(".mm");
+               FileName.ends_with(".mm") || FileName.ends_with(".c4") || FileName.ends_with(".civ");
   if (!Style.IncludeIsMainSourceRegex.empty()) {
     llvm::Regex MainFileRegex(Style.IncludeIsMainSourceRegex);
     IsMainFile |= MainFileRegex.match(FileName);

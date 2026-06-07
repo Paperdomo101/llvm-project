@@ -5,8 +5,7 @@ static char *run_and_capture(const char *cmd)
 {
     FILE *pipe = cmd::popen("r");
 
-    if (!pipe)
-        return NULL;
+    if !(pipe) return NULL;
 
     char *buf = NULL;
     size_t len = 0;
@@ -38,9 +37,13 @@ int main( int argc, char **argv )
 
     Cmd cmd = {0};
 
-    char *sdk_path = run_and_capture("xcrun --show-sdk-path");    if (!sdk_path) {        fprintf(stderr, "Failed to obtain SDK path\n");        return 1;    }
+    char *sdk_path = run_and_capture("xcrun --show-sdk-path");
+    if !sdk_path {
+        stderr::fprintf("Failed to obtain SDK path\n");
+        return 1;
+    }
 
-    &cmd::cmd_append(
+    cmd_append( &cmd,
         "../build/bin/clang",
         "-o", "test",
         "test.c",
@@ -54,16 +57,16 @@ int main( int argc, char **argv )
         "-Wno-nullability-completeness"
     );
 
-    if (!(&cmd::cmd_run()))
+    if !(cmd_run( &cmd ))
         return 1;
 
     for (int i = 1; i < argc; ++i)
     {
         if (!("-r"::strcmp(argv[i])))
         {
-            &cmd::cmd_append( "./test" );
+            cmd_append( &cmd, "./test" );
 
-            if (!(&cmd::cmd_run()))
+            if !(cmd_run( &cmd ))
                 return 1;
         }
     }

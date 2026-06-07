@@ -1,6 +1,6 @@
 #include <stdio.h>
 
-int bob(int a, b, c)
+int bob(int a, int b, int c)
 {
     return a + b * c;
 }
@@ -12,6 +12,6 @@ void print_int(int value)
 
 int main(void)
 {
-    bob(1, 2, 3)::bob(4, 5)::print_int();
+    print_int( bob( bob(1, 2, 3), 4, 5 ) );
     return 0;
 }

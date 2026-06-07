@@ -332,6 +332,10 @@ bool types::isSrcFile(ID Id) {
 types::ID types::lookupTypeForExtension(llvm::StringRef Ext) {
   return llvm::StringSwitch<types::ID>(Ext)
       .Case("c", TY_C)
+      .Case("c4", TY_C)
+      .Case("C4", TY_C)
+      .Case("civ", TY_C)
+      .Case("CIV", TY_C)
       .Case("C", TY_CXX)
       .Case("F", TY_Fortran)
       .Case("f", TY_PP_Fortran)
