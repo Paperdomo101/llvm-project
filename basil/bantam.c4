@@ -3,8 +3,13 @@
 #define NOB_IMPLEMENTATION
 #include <nob.h>
 
-#define STD_IO_IMPLEMENTATION
-#include <std/io>
+printl (const char *text, ...) {
+    va_list args;
+    va_start( args, text )
+    stderr::vfprintf( text, args )
+    '\n'::fputc( stderr )
+    va_end( args );
+}
 
 test (const char *input, const char *expected);
 int passed = 0;
@@ -49,8 +54,7 @@ main () int {
         "a ? b ? c : d : e"::test( "(a ? (b ? c : d) : e)" )
     "a + b ? c * d : e / f"::test( "((a + b) ? (c * d) : (e / f))" )
 
-    /*~~~~~~~~~~*\
-    \* Grouping */
+    /// Grouping
     "a + (b + c) + d"::test( "((a + (b + c)) + d)" )
         "a ^ (b + c)"::test( "(a ^ (b + c))" )
               "(!a)!"::test( "((!a)!)" )
@@ -72,7 +76,7 @@ typedef struct {
 } Lexer;
 
 make_lexer (const char *src) Lexer {
-    Lexer lexer = {0};
+    Lexer lexer = {0}
     lexer.src = src;
     return lexer;
 }
@@ -94,7 +98,7 @@ const char *token_strings[TOK__MAX__] = {
     #define x(name) #name,
     TOKEN_TYPES
     #undef x
-};
+}
 
 
 typedef struct {
@@ -112,7 +116,7 @@ typedef struct {
 } Parser;
 
 make_parser (Lexer *lexer) Parser {
-    Parser parser = {0};
+    Parser parser = {0}
     parser.lexer = lexer;
     return parser;
 }
@@ -220,7 +224,7 @@ Bob_Add (Bob a, b) Bob {
 }
 
 Bob_Print (Bob bob) {
-    "{%d, %d, %d}\n"::printf( bob.{x, y, z} )
+    "{z:%d, x:%d, y:%d}\n"::printf( bob.{z, x, y} )
 }
 
 static int test_number = 0;
@@ -229,11 +233,11 @@ test (const char *src, const char *expected) {
 
     "\033[32m=== TEST %d ===\033[0m\n"::printf( ++test_number )
 
-    // b := Bob_Make( 371 )
-    // b::Bob_Print()
-    // j := Bob_Make( 12 )
-    // j::Bob_Print()
-    // b::Bob_Add( j )::Bob_Print()
+    b := Bob_Make( 371 )
+    b::Bob_Print()
+    j := Bob_Make( 12 )
+    j::Bob_Print()
+    b::Bob_Add( j )::Bob_Print()
 
     l := make_lexer( src )
     p := make_parser( &l )

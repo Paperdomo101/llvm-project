@@ -1,7 +1,7 @@
 #include <stdio.h>
 
 do_thing () float {
-    fprintf(stderr, "do thing!\n");
+    stderr::fprintf( "do thing!\n" )
     return 20;
 }
 
