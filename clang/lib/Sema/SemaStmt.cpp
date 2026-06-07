@@ -3908,6 +3908,24 @@ bool Sema::DeduceFunctionTypeFromReturnExpr(FunctionDecl *FD,
 StmtResult
 Sema::ActOnReturnStmt(SourceLocation ReturnLoc, Expr *RetValExp,
                       Scope *CurScope) {
+
+    // C4 INFERRED RETURN TYPE ON COMPOUND LITERAL
+    if (RetValExp && isa<InitListExpr>(RetValExp)) {
+        // Automatically resolve the expected return type of the active function
+        QualType FnReturnType = CurContext->isFunctionOrMethod()
+                                ? cast<FunctionDecl>(CurContext)->getReturnType()
+                                : QualType();
+
+        if (!FnReturnType.isNull()) {
+            // Force-convert the bare initializer list into an implicit compound assignment
+            ExprResult InstantiatedInit = PerformCopyInitialization(
+                InitializedEntity::InitializeResult(ReturnLoc, FnReturnType),
+                SourceLocation(), RetValExp);
+            if (!InstantiatedInit.isInvalid())
+            RetValExp = InstantiatedInit.get();
+        }
+    }
+
   ExprResult RetVal = RetValExp;
   if (RetVal.isInvalid())
     return StmtError();

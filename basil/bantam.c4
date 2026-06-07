@@ -130,11 +130,6 @@ is_numeric (char c) bool {
 }
 
 make_token (Parser *parser, Token_Type type) Token {
-    return (Token) {
-        .start = &parser->lexer->src[parser->lexer->start],
-        .length = parser->lexer->pos - parser->lexer->start,
-        .type = type
-    };
     return {
         .start = &parser->lexer->src[parser->lexer->start],
         .length = parser->lexer->pos - parser->lexer->start,
@@ -203,10 +198,42 @@ parse_expression (Parser *parser) String_View {
 }
 
 
+typedef struct {
+    int x, y, z;
+} Bob;
+
+Bob_Make (int value) Bob {
+    return {
+        .x = value << 10,
+        .y = value * 30,
+        .z = value + 47,
+    };
+}
+
+Bob_Add (Bob a, b) Bob {
+    return {
+        .x = a.x + b.x,
+        .y = a.y + b.y,
+        .z = a.z + b.z,
+    };
+}
+
+Bob_Print (Bob bob) {
+    "{%d, %d, %d}\n"::printf( bob.x, bob.y, bob.z )
+}
+
 static int test_number = 0;
 test (const char *src, const char *expected) {
 
+
     "\033[32m=== TEST %d ===\033[0m\n"::printf( ++test_number )
+
+    b := Bob_Make( 371 )
+    b::Bob_Print()
+    j := Bob_Make( 12 )
+    j::Bob_Print()
+    b::Bob_Add( j )::Bob_Print()
+
     l := make_lexer( src )
     p := make_parser( &l )
 

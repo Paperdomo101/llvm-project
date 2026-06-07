@@ -2390,7 +2390,7 @@ StmtResult Parser::ParseReturnStatement() {
   if (Tok.isNot(tok::semi)) {
     if (!IsCoreturn)
       PreferredType.enterReturn(Actions, Tok.getLocation());
-    // FIXME: Code completion for co_return.
+
     if (Tok.is(tok::code_completion) && !IsCoreturn) {
       cutOffParsing();
       Actions.CodeCompletion().CodeCompleteExpression(
@@ -2398,25 +2398,34 @@ StmtResult Parser::ParseReturnStatement() {
       return StmtError();
     }
 
-    if (Tok.is(tok::l_brace) && getLangOpts().CPlusPlus) {
+    // --- STRUCT INFERENCE IMPLEMENTATION START ---
+    // If we see an opening brace '{', parse it directly as a braced initializer list.
+    // We remove the strict C++ check so your custom language dialect can use it universally.
+    if (Tok.is(tok::l_brace)) {
       R = ParseInitializer();
-      if (R.isUsable())
-        Diag(R.get()->getBeginLoc(),
-             getLangOpts().CPlusPlus11
-                 ? diag::warn_cxx98_compat_generalized_initializer_lists
-                 : diag::ext_generalized_initializer_lists)
-            << R.get()->getSourceRange();
-    } else
+      // This automatically constructs an InitListExpr AST node out of the braced body
+    } else {
+      // Otherwise, parse it as a traditional standard expression
       R = ParseExpression();
+    }
+    // --- STRUCT INFERENCE IMPLEMENTATION END ---
+
     if (R.isInvalid()) {
       SkipUntil(tok::r_brace, StopAtSemi | StopBeforeMatch);
       return StmtError();
     }
   }
+
+  // Your working optional semicolon check:
+  // if (!TryConsumeOptionalSemi()) {
+  //   ExpectAndConsumeSemi(diag::err_expected_semi_after_stmt);
+  // }
+
   if (IsCoreturn)
     return Actions.ActOnCoreturnStmt(getCurScope(), ReturnLoc, R.get());
   return Actions.ActOnReturnStmt(ReturnLoc, R.get(), getCurScope());
 }
+
 
 StmtResult Parser::ParseDeferStatement(SourceLocation *TrailingElseLoc) {
   assert(Tok.is(tok::kw__Defer));
