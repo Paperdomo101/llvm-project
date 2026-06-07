@@ -896,6 +896,9 @@ private:
                         unsigned Diag = diag::err_expected,
                         StringRef DiagMsg = "");
 
+
+  bool TryConsumeOptionalSemi();
+
   /// The parser expects a semicolon and, if present, will consume it.
   ///
   /// If the next token is not a semicolon, this emits the specified diagnostic,

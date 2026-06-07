@@ -2450,7 +2450,7 @@ Parser::DeclGroupPtrTy Parser::ParseDeclGroup(ParsingDeclSpec &DS,
   if (DeclEnd)
     *DeclEnd = Tok.getLocation();
 
-  if (ExpectSemi && ExpectAndConsumeSemi(
+  if (ExpectSemi && !TryConsumeOptionalSemi() && ExpectAndConsumeSemi(
                         Context == DeclaratorContext::File
                             ? diag::err_invalid_token_after_toplevel_declarator
                             : diag::err_expected_semi_declaration)) {

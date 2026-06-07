@@ -594,7 +594,8 @@ StmtResult Parser::ParseExprStatement(ParsedStmtContext StmtCtx) {
     CurTok = &Tok;
   else
     // Otherwise, eat the semicolon.
-    ExpectAndConsumeSemi(diag::err_expected_semi_after_expr);
+    if (!TryConsumeOptionalSemi())
+        ExpectAndConsumeSemi(diag::err_expected_semi_after_expr);
 
   StmtResult R = handleExprStmt(Expr, StmtCtx);
   if (CurTok && !R.isInvalid())
@@ -1183,7 +1184,7 @@ StmtResult Parser::ParseCompoundStatementBody(bool isStmtExpr) {
         Actions.FinalizeDeclaratorGroup(getCurScope(), DS, DeclsInGroup);
     StmtResult R = Actions.ActOnDeclStmt(Res, LabelLoc, Tok.getLocation());
 
-    ExpectAndConsumeSemi(diag::err_expected_semi_declaration);
+    if (!TryConsumeOptionalSemi())ExpectAndConsumeSemi(diag::err_expected_semi_declaration);
     if (R.isUsable())
       Stmts.push_back(R.get());
   }

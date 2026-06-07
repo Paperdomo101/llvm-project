@@ -172,6 +172,50 @@ bool Parser::ExpectAndConsume(tok::TokenKind ExpectedTok, unsigned DiagID,
   return true;
 }
 
+
+/////---------------- BEGIN C4 CODE ---------------/////
+
+bool Parser::TryConsumeOptionalSemi() {
+  // If a semicolon is physically present, consume it safely and we are done.
+  if (Tok.is(tok::semi)) {
+    ConsumeToken();
+    return true;
+  }
+
+  // Look back at the token that physically terminated the statement/expression.
+  SourceLocation PrevLoc = PrevTokLocation;
+  if (PrevLoc.isInvalid())
+    return false;
+
+  SourceManager &SM = Actions.getASTContext().getSourceManager();
+
+  // --- THE FIX: Look at where the token was typed, not where it was expanded ---
+  SourceLocation TargetLoc = PrevLoc.isMacroID() ? SM.getSpellingLoc(PrevLoc)
+                                                 : SM.getFileLoc(PrevLoc);
+
+  SourceLocation TokenStartLoc = Lexer::GetBeginningOfToken(TargetLoc, SM, getLangOpts());
+  // -----------------------------------------------------------------------------
+
+  if (TokenStartLoc.isValid()) {
+    Token TheTrailingToken;
+    if (!Lexer::getRawToken(TokenStartLoc, TheTrailingToken, SM, getLangOpts(), /*IgnoreEOD=*/true)) {
+      tok::TokenKind K = TheTrailingToken.getKind();
+
+      // If the preceding token was ), ], or }, the semicolon is optional.
+      if (K == tok::r_paren || K == tok::r_square || K == tok::r_brace) {
+        return true;
+      }
+    }
+  }
+
+  // Semicolon was missing, and the statement did NOT end with a valid bracket.
+  return false;
+}
+
+
+/////----------------- END C4 CODE -----------------/////
+
+
 bool Parser::ExpectAndConsumeSemi(unsigned DiagID, StringRef TokenUsed) {
   if (TryConsumeToken(tok::semi))
     return false;

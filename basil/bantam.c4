@@ -135,6 +135,11 @@ make_token (Parser *parser, Token_Type type) Token {
         .length = parser->lexer->pos - parser->lexer->start,
         .type = type
     };
+    return {
+        .start = &parser->lexer->src[parser->lexer->start],
+        .length = parser->lexer->pos - parser->lexer->start,
+        .type = type
+    };
 }
 
 scan_tokens (Parser *parser) {
@@ -191,8 +196,7 @@ parse_expression (Parser *parser) String_View {
 
     da_foreach( Token, token, &parser->tokens )
     {
-        "%s '%.*s'\n"::printf( token_strings[token->type], token->length, token->start );
-
+        "%s '%.*s'\n"::printf( token_strings[token->type], token->length, token->start )
     }
 
     return sv_from_cstr( parser->lexer->src );
@@ -224,8 +228,8 @@ test (const char *src, const char *expected) {
     */
     #define FAILURE(value) do { \
         ++failed; \
-        "[FAIL] Expected: %s"::printl(expected); \
-    } while(0);
+        "[FAIL] Expected: %s"::printl(expected) \
+    } while(0)
 
 
     printf( "begin parse\n")
@@ -235,7 +239,7 @@ test (const char *src, const char *expected) {
     got := temp_sv_to_cstr( result )
 
     if (strcmp( expected, got ))
-        FAILURE( actual )
+        FAILURE( actual );
     else
         ++passed;
 }
