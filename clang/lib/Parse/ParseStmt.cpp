@@ -557,6 +557,7 @@ Retry:
   return Res;
 }
 
+
 StmtResult Parser::ParseExprStatement(ParsedStmtContext StmtCtx) {
   // If a case keyword is missing, this is where it should be inserted.
   Token OldToken = Tok;
@@ -587,51 +588,15 @@ StmtResult Parser::ParseExprStatement(ParsedStmtContext StmtCtx) {
   }
 
   Token *CurTok = nullptr;
-
   // If the semicolon is missing at the end of REPL input, we want to print
   // the result. Note we shouldn't eat the token since the callback needs it.
-  if (Tok.is(tok::annot_repl_input_end)) {
+  if (Tok.is(tok::annot_repl_input_end))
     CurTok = &Tok;
-  } else {
-    // Look back at the token that physically terminated the expression
-    // Look back at the token that physically terminated the expression
-    SourceLocation EndLoc = Expr.get()->getEndLoc();
-    tok::TokenKind FinalExprTok = tok::unknown;
-
-    if (EndLoc.isValid()) {
-      SourceManager &SM = Actions.getASTContext().getSourceManager();
-
-      // 1. Unpack macro expansions to find the actual physical file location
-      SourceLocation FileLoc = SM.getFileLoc(EndLoc);
-
-      // 2. Ensure we are pointing at the exact start of the final token
-      FileLoc = Lexer::GetBeginningOfToken(FileLoc, SM, getLangOpts());
-
-      if (FileLoc.isValid()) {
-        Token TheTrailingToken;
-        // 3. Safely look up the token without breaking the preprocessor pipeline
-        if (!Lexer::getRawToken(FileLoc, TheTrailingToken, SM, getLangOpts(), /*IgnoreEOD=*/true)) {
-          FinalExprTok = TheTrailingToken.getKind();
-        }
-      }
-    }
-
-
-    // Determine if the semicolon is legally optional
-    bool SemicolonIsOptional = (FinalExprTok == tok::r_brace ||
-                                FinalExprTok == tok::r_square ||
-                                FinalExprTok == tok::r_paren);
-
-    if (Tok.is(tok::semi)) {
-      ConsumeToken(); // Semicolon is present, safely eat it
-    } else if (!SemicolonIsOptional) {
-      // Semicolon is missing, and the expression did NOT end with }, ], or )
-      ExpectAndConsumeSemi(diag::err_expected_semi_after_expr);
-    }
-  }
+  else
+    // Otherwise, eat the semicolon.
+    ExpectAndConsumeSemi(diag::err_expected_semi_after_expr);
 
   StmtResult R = handleExprStmt(Expr, StmtCtx);
-
   if (CurTok && !R.isInvalid())
     CurTok->setAnnotationValue(R.get());
 
