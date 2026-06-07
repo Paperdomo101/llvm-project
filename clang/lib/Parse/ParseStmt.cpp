@@ -594,20 +594,28 @@ StmtResult Parser::ParseExprStatement(ParsedStmtContext StmtCtx) {
     CurTok = &Tok;
   } else {
     // Look back at the token that physically terminated the expression
+    // Look back at the token that physically terminated the expression
     SourceLocation EndLoc = Expr.get()->getEndLoc();
     tok::TokenKind FinalExprTok = tok::unknown;
 
     if (EndLoc.isValid()) {
-      Token TheTrailingToken;
-      // Access the SourceManager via Actions.getASTContext()
       SourceManager &SM = Actions.getASTContext().getSourceManager();
-      SourceLocation SpellingLoc = SM.getSpellingLoc(EndLoc);
 
-      // Use the Preprocessor to look up the raw token from the source file
-      if (!PP.getRawToken(SpellingLoc, TheTrailingToken, /*IgnoreEOD=*/true)) {
-        FinalExprTok = TheTrailingToken.getKind();
+      // 1. Unpack macro expansions to find the actual physical file location
+      SourceLocation FileLoc = SM.getFileLoc(EndLoc);
+
+      // 2. Ensure we are pointing at the exact start of the final token
+      FileLoc = Lexer::GetBeginningOfToken(FileLoc, SM, getLangOpts());
+
+      if (FileLoc.isValid()) {
+        Token TheTrailingToken;
+        // 3. Safely look up the token without breaking the preprocessor pipeline
+        if (!Lexer::getRawToken(FileLoc, TheTrailingToken, SM, getLangOpts(), /*IgnoreEOD=*/true)) {
+          FinalExprTok = TheTrailingToken.getKind();
+        }
       }
     }
+
 
     // Determine if the semicolon is legally optional
     bool SemicolonIsOptional = (FinalExprTok == tok::r_brace ||

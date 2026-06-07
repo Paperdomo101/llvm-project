@@ -195,17 +195,18 @@ parse_expression (Parser *parser) String_View {
 
     }
 
-    return sv_from_cstr(parser->lexer->src);
+    return sv_from_cstr( parser->lexer->src );
 }
 
 
 static int test_number = 0;
 test (const char *src, const char *expected) {
-    "\033[32m=== TEST %d ===\033[0m\n"::printf( ++test_number );
+
+    "\033[32m=== TEST %d ===\033[0m\n"::printf( ++test_number )
     l := make_lexer( src )
     p := make_parser( &l )
 
-    "%s\n"::printf( src );
+    "%s\n"::printf( src )
 
     // FAILURE [T] ( T value ) {
     //     ++failed;
@@ -223,15 +224,15 @@ test (const char *src, const char *expected) {
     */
     #define FAILURE(value) do { \
         ++failed; \
-        "[FAIL] Expected: %s"::printl(expected) \
+        "[FAIL] Expected: %s"::printl(expected); \
     } while(0);
 
 
-    printf( "begin parse\n");
-    String_View result = &p::parse_expression();
-    printf( "end\n");
+    printf( "begin parse\n")
+    result := &p::parse_expression()
+    printf( "end\n")
 
-    got := temp_sv_to_cstr( result );
+    got := temp_sv_to_cstr( result )
 
     if (strcmp( expected, got ))
         FAILURE( actual )
