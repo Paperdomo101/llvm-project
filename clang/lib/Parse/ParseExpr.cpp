@@ -314,6 +314,9 @@ bool Parser::isFoldOperator(tok::TokenKind Kind) const {
 
 ExprResult
 Parser::ParseRHSOfBinaryExpression(ExprResult LHS, prec::Level MinPrec) {
+
+
+
   prec::Level NextTokPrec = getBinOpPrecedence(Tok.getKind(),
                                                GreaterThanIsOperator,
                                                getLangOpts().CPlusPlus11);
@@ -321,6 +324,30 @@ Parser::ParseRHSOfBinaryExpression(ExprResult LHS, prec::Level MinPrec) {
 
   auto SavedType = PreferredType;
   while (true) {
+  tok::TokenKind OpTokenKind = Tok.getKind();
+
+    // --- GREEDY EXPRESSION BREAK FIX ---
+    // If the active token is a potential binary operator (like &, *, +, -)
+    // but it sits at the start of a completely new line, AND the expression
+    // we just finished parsing ended in a bracket, treat it as a statement boundary!
+    if ((OpTokenKind == tok::amp || OpTokenKind == tok::star ||
+         OpTokenKind == tok::plus || OpTokenKind == tok::minus) &&
+        Tok.isAtStartOfLine()) {
+
+      SourceManager &SM = Actions.getASTContext().getSourceManager();
+      if (ExpressionEndedInOptionalBracket(PrevTokLocation, SM, getLangOpts())) {
+        // Break out of the greedy RHS loop immediately.
+        // This forces the current expression to end cleanly right at the bracket,
+        // leaving the operator on the next line to be parsed fresh as a unary operator.
+        return LHS;
+      }
+    }
+
+  // ------------------------------------
+
+    // ... Rest of Clang's native binary operator/precedence sorting logic continues completely untouched ...
+
+
     // Every iteration may rely on a preferred type for the whole expression.
     PreferredType = SavedType;
     // If this token has a lower precedence than we are allowed to parse (e.g.

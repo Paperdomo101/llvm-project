@@ -175,42 +175,71 @@ bool Parser::ExpectAndConsume(tok::TokenKind ExpectedTok, unsigned DiagID,
 
 /////---------------- BEGIN C4 CODE ---------------/////
 
+bool Parser::ExpressionEndedInOptionalBracket(SourceLocation PrevLoc, SourceManager &SM, const LangOptions &LangOpts) {
+  if (PrevLoc.isInvalid()) return false;
+
+  SourceLocation TargetLoc = PrevLoc.isMacroID() ? SM.getSpellingLoc(PrevLoc)
+                                                 : SM.getFileLoc(PrevLoc);
+
+  SourceLocation TokenStartLoc = Lexer::GetBeginningOfToken(TargetLoc, SM, LangOpts);
+  if (TokenStartLoc.isInvalid()) return false;
+
+  Token TheTrailingToken;
+  if (!Lexer::getRawToken(TokenStartLoc, TheTrailingToken, SM, LangOpts, /*IgnoreEOD=*/true)) {
+    tok::TokenKind K = TheTrailingToken.getKind();
+    return (K == tok::r_paren || K == tok::r_square || K == tok::r_brace);
+  }
+  return false;
+}
+
+
 bool Parser::TryConsumeOptionalSemi() {
-  // If a semicolon is physically present, consume it safely and we are done.
+  // 1. If a physical semicolon is present, consume it safely and exit.
   if (Tok.is(tok::semi)) {
     ConsumeToken();
     return true;
   }
 
-  // Look back at the token that physically terminated the statement/expression.
+  // 2. Identify where the token stream is.
   SourceLocation PrevLoc = PrevTokLocation;
   if (PrevLoc.isInvalid())
     return false;
 
   SourceManager &SM = Actions.getASTContext().getSourceManager();
-
-  // --- THE FIX: Look at where the token was typed, not where it was expanded ---
   SourceLocation TargetLoc = PrevLoc.isMacroID() ? SM.getSpellingLoc(PrevLoc)
                                                  : SM.getFileLoc(PrevLoc);
 
   SourceLocation TokenStartLoc = Lexer::GetBeginningOfToken(TargetLoc, SM, getLangOpts());
-  // -----------------------------------------------------------------------------
 
   if (TokenStartLoc.isValid()) {
     Token TheTrailingToken;
     if (!Lexer::getRawToken(TokenStartLoc, TheTrailingToken, SM, getLangOpts(), /*IgnoreEOD=*/true)) {
       tok::TokenKind K = TheTrailingToken.getKind();
 
-      // If the preceding token was ), ], or }, the semicolon is optional.
+      // 3. Condition: If the preceding token was ), ], or }, the semicolon is optional!
       if (K == tok::r_paren || K == tok::r_square || K == tok::r_brace) {
+
+        // --- THE TOKEN INJECTION FIX ---
+        // Force Clang to push the upcoming token (the 'with-ambiguity' operator) back onto the cache stack.
+        PP.EnterToken(Tok, /*IsReinject=*/true);
+
+        // Mutate the active looking token into a synthetic semicolon.
+        // This explicitly cuts off the current statement, preventing it from bleeding across line boundaries.
+        Tok.startToken();
+        Tok.setKind(tok::semi);
+        Tok.setLocation(PrevLoc);
+        Tok.setLength(0); // Marker for synthetic tokens
+
+        // Safely consume our fresh virtual semicolon to cleanly finalize the active statement structure.
+        ConsumeToken();
         return true;
       }
     }
   }
 
-  // Semicolon was missing, and the statement did NOT end with a valid bracket.
   return false;
 }
+
 
 
 /////----------------- END C4 CODE -----------------/////

@@ -897,6 +897,7 @@ private:
                         StringRef DiagMsg = "");
 
 
+  bool ExpressionEndedInOptionalBracket(SourceLocation PrevLoc, SourceManager &SM, const LangOptions &LangOpts);
   bool TryConsumeOptionalSemi();
 
   /// The parser expects a semicolon and, if present, will consume it.
