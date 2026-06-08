@@ -5090,7 +5090,7 @@ void Parser::ParseStructUnionBody(SourceLocation RecordLoc,
       continue;
 
     if (Tok.is(tok::r_brace)) {
-      // ExpectAndConsume(tok::semi, diag::ext_expected_semi_decl_list);
+      ExpectAndConsume(tok::semi, diag::err_expected_semi_decl_list);
       break;
     }
 
@@ -7526,35 +7526,6 @@ void Parser::ParseFunctionDeclarator(Declarator &D,
     });
   }
 
-
-
-// 💡 PATCH: Handle Trailing Return Type for C
-bool TypeWasOmittedOnLeft = (D.getDeclSpec().getSourceRange().getBegin() == D.getIdentifierLoc());
-
-if (!getLangOpts().CPlusPlus && TypeWasOmittedOnLeft &&
-    isDeclarationSpecifier(ImplicitTypenameContext::No)) {
-
-
-    // 1. Capture the active, mutable DeclSpec context from the declarator
-    DeclSpec &TargetDS = D.getMutableDeclSpec();
-
-    // 2. Clear out the initial temporary 'void' type specifier state
-    // This safely resets the internal tracker fields so ParseDeclarationSpecifiers
-    // accepts a fresh type on the right without triggering an internal redefinition error.
-    TargetDS.ClearTypeSpecType();
-
-    // 3. Setup empty template state configurations matching the standard function signature
-    ParsedTemplateInfo EmptyTemplateInfo;
-
-    // 4. Invoke the parser directly onto the TargetDS memory footprint.
-    // This natively parses the trailing token (e.g. 'int' or a struct) into the right place!
-    ParseDeclarationSpecifiers(TargetDS, EmptyTemplateInfo, AS_none,
-                                DeclSpecContext::DSC_normal);
-
-
-}
-
-
   // Remember that we parsed a function type, and remember the attributes.
   D.AddTypeInfo(DeclaratorChunk::getFunction(
                     HasProto, IsAmbiguous, LParenLoc, ParamInfo.data(),
@@ -7568,6 +7539,55 @@ if (!getLangOpts().CPlusPlus && TypeWasOmittedOnLeft &&
                     LocalEndLoc, D, TrailingReturnType, TrailingReturnTypeLoc,
                     &DS),
                 std::move(FnAttrs), EndLoc);
+
+  // C4 PATCH: Handle Trailing Return Type for C (Moved after AddTypeInfo)
+  bool TypeWasOmittedOnLeft = (D.getDeclSpec().getSourceRange().getBegin() == D.getIdentifierLoc());
+
+  if (!getLangOpts().CPlusPlus && TypeWasOmittedOnLeft &&
+      isDeclarationSpecifier(ImplicitTypenameContext::No)) {
+
+      // 1. Capture the active, mutable DeclSpec context from the declarator
+      DeclSpec &TargetDS = D.getMutableDeclSpec();
+
+      // 2. Clear out the initial temporary 'void' type specifier state
+      TargetDS.ClearTypeSpecType();
+
+      // 3. Setup empty template state configurations
+      ParsedTemplateInfo EmptyTemplateInfo;
+
+      // 4. Parse the base type specifier (e.g., 'char')
+      ParseDeclarationSpecifiers(TargetDS, EmptyTemplateInfo, AS_none,
+                                  DeclSpecContext::DSC_normal);
+
+      // 5. Parse trailing pointer modifiers manually
+      while (Tok.is(tok::star)) {
+          SourceLocation StarLoc = ConsumeToken();
+          DeclSpec DSAttributes(AttrFactory);
+
+          // Parse qualifiers like 'const' or 'volatile' after the star (e.g., char * const)
+          ParseTypeQualifierListOpt(DSAttributes);
+
+          // Append the pointer chunk outside the function chunk
+          D.AddTypeInfo(DeclaratorChunk::getPointer(
+                            DSAttributes.getTypeQualifiers(), StarLoc,
+                            DSAttributes.getConstSpecLoc(),
+                            DSAttributes.getVolatileSpecLoc(),
+                            DSAttributes.getRestrictSpecLoc(),
+                            DSAttributes.getAtomicSpecLoc(),
+                            DSAttributes.getUnalignedSpecLoc()),
+                        std::move(DSAttributes.getAttributes()), Tok.getLocation());
+      }
+
+      // 6. Parse trailing array modifiers manually
+      while (Tok.is(tok::l_square)) {
+          ParseBracketDeclarator(D);
+      }
+
+      // llvm::errs()
+      //     << "Remaining token: "
+      //     << tok::getTokenName(Tok.getKind())
+      //     << "\n";
+    }
 }
 
 bool Parser::ParseRefQualifier(bool &RefQualifierIsLValueRef,

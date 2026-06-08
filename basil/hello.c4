@@ -8,6 +8,13 @@ io_print (const char *txt) {
     printf( "%s", txt )
 }
 
+// const char * message () {  // <- this parses
+//     return "hello";
+// }
+message () const char * {
+    return "hi";
+}
+
 main () int {
     io_print("Hellooo")
     ", Baby!"::printl()

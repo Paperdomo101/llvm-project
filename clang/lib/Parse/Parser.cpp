@@ -194,50 +194,108 @@ bool Parser::ExpressionEndedInOptionalBracket(SourceLocation PrevLoc, SourceMana
 
 
 bool Parser::TryConsumeOptionalSemi() {
-  // 1. If a physical semicolon is present, consume it safely and exit.
-  if (Tok.is(tok::semi)) {
-    ConsumeToken();
-    return true;
-  }
+    // llvm::errs()
+    //     << "OPTIONAL: Tok="
+    //     << tok::getTokenName(Tok.getKind())
+    //     << "\n";
 
-  // 2. Identify where the token stream is.
-  SourceLocation PrevLoc = PrevTokLocation;
-  if (PrevLoc.isInvalid())
-    return false;
-
-  SourceManager &SM = Actions.getASTContext().getSourceManager();
-  SourceLocation TargetLoc = PrevLoc.isMacroID() ? SM.getSpellingLoc(PrevLoc)
-                                                 : SM.getFileLoc(PrevLoc);
-
-  SourceLocation TokenStartLoc = Lexer::GetBeginningOfToken(TargetLoc, SM, getLangOpts());
-
-  if (TokenStartLoc.isValid()) {
-    Token TheTrailingToken;
-    if (!Lexer::getRawToken(TokenStartLoc, TheTrailingToken, SM, getLangOpts(), /*IgnoreEOD=*/true)) {
-      tok::TokenKind K = TheTrailingToken.getKind();
-
-      // 3. Condition: If the preceding token was ), ], or }, the semicolon is optional!
-      if (K == tok::r_paren || K == tok::r_square || K == tok::r_brace) {
-
-        // --- THE TOKEN INJECTION FIX ---
-        // Force Clang to push the upcoming token (the 'with-ambiguity' operator) back onto the cache stack.
-        PP.EnterToken(Tok, /*IsReinject=*/true);
-
-        // Mutate the active looking token into a synthetic semicolon.
-        // This explicitly cuts off the current statement, preventing it from bleeding across line boundaries.
-        Tok.startToken();
-        Tok.setKind(tok::semi);
-        Tok.setLocation(PrevLoc);
-        Tok.setLength(0); // Marker for synthetic tokens
-
-        // Safely consume our fresh virtual semicolon to cleanly finalize the active statement structure.
+    // 1. If a physical semicolon is present, consume it safely and exit.
+    if (Tok.is(tok::semi)) {
         ConsumeToken();
         return true;
-      }
     }
-  }
 
-  return false;
+    // 2. Identify where the token stream is.
+    SourceLocation PrevLoc = PrevTokLocation;
+
+
+    // llvm::errs()
+    //     << "PrevLoc valid = "
+    //     << PrevLoc.isValid()
+    //     << "\n";
+
+    // if (PrevLoc.isValid()) {
+    //     llvm::errs()
+    //         << "PrevLoc = "
+    //         << PrevLoc.printToString(
+    //             Actions.getASTContext().getSourceManager())
+    //         << "\n";
+    // }
+
+    if (PrevLoc.isInvalid())
+        return false;
+
+    SourceManager &SM = Actions.getASTContext().getSourceManager();
+    SourceLocation TargetLoc = PrevLoc.isMacroID() ? SM.getSpellingLoc(PrevLoc)
+                                                   : SM.getFileLoc(PrevLoc);
+
+
+    // unsigned PrevLine =
+    //     SM.getSpellingLineNumber(PrevLoc);
+
+    // unsigned CurrLine =
+    //     SM.getSpellingLineNumber(Tok.getLocation());
+
+    // llvm::errs()
+    //     << "PrevLine=" << PrevLine
+    //     << " CurrLine=" << CurrLine
+    //     << "\n";
+
+    // if (Tok.is(tok::r_brace))
+    //     return PrevLine == CurrLine;
+
+
+    SourceLocation TokenStartLoc = Lexer::GetBeginningOfToken(TargetLoc, SM, getLangOpts());
+
+    // llvm::errs()
+    //     << "TokenStartLoc valid = "
+    //     << TokenStartLoc.isValid()
+    //     << "\n";
+
+    if (TokenStartLoc.isValid()) {
+        Token TheTrailingToken;
+
+        bool Failed = Lexer::getRawToken(TokenStartLoc, TheTrailingToken, SM, getLangOpts(), true);
+        // llvm::errs()
+        //     << "getRawToken failed = "
+        //     << Failed
+        //     << "\n";
+
+        if (!Failed) {
+            // llvm::errs()
+            //     << "Recovered token = "
+            //     << tok::getTokenName(TheTrailingToken.getKind())
+            //     << "\n";
+
+            tok::TokenKind K = TheTrailingToken.getKind();
+
+            // 3. Condition: If the preceding token was ), ], or }, the semicolon is optional!
+            if (K == tok::r_paren || K == tok::r_square || K == tok::r_brace) {
+
+                // --- THE TOKEN INJECTION FIX ---
+                // Force Clang to push the upcoming token (the 'with-ambiguity' operator) back onto the cache stack.
+                PP.EnterToken(Tok, /*IsReinject=*/true);
+
+                // Mutate the active looking token into a synthetic semicolon.
+                // This explicitly cuts off the current statement, preventing it from bleeding across line boundaries.
+                Tok.startToken();
+                Tok.setKind(tok::semi);
+                Tok.setLocation(PrevLoc);
+                Tok.setLength(0); // Marker for synthetic tokens
+
+                // Safely consume our fresh virtual semicolon to cleanly finalize the active statement structure.
+                ConsumeToken();
+                // llvm::errs()
+                //     << "Tok=" << tok::getTokenName(Tok.getKind())
+                //     << " Prev=" << tok::getTokenName(TheTrailingToken.getKind())
+                //     // << " SemiError=" << (SemiError ? SemiError : "<null>")
+                //     << "\n";
+                return true;
+            }
+        }
+    }
+
+    return false;
 }
 
 

@@ -8,7 +8,7 @@ printl (const char *text, ...) {
     va_start( args, text )
     stderr::vfprintf( text, args )
     '\n'::fputc( stderr )
-    va_end( args );
+    va_end( args )
 }
 
 test (const char *input, const char *expected);
@@ -16,6 +16,8 @@ int passed = 0;
 int failed = 0;
 
 main () int {
+
+    "from + offset( time )"::test( "from + offset( time )" )
 
     /// Function calls
                     "a()"::test( "a()" )
@@ -60,19 +62,19 @@ main () int {
               "(!a)!"::test( "((!a)!)" )
 
     if failed {
-        "----"::printl()
+        "\033[31m-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-\033[0m"::printl()
         "Failed %d out of %d tests."::printl( failed, failed+passed )
         EXIT_FAILURE::exit()
     }
 
+    "\033[32m-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-\033[0m"::printl()
     "Passed all %d tests."::printl( passed )
     EXIT_SUCCESS::exit()
 }
 
 typedef struct {
     const char *src;
-    int start;
-    int pos;
+    int start, pos;
 } Lexer;
 
 make_lexer (const char *src) Lexer {
@@ -83,8 +85,8 @@ make_lexer (const char *src) Lexer {
 
 #define TOKEN_TYPES \
 x(EOF)   x(ERROR) x(L_PAREN) x(R_PAREN) \
-x(BANG)  x(QMARK) x(COLON)   x(CARET) \
-x(PLUS)  x(MINUS) x(SLASH)   x(STAR) \
+x(BANG)  x(QMARK) x(COLON)   x(CARET)   \
+x(PLUS)  x(MINUS) x(SLASH)   x(STAR)    \
 x(COMMA) x(EQUAL) x(TILDE)   x(IDENTIFIER)
 
 typedef enum {
@@ -101,6 +103,27 @@ const char *token_strings[TOK__MAX__] = {
 }
 
 
+#define PRECEDENCE \
+x(NONE)        x(ASSIGNMENT) \
+x(CONDITIONAL) x(SUM)        \
+x(PRODUCT)     x(EXPONENT)   \
+x(PREFIX)      x(POSTFIX)    \
+x(CALL)
+
+typedef enum {
+    #define x(name) PREC_##name,
+    PRECEDENCE
+    #undef x
+    PREC__MAX__
+} Precedence;
+
+const char *prec_strings[PREC__MAX__] = {
+    #define x(name) #name,
+    PRECEDENCE
+    #undef x
+}
+
+
 typedef struct {
     Token_Type type;
     const char *start;
@@ -113,6 +136,7 @@ typedef struct {
         size_t count, capacity;
         Token *items;
     } tokens;
+    int current_token;
 } Parser;
 
 make_parser (Lexer *lexer) Parser {
@@ -122,15 +146,15 @@ make_parser (Lexer *lexer) Parser {
 }
 
 is_whitespace (char c) bool {
-    return c == ' ' || c == '\t' || c == '\n';
+    return (c == ' ' || c == '\t' || c == '\n')
 }
 
 is_alpha (char c) bool {
-    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_';
+    return c == '_' || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
 }
 
 is_numeric (char c) bool {
-    return (c >= '0' && c <= '9');
+    return (c >= '0' && c <= '9')
 }
 
 make_token (Parser *parser, Token_Type type) Token {
@@ -138,7 +162,7 @@ make_token (Parser *parser, Token_Type type) Token {
         .start = &parser.lexer.src[parser.lexer.start],
         .length = parser.lexer.pos - parser.lexer.start,
         .type = type
-    };
+    }
 }
 
 scan_tokens (Parser *parser) {
@@ -154,7 +178,8 @@ scan_tokens (Parser *parser) {
 
         if !l.src[l.pos] {
             l.start = l.pos;
-            da_append( &parser.tokens, parser::make_token(TOK_EOF) );
+            eof := parser::make_token( TOK_EOF )
+            da_append( &parser.tokens, eof )
             return;
         }
 
@@ -165,79 +190,127 @@ scan_tokens (Parser *parser) {
             while (l.src[l.pos]::is_alpha() || l.src[l.pos]::is_numeric())
                 ++l.pos;
 
-            da_append( &parser.tokens, parser::make_token(TOK_IDENTIFIER) );
+            identifier := parser::make_token( TOK_IDENTIFIER )
+            da_append( &parser.tokens, identifier )
             continue;
         }
 
+        Token_Type punctuator_type = TOK_ERROR;
         switch (l.src[l.pos++])
         {
-            default:  da_append( &parser.tokens, parser::make_token(TOK_ERROR)   ); break;
-            case '(': da_append( &parser.tokens, parser::make_token(TOK_L_PAREN) ); break;
-            case ')': da_append( &parser.tokens, parser::make_token(TOK_R_PAREN) ); break;
-            case '~': da_append( &parser.tokens, parser::make_token(TOK_TILDE)   ); break;
-            case '?': da_append( &parser.tokens, parser::make_token(TOK_QMARK)   ); break;
-            case ',': da_append( &parser.tokens, parser::make_token(TOK_COMMA)   ); break;
-            case '!': da_append( &parser.tokens, parser::make_token(TOK_BANG)    ); break;
-            case '=': da_append( &parser.tokens, parser::make_token(TOK_EQUAL)   ); break;
-            case ':': da_append( &parser.tokens, parser::make_token(TOK_COLON)   ); break;
-            case '^': da_append( &parser.tokens, parser::make_token(TOK_CARET)   ); break;
-            case '+': da_append( &parser.tokens, parser::make_token(TOK_PLUS)    ); break;
-            case '-': da_append( &parser.tokens, parser::make_token(TOK_MINUS)   ); break;
-            case '*': da_append( &parser.tokens, parser::make_token(TOK_STAR)    ); break;
-            case '/': da_append( &parser.tokens, parser::make_token(TOK_SLASH)   ); break;
+            case '(': punctuator_type = TOK_L_PAREN; break;
+            case ')': punctuator_type = TOK_R_PAREN; break;
+            case '~': punctuator_type =   TOK_TILDE; break;
+            case '?': punctuator_type =   TOK_QMARK; break;
+            case ',': punctuator_type =   TOK_COMMA; break;
+            case '!': punctuator_type =    TOK_BANG; break;
+            case '=': punctuator_type =   TOK_EQUAL; break;
+            case ':': punctuator_type =   TOK_COLON; break;
+            case '^': punctuator_type =   TOK_CARET; break;
+            case '+': punctuator_type =    TOK_PLUS; break;
+            case '-': punctuator_type =   TOK_MINUS; break;
+            case '*': punctuator_type =    TOK_STAR; break;
+            case '/': punctuator_type =   TOK_SLASH; break;
         }
+
+        punctuator := parser::make_token( punctuator_type )
+        da_append( &parser.tokens, punctuator )
     }
 }
 
-parse_expression (Parser *parser) String_View {
 
-    "%s\n"::printf(__func__);
-    parser::scan_tokens()
+get_precedence (Token_Type type) Precedence {
+    switch (type) {
+        default: return PREC_NONE;
 
-    da_foreach( Token, token, &parser->tokens )
-    {
-        "%s '%.*s'\n"::printf( token_strings[token->type], token->length, token->start )
+        case TOK_PLUS: case TOK_MINUS:
+            return PREC_SUM;
+
+        case TOK_STAR: case TOK_SLASH:
+            return PREC_PRODUCT;
+
+        case TOK_COLON: case TOK_QMARK:
+            return PREC_CONDITIONAL;
+
+        case TOK_BANG: case TOK_TILDE:
+            return PREC_PREFIX;
+
+        case TOK_CARET:   return PREC_EXPONENT;
+        case TOK_EQUAL:   return PREC_ASSIGNMENT;
+        case TOK_L_PAREN: return PREC_CALL;
+        case TOK_R_PAREN: return PREC_POSTFIX;
     }
-
-    return sv_from_cstr( parser->lexer->src );
 }
 
+name_expression (Parser *parser) int {
+
+}
+
+
+consume (Parser *parser) Token {
+    current := parser.tokens.items[parser.current_token]
+    if current.type == TOK_EOF {
+        return current;
+    }
+    ++parser.current_token;
+    return current;
+}
+
+typedef void (*Parse_Fn)(Parser *parser)
+
+Parse_Fn parse_fns[] = {}
 
 typedef struct {
-    int x, y, z;
-} Bob;
 
-Bob_Make (int value) Bob {
+} Expression;
+
+parse_expression (Parser *parser, Precedence prec) Expression {
+    token := parser::consume()
+
+
+    // return name_expression( parser )
+
+    // if
     return {
-        .x = value << 10,
-        .y = value * 30,
-        .z = value + 47,
-    };
+
+    }
 }
 
-Bob_Add (Bob a, b) Bob {
-    return {
-        .x = a.x + b.x,
-        .y = a.y + b.y,
-        .z = a.z + b.z,
-    };
+parse (Parser *parser) String_View {
+
+    parser::scan_tokens()
+
+    i := 0;
+    for (;;) {
+        token := &parser.tokens.items[i]
+        if token.type == TOK_EOF { break; }
+
+        switch (token.type) {
+            default: return sv_from_cstr( "ERROR: invalid token" )
+            case TOK_IDENTIFIER: ; break;
+        }
+
+        prec := token.type::get_precedence()
+        printl( "prec: %s", prec_strings[prec] );
+        ++i;
+    }
+    // da_foreach( Token, token, &parser->tokens )
+    // {
+    //     "%s '%.*s'\n"::printf( token_strings[token->type], token->length, token->start )
+    // }
+
+    String_Builder sb = {0}
+    &sb::sb_appendf("a")
+    exit(69)
+
+    return sv_from_cstr( parser->lexer->src )
 }
 
-Bob_Print (Bob bob) {
-    "{z:%d, x:%d, y:%d}\n"::printf( bob.{z, x, y} )
-}
 
 static int test_number = 0;
 test (const char *src, const char *expected) {
 
-
     "\033[32m=== TEST %d ===\033[0m\n"::printf( ++test_number )
-
-    b := Bob_Make( 371 )
-    b::Bob_Print()
-    j := Bob_Make( 12 )
-    j::Bob_Print()
-    b::Bob_Add( j )::Bob_Print()
 
     l := make_lexer( src )
     p := make_parser( &l )
@@ -264,14 +337,14 @@ test (const char *src, const char *expected) {
     } while(0)
 
 
-    printf( "begin parse\n")
-    result := &p::parse_expression() // <- evaluates twice, and partially a 3rd time
-    printf( "end\n")
+    // printf( "begin parse\n")
+    result := &p::parse() // <- evaluates twice, and partially a 3rd time
+    // printf( "end\n")
 
     got := temp_sv_to_cstr( result )
 
     if (strcmp( expected, got ))
-        FAILURE( actual );
+        FAILURE( actual )
     else
         ++passed;
 }

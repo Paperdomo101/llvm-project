@@ -39,7 +39,7 @@ main (int argc, char **argv) int {
     pos := (Vector2){0, 0};
     &pos::Vector2_add( {40, 50} ); // <-- type inferred
 
-    struct Point { int x; int y } p = { 2, 3 };
+    struct Point { int x; int y; } p = { 2, 3 };
 
     "%g, %g\n"::printf(pos.{x, y} );
 

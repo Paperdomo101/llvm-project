@@ -554,7 +554,7 @@ Retry:
   }
 
   // If we reached this code, the statement must end in a semicolon.
-  if (!TryConsumeToken(tok::semi) && !Res.isInvalid()) {
+  if (!TryConsumeToken(tok::semi) && !TryConsumeOptionalSemi() && !Res.isInvalid()) {
     // If the result was valid, then we do want to diagnose this.  Use
     // ExpectAndConsume to emit the diagnostic, even though we know it won't
     // succeed.
@@ -1250,7 +1250,9 @@ StmtResult Parser::ParseCompoundStatementBody(bool isStmtExpr) {
 
         // Eat the semicolon at the end of stmt and convert the expr into a
         // statement.
-        ExpectAndConsumeSemi(diag::err_expected_semi_after_expr);
+        if (!TryConsumeOptionalSemi())
+            ExpectAndConsumeSemi(diag::err_expected_semi_after_expr);
+
         R = handleExprStmt(Res, SubStmtCtx);
         if (R.isUsable())
           R = Actions.ActOnAttributedStmt(attrs, R.get());
