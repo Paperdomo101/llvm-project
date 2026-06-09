@@ -956,6 +956,19 @@ Parser::ParseCastExpression(CastParseKind ParseKind, bool isAddressOfOperand,
     break;
   }
 
+  // --- C4 CASE BLOCK ---
+    case tok::l_brace: {
+      if (!getLangOpts().CPlusPlus) {
+        // Intercept bare braces in C mode and treat them as an expression
+        Res = ParseBraceInitializer();
+        break;
+      }
+      // In C++, braces can mean a lambda or a regular braced-init-list.
+      // Let Clang's default logic handle it.
+      NotCastExpr = true;
+      return ExprError();
+    }
+
     // primary-expression
   case tok::numeric_constant:
   case tok::binary_data:
@@ -2097,12 +2110,17 @@ Parser::ParsePostfixExpressionSuffix(ExprResult LHS) {
           // dynamically upgrade the operation to an arrow '->' lookup under the hood.
           if (OpKind == tok::period && OrigLHS) {
             QualType LHSType = OrigLHS->getType();
-            // Unwrap any local reference type wrappers first to see the underlying type
-            if (LHSType->isReferenceType()) {
-              LHSType = LHSType.getNonReferenceType();
-            }
-            if (LHSType->isPointerType()) {
-              OpKind = tok::arrow;
+
+            // Check that the type pointer itself isn't null before calling methods on it
+            if (!LHSType.isNull()) {
+              // Unwrap any local reference type wrappers first
+              if (LHSType->isReferenceType()) {
+                LHSType = LHSType.getNonReferenceType();
+              }
+              // Re-check validity after unwrapping references
+              if (!LHSType.isNull() && LHSType->isPointerType()) {
+                OpKind = tok::arrow;
+              }
             }
           }
           // -------------------------------------------------------------
@@ -2111,11 +2129,16 @@ Parser::ParsePostfixExpressionSuffix(ExprResult LHS) {
           // If the next token is an opening brace, intercept it immediately and bypass
           // Clang's default single-identifier member access engine.
           if (Tok.is(tok::l_brace)) {
+
+              // OPTIONAL DEFENSIVE GUARD: Make sure we aren't accidentally eating a standard block
+              // or macro byproduct by validating that the prior token wasn't a closing paren or macro artifact.
             SourceLocation LBraceLoc = ConsumeToken(); // Consume '{'
             SmallVector<Expr *, 4> ExpandedMembers;
 
             while (true) {
               if (Tok.isNot(tok::identifier)) {
+                // If it's not an identifier, don't just fail blindly.
+                // Return an error or break if your feature allows trailing characters.
                 Diag(Tok, diag::err_expected_member_name_or_semi);
                 return ExprError();
               }
