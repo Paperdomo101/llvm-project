@@ -326,22 +326,34 @@ Parser::ParseRHSOfBinaryExpression(ExprResult LHS, prec::Level MinPrec) {
   while (true) {
   tok::TokenKind OpTokenKind = Tok.getKind();
 
-    // --- GREEDY EXPRESSION BREAK FIX ---
-    // If the active token is a potential binary operator (like &, *, +, -)
-    // but it sits at the start of a completely new line, AND the expression
-    // we just finished parsing ended in a bracket, treat it as a statement boundary!
+  // --- C4 GREEDY EXPRESSION BREAK FIX ---
+  // If the active token is a potential binary operator (like &, *, +, -)
+  // but it sits at the start of a completely new line, AND the expression
+  // we just finished parsing ended in a bracket, treat it as a statement boundary!
+  if (!getLangOpts().CPlusPlus) {
     if ((OpTokenKind == tok::amp || OpTokenKind == tok::star ||
-         OpTokenKind == tok::plus || OpTokenKind == tok::minus) &&
+        OpTokenKind == tok::plus || OpTokenKind == tok::minus) &&
         Tok.isAtStartOfLine()) {
 
-      SourceManager &SM = Actions.getASTContext().getSourceManager();
-      if (ExpressionEndedInOptionalBracket(PrevTokLocation, SM, getLangOpts())) {
-        // Break out of the greedy RHS loop immediately.
-        // This forces the current expression to end cleanly right at the bracket,
-        // leaving the operator on the next line to be parsed fresh as a unary operator.
-        return LHS;
-      }
+        // FIX: Look ahead to see if this is clearly a continuation of a binary expression.
+        // If the next token is a literal, identifier, or opening parenthesis,
+        // and we are inside an assignment, we should prefer binary multiplication/addition.
+        const Token &NextTok = PP.LookAhead(0);
+        bool IsLikelyBinaryContinuation = (OpTokenKind == tok::star || OpTokenKind == tok::plus || OpTokenKind == tok::minus) &&
+                                        (NextTok.is(tok::numeric_constant) || NextTok.is(tok::identifier) || NextTok.is(tok::l_paren));
+
+        if (!IsLikelyBinaryContinuation) {
+            SourceManager &SM = Actions.getASTContext().getSourceManager();
+            if (ExpressionEndedInOptionalBracket(PrevTokLocation, SM, getLangOpts())) {
+                // Break out of the greedy RHS loop immediately.
+                // This forces the current expression to end cleanly right at the bracket,
+                // leaving the operator on the next line to be parsed fresh as a unary operator.
+                return LHS;
+            }
+        }
     }
+  }
+
 
   // ------------------------------------
 
@@ -2105,6 +2117,14 @@ Parser::ParsePostfixExpressionSuffix(ExprResult LHS) {
 
           Expr* OrigLHS = !LHS.isInvalid() ? LHS.get() : nullptr;
 
+          // if (OrigLHS) {
+          //   QualType LHSType = OrigLHS->getType();
+
+          //   if (LHSType.isNull()) {
+          //     llvm::errs() << "NULL TYPE BASE:\n";
+          //     OrigLHS->dump();
+          //   }
+          // }
           // --- FEATURE 1: OPTIONAL POINTER INDIRECTION (-> BECOMES .) ---
           // If the developer typed a dot '.' but the LHS evaluates to a pointer type,
           // dynamically upgrade the operation to an arrow '->' lookup under the hood.

@@ -1193,7 +1193,9 @@ StmtResult Parser::ParseCompoundStatementBody(bool isStmtExpr) {
         Actions.FinalizeDeclaratorGroup(getCurScope(), DS, DeclsInGroup);
     StmtResult R = Actions.ActOnDeclStmt(Res, LabelLoc, Tok.getLocation());
 
-    if (!TryConsumeOptionalSemi())ExpectAndConsumeSemi(diag::err_expected_semi_declaration);
+    if (!TryConsumeOptionalSemi())
+        ExpectAndConsumeSemi(diag::err_expected_semi_declaration);
+
     if (R.isUsable())
       Stmts.push_back(R.get());
   }

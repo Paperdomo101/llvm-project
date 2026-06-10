@@ -246,7 +246,7 @@ def err_variably_modified_new_type : Error<
 
 // C99 Designated Initializers
 def ext_designated_init : Extension<
-  "designated initializers are a C99 feature">, InGroup<C99Designator>;
+  "designated initializers are a C99 feature">, InGroup<C99Designator>, DefaultIgnore;
 def err_array_designator_negative : Error<
   "array designator value '%0' is negative">;
 def err_array_designator_empty_range : Error<
@@ -295,13 +295,13 @@ def warn_cxx17_compat_designated_init : Warning<
   InGroup<CXXPre20CompatPedantic>, DefaultIgnore;
 def ext_designated_init_mixed : ExtWarn<
   "mixture of designated and non-designated initializers in the same "
-  "initializer list is a C99 extension">, InGroup<C99Designator>;
+  "initializer list is a C99 extension">, InGroup<C99Designator>, DefaultIgnore;
 def note_designated_init_mixed : Note<
   "first non-designated initializer is here">;
 def ext_designated_init_array : ExtWarn<
-  "array designators are a C99 extension">, InGroup<C99Designator>;
+  "array designators are a C99 extension">, InGroup<C99Designator>, DefaultIgnore;
 def ext_designated_init_nested : ExtWarn<
-  "nested designators are a C99 extension">, InGroup<C99Designator>;
+  "nested designators are a C99 extension">, InGroup<C99Designator>, DefaultIgnore;
 def ext_designated_init_reordered : ExtWarn<
   "ISO C++ requires field designators to be specified in declaration order; "
   "field %1 will be initialized after field %0">, InGroup<ReorderInitList>,

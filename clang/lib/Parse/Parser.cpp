@@ -204,6 +204,8 @@ bool Parser::TryConsumeOptionalSemi() {
         ConsumeToken();
         return true;
     }
+    if (getLangOpts().CPlusPlus)
+        return false;
 
     // 2. Identify where the token stream is.
     SourceLocation PrevLoc = PrevTokLocation;
@@ -285,11 +287,6 @@ bool Parser::TryConsumeOptionalSemi() {
 
                 // Safely consume our fresh virtual semicolon to cleanly finalize the active statement structure.
                 ConsumeToken();
-                // llvm::errs()
-                //     << "Tok=" << tok::getTokenName(Tok.getKind())
-                //     << " Prev=" << tok::getTokenName(TheTrailingToken.getKind())
-                //     // << " SemiError=" << (SemiError ? SemiError : "<null>")
-                //     << "\n";
                 return true;
             }
         }

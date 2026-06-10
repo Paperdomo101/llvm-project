@@ -3426,7 +3426,7 @@ void Parser::ParseDeclarationSpecifiers(
 
     SourceLocation Loc = Tok.getLocation();
 
-    // 💡 PATCH: Implicit Void Return Types for Functions
+    // C4 PATCH: Implicit Void Return Types for Functions
     // Safeguarded against system headers, struct fields, function pointers, AND right-side lookups
     if (!DS.hasTypeSpecifier() &&
         DSContext != DeclSpecContext::DSC_normal && // 👈 FIX: Prevent intercepting your right-side lookups
