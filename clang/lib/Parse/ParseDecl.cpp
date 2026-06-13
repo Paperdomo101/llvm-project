@@ -7845,8 +7845,7 @@ void Parser::ParseParameterDeclarationClause(
 
       // Inform the actions module about the parameter declarator, so it gets
       // added to the current scope.
-      Decl *Param =
-          Actions.ActOnParamDeclarator(getCurScope(), ParmDeclarator, ThisLoc);
+      Decl *Param = Actions.ActOnParamDeclarator(getCurScope(), ParmDeclarator, ThisLoc);
 
         while (ParmII && Tok.is(tok::comma)) {
 
@@ -7857,7 +7856,7 @@ void Parser::ParseParameterDeclarationClause(
                 NextToken().getIdentifierInfo()->isKeyword(getLangOpts()))
             break;
 
-            // --- FIX: Evaluate the token AFTER the comma ---
+            // --- C4: Evaluate the token AFTER the comma ---
             bool NextIsDeclSpec = false;
             {
             // Create a tentative action to safely look past the comma
@@ -7879,22 +7878,24 @@ void Parser::ParseParameterDeclarationClause(
             // If the token following the comma starts a new type declaration, stop chaining!
             if (NextIsDeclSpec)
             break;
-            // --- END OF FIX ---
 
-            ParamInfo.push_back(DeclaratorChunk::ParamInfo(ParmII,
-                                                        ParmDeclarator.getIdentifierLoc(),
-                                                        Param,
-                                                        std::move(DefArgToks)));
+            // ---> C4: Safely record the prior parameter metadata <---
+                ParamInfo.push_back(DeclaratorChunk::ParamInfo(ParmII,
+                                                            ParmDeclarator.getIdentifierLoc(),
+                                                            Param,
+                                                            nullptr)); // No default args for intermediate items
 
-            ConsumeToken(); // Safely consume the comma for real now
+                ConsumeToken(); // Safely consume the comma for real now
 
-            Declarator NewParmDeclarator(DS, ArgDeclAttrs, DeclaratorContext::Prototype);
-            ParseDeclarator(NewParmDeclarator);
+                Declarator NewParmDeclarator(DS, ArgDeclAttrs, DeclaratorContext::Prototype);
+                ParseDeclarator(NewParmDeclarator);
 
-            ParmII = NewParmDeclarator.getIdentifier();
-            Param = Actions.ActOnParamDeclarator(getCurScope(), NewParmDeclarator, SourceLocation());
-            DefArgToks = nullptr;
-        }
+                ParmII = NewParmDeclarator.getIdentifier();
+
+                // Assign the freshly parsed trailing identifier to the Param tracker
+                Param = Actions.ActOnParamDeclarator(getCurScope(), NewParmDeclarator, SourceLocation());
+            }
+            // --- END OF C4 ---
 
 
       // Parse the default argument, if any. We parse the default

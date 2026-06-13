@@ -1,0 +1,42 @@
+#include <stdio.h>
+#include <stdbool.h>
+#include <stdlib.h>
+
+// Scenario A: Standard boolean primitive default value check
+primitive (bool should_exit = false) {
+    if should_exit {
+        printf("Test Failed: primitive() was evaluated as true!\n")
+        exit(1)
+    }
+}
+
+// Scenario B: Multi-variable parameter cluster layout
+// 'a' and 'b' are standard parameters, while 'c' captures the default argument 255
+some_proc (int a, b, c = 255) {
+    if c != 255 {
+        printf("Test Failed: some_proc clustered default parameter 'c' received %d, expected 255!\n", c);
+        exit(1)
+    }
+}
+
+// Scenario C: Multiple trailing default arguments running sequentially
+multi_default (int x, int y = 10, int z = 20) {
+    if y != 10 || z != 20 {
+        printf("Test Failed: multi_default() parameters received unexpected values (y=%d, z=%d)!\n", y, z);
+        exit(1)
+    }
+}
+
+int main() {
+    // 1. Test empty invocation for single parameter
+    primitive();          // should implicitly pass 'false'
+
+    // 2. Test clustered variable default parameter extraction
+    some_proc(4, 5);      // should implicitly pass c = 255
+
+    // 3. Test partially filled multiple default parameters
+    multi_default(5);     // should implicitly pass y = 10, z = 20
+
+    printf("All Default Parameter Integration Tests Passed Successfully!\n");
+    return 0;
+}

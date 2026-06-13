@@ -6962,7 +6962,47 @@ ExprResult Sema::BuildCallExpr(Scope *Scope, Expr *Fn, SourceLocation LParenLoc,
                                       FD, /*Complain=*/true, Fn->getBeginLoc()))
       return ExprError();
 
+    // ---> C4: DEFAULT PARAMETER FILLER <---
+    // Track our adjusted argument container across the remainder of the function scope
+    SmallVector<Expr *, 8> CustomPaddedArgs(ArgExprs.begin(), ArgExprs.end());
+
+    if (const FunctionProtoType *Proto = FD->getType()->getAs<FunctionProtoType>()) {
+      unsigned NumParams = Proto->getNumParams();
+
+      // If the caller provided fewer arguments than parameters, check for default arguments
+      if (CustomPaddedArgs.size() < NumParams) {
+        bool FilledAllDefaults = true;
+
+        for (unsigned i = CustomPaddedArgs.size(); i < NumParams; ++i) {
+          ParmVarDecl *Param = FD->getParamDecl(i);
+
+          if (Param && Param->hasDefaultArg()) {
+            // Build the standard CXXDefaultArgExpr node (e.g., false or 255)
+            ExprResult DefaultArg = BuildCXXDefaultArgExpr(LParenLoc, FD, Param);
+            if (DefaultArg.isInvalid()) {
+              FilledAllDefaults = false;
+              break;
+            }
+            CustomPaddedArgs.push_back(DefaultArg.get());
+          } else {
+            FilledAllDefaults = false;
+            break; // Let the downstream validation handle the missing argument error
+          }
+        }
+
+        // If we successfully resolved all remaining slots, override the global argument range
+        if (FilledAllDefaults) {
+          ArgExprs = CustomPaddedArgs;
+        }
+      }
+    }
+    // ---> END OF C4 <---
+
+    // Modify the original line to pass our updated ArgExprs array down to validation
     checkDirectCallValidity(*this, Fn, FD, ArgExprs);
+
+    // If this expression is a call to a builtin function in HIP compilation, ...
+
 
     // If this expression is a call to a builtin function in HIP compilation,
     // allow a pointer-type argument to default address space to be passed as a

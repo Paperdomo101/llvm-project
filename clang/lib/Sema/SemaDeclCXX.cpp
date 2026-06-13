@@ -353,11 +353,11 @@ Sema::ActOnParamDefaultArgument(Decl *param, SourceLocation EqualLoc,
   UnparsedDefaultArgLocs.erase(Param);
 
   // Default arguments are only permitted in C++
-  if (!getLangOpts().CPlusPlus) {
-    Diag(EqualLoc, diag::err_param_default_argument)
-      << DefaultArg->getSourceRange();
-    return ActOnParamDefaultArgumentError(param, EqualLoc, DefaultArg);
-  }
+  // if (!getLangOpts().CPlusPlus) {
+  //   Diag(EqualLoc, diag::err_param_default_argument)
+  //     << DefaultArg->getSourceRange();
+  //   return ActOnParamDefaultArgumentError(param, EqualLoc, DefaultArg);
+  // }
 
   // Check for unexpanded parameter packs.
   if (DiagnoseUnexpandedParameterPack(DefaultArg, UPPC_DefaultArgument))

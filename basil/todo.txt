@@ -1,143 +1,144 @@
 
 
-
-
 # ===|===|=== TODO ===|===|===
-
-## /|| Bookshelf Comments ||/
-
-
-## ||== / ||!=
-
-if l->src[pos] == ' ' || == '\t' || == '\n' {
+# ____________________________
 
 
-## implicit return variables
-```
-bob (int a, b, c) int result {
-    result = a + b * c;
-}
-```
+    ## ||== / ||!=
 
-## default parameters
-```
-some_proc (int a, b, c = 255) { ... }
-
-main () int {
-	some_proc( 4, 5 )
-	some_proc( 9, 10, 0 )
-}
-```
-
-## defer
-```
-data := new_data()
-->} data::free()
-```
+    if l->src[pos] == ' ' || == '\t' || == '\n' {
 
 
-## default members
-```
-typedef struct {
-	unsigned int
-		r : 8,
-		g : 8,
-		b : 8,
-		a : 8 = 255;
-} Color;
-```
+    ## implicit return variables
+    ```
+    bob (int a, b, c) int result {
+        result = a + b * c;
+    }
+    ```
 
-## units
-```
-< std/io >
+    ## defer
+    ```
+    data := new_data()
+    ->} data::free()
+    ```
 
-```
 
-## generics
-```
-List[int] bob;
-bob::append( 30, 40, 50 )
-```
+    ## default members
+    ```
+    typedef struct {
+    	unsigned int
+    		r : 8,
+    		g : 8,
+    		b : 8,
+    		a : 8 = 255;
+    } Color;
+    ```
 
-## Struct arithmetic
-```
-Vector2 a = {0, 5}, b = {-4, 20};
-Vector3 c = a + b; // c = {-4, 25}
-```
+    ## units
+    ```
+    < std/io >
+
+    ```
+
+    ## generics
+    ```
+    List[int] bob;
+    bob::append( 30, 40, 50 )
+    ```
+
+    ## Struct arithmetic
+    ```
+    Vector2 a = {0, 5}, b = {-4, 20};
+    Vector3 c = a + b; // c = {-4, 25}
+    ```
 
 
 
-## Bounds-checked arrays
+    ## Bounds-checked arrays
 
 
-## ^ pointers
+    ## ^ pointers
 
-## @. pointer dereferencing
+    ## @. pointer dereferencing
 
 
-## new loops
-```
-loop i := 0..10 { ... }
-loop if condition { }
-```
+    ## new loops
+    ```
+    loop i := 0..10 { ... }
+    loop if condition { }
+    ```
 
 
 
 
 
 # ===|===|=== DONE ===|===|===
+# ____________________________
 
 
-## optional parens around while statement
-```
-while true { ... }
-```
+    ## default parameters
+    ```
+    some_proc (int a, b, c = 255) { ... }
 
-## optional parens + := in for statement
-```
-for i := 0; i < 10; ++i { ... }
+    main () int {
+    	some_proc( 4, 5 )
+    	some_proc( 9, 10, 0 )
+    }
+    ```
 
-```
-
-## pointer return types on procedures
-```
-parse_expression (struct Parser *parser, int a) const char * {  // <- currently error: Expected function body after function declarator
-
-```
+    ## /|| Bookshelf Comments ||/
 
 
-## struct initializer type inference
-```
-bullets[0] = {
-   .isActive = true;
-}
-```
+    ## optional parens around while statement
+    ```
+    while true { ... }
+    ```
+
+    ## optional parens + := in for statement
+    ```
+    for i := 0; i < 10; ++i { ... }
+
+    ```
+
+    ## pointer return types on procedures
+    ```
+    parse_expression (struct Parser *parser, int a) const char * {  // <- currently error: Expected function body after function declarator
+
+    ```
 
 
-## Automatic pointer indirection
-
-I'd like to make it so typing `->` is optional, so you can just use `.` instead. This just makes refactoring easier.
-
-```
-some_pointer->value = 10;
-some_pointer.value = 10;    // exactly the same as the other
-```
+    ## struct initializer type inference
+    ```
+    bullets[0] = {
+    .isActive = true;
+    }
+    ```
 
 
-## optional parens if statement has { }
+    ## Automatic pointer indirection
+
+    I'd like to make it so typing `->` is optional, so you can just use `.` instead. This just makes refactoring easier.
+
+    ```
+    some_pointer->value = 10;
+    some_pointer.value = 10;    // exactly the same as the other
+    ```
 
 
-## Struct initializer type inference
-```
-tex_test::DrawTexturePro( {0,0,16,16}, {0,40,16,16}, {8,8}, 0, WHITE );
-```
+    ## optional parens if statement has { }
 
 
-## Implicit void
+    ## Struct initializer type inference
+    ```
+    tex_test::DrawTexturePro( {0,0,16,16}, {0,40,16,16}, {8,8}, 0, WHITE );
+    ```
 
-```
-// automatically inserts void
-main () int {
 
-}
-```
+    ## Implicit void
+
+    ```
+    // automatically inserts void
+    main () int {
+
+    }
+    ```
