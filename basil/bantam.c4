@@ -401,7 +401,10 @@ name_expression (Parser *parser, Token token) Expression * {
 
 prefix_operator (Parser *parser, Token token) Expression * {
 
-
+    Expression *expr = sizeof(Expression)::malloc()
+    expr.type = EXPR_PREFIX;
+    expr.PREFIX.operator = token.type;
+    return expr;
 }
 
 conditional_expression (Parser *parser, Expression *left) Expression * {

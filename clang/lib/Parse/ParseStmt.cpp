@@ -89,7 +89,7 @@ StmtResult Parser::ParseStatementOrDeclaration(StmtVector &Stmts,
         if (AssignmentRes.isUsable()) {
           Stmts.push_back(AssignmentRes.get());
 
-          // --- C4 THE ULTIMATE IR FIX ---
+          // --- C4 IR FIX ---
           // Return an EMPTY StmtResult. This prevents the parent compound
           // statement loop from pushing this statement into the AST a second time.
           // fixes `a := do_thing()` from calling do_thing() twice
@@ -1975,11 +1975,8 @@ StmtResult Parser::ParseForStatement(SourceLocation *TrailingElseLoc,
   if (Tok.is(tok::kw_co_await))
     CoawaitLoc = ConsumeToken();
 
-  if (Tok.isNot(tok::l_paren)) {
-    Diag(Tok, diag::err_expected_lparen_after) << "for";
-    SkipUntil(tok::semi);
-    return StmtError();
-  }
+  // ---> MODIFIED: Track if the loop specifier uses parentheses <---
+  bool HasParens = Tok.is(tok::l_paren);
 
   bool C99orCXXorObjC = getLangOpts().C99 || getLangOpts().CPlusPlus ||
     getLangOpts().ObjC;
@@ -2003,12 +2000,17 @@ StmtResult Parser::ParseForStatement(SourceLocation *TrailingElseLoc,
   // doesn't cause declarations to bind to this scope. We use this to avoid
   // diagnosing a comma operator in e.g. the third part of a for loop when
   // '-Wcomma' is enabled.
+
   unsigned ScopeFlags =
       Scope::ControlScope | (C99orCXXorObjC ? Scope::DeclScope : 0);
   ParseScope ForScope(this, ScopeFlags);
 
-  BalancedDelimiterTracker T(*this, tok::l_paren);
-  T.consumeOpen();
+  // ---> C4 MODIFIED: Wrap delimiter tracking inside an optional container <---
+  std::optional<BalancedDelimiterTracker> T;
+  if (HasParens) {
+    T.emplace(*this, tok::l_paren);
+    T->consumeOpen();
+  }
 
   ExprResult Value;
 
@@ -2032,10 +2034,22 @@ StmtResult Parser::ParseForStatement(SourceLocation *TrailingElseLoc,
 
   SourceLocation EmptyInitStmtSemiLoc;
 
-  // Parse the first part of the for specifier.
-  if (Tok.is(tok::semi)) {  // for (;
+  // --- C4: Intercept your custom ':=' assignment inside the 'for' loop ---
+  if (Tok.is(tok::identifier) && GetLookAheadToken(1).is(tok::colonequal)) {
+    FirstPart = ParseTypeInferredAssignment();
+
+    // ParseTypeInferredAssignment does NOT eat the trailing ';'. We must explicitly check
+    // and consume it here to align with the loop initialization specifications.
+    if (Tok.is(tok::semi)) {
+      ConsumeToken();
+    } else {
+      Diag(Tok, diag::err_expected_semi_for);
+      return StmtError();
+    }
+  }
+  // --- Standard Clang Path Continue ---
+  else if (Tok.is(tok::semi)) {  // for (;
     ProhibitAttributes(attrs);
-    // no first part, eat the ';'.
     SourceLocation SemiLoc = Tok.getLocation();
     if (!Tok.hasLeadingEmptyMacro() && !SemiLoc.isMacroID())
       EmptyInitStmtSemiLoc = SemiLoc;
@@ -2063,8 +2077,7 @@ StmtResult Parser::ParseForStatement(SourceLocation *TrailingElseLoc,
   } else if (isForInitDeclaration()) {  // for (int X = 4;
     ParenBraceBracketBalancer BalancerRAIIObj(*this);
 
-    // Parse declaration, which eats the ';'.
-    if (!C99orCXXorObjC) {   // Use of C99-style for loops in C90 mode?
+    if (!C99orCXXorObjC) {
       Diag(Tok, diag::ext_c99_variable_decl_in_for_loop);
       Diag(Tok, diag::warn_gcc_variable_decl_in_for_loop);
     }
@@ -2081,7 +2094,6 @@ StmtResult Parser::ParseForStatement(SourceLocation *TrailingElseLoc,
                                                 attrs);
       FirstPart = Actions.ActOnDeclStmt(DG, DeclStart, Tok.getLocation());
     } else {
-      // In C++0x, "for (T NS:a" might not be a typo for ::
       bool MightBeForRangeStmt = getLangOpts().CPlusPlus || getLangOpts().ObjC;
       ColonProtectionRAIIObject ColonProtection(*this, MightBeForRangeStmt);
       ParsedAttributes DeclSpecAttrs(AttrFactory);
@@ -2095,12 +2107,11 @@ StmtResult Parser::ParseForStatement(SourceLocation *TrailingElseLoc,
                                         : diag::ext_for_range);
         ForRangeInfo.LoopVar = FirstPart;
         FirstPart = StmtResult();
-      } else if (Tok.is(tok::semi)) { // for (int x = 4;
+      } else if (Tok.is(tok::semi)) {
         ConsumeToken();
       } else if ((ForEach = isTokIdentifier_in())) {
         Actions.ActOnForEachDeclStmt(DG);
-        // ObjC: for (id x in expr)
-        ConsumeToken(); // consume 'in'
+        ConsumeToken();
 
         if (Tok.is(tok::code_completion)) {
           cutOffParsing();
@@ -2231,22 +2242,39 @@ StmtResult Parser::ParseForStatement(SourceLocation *TrailingElseLoc,
     if (Tok.isNot(tok::semi)) {
       if (!SecondPart.isInvalid())
         Diag(Tok, diag::err_expected_semi_for);
-      SkipUntil(tok::r_paren, StopAtSemi | StopBeforeMatch);
+
+      // ---> MODIFIED: Adjust search anchor based on parenthesis usage <---
+      SkipUntil(HasParens ? tok::r_paren : tok::l_brace, StopAtSemi | StopBeforeMatch);
     }
 
     if (Tok.is(tok::semi)) {
       ConsumeToken();
     }
 
-    if (Tok.isNot(tok::r_paren)) {   // for (...;...;)
+    // ---> C4: Look ahead bounded by either ')' or your block body '{' <---
+    if (Tok.isNot(HasParens ? tok::r_paren : tok::l_brace)) {   // for (...;...;)
       ExprResult Third = ParseExpression();
       // FIXME: The C++11 standard doesn't actually say that this is a
       // discarded-value expression, but it clearly should be.
       ThirdPart = Actions.MakeFullDiscardedValueExpr(Third.get());
     }
   }
-  // Match the ')'.
-  T.consumeClose();
+
+  // ---> C4: Apply conditional closure validation <---
+  if (HasParens) {
+    // Standard Path: Consume closing parenthesis via the optional tracker
+    if (T) {
+      T->consumeClose();
+    }
+  } else {
+    // Custom Path: Omitted parentheses require an immediate braced block layout {}
+    if (Tok.isNot(tok::l_brace)) {
+      Diag(Tok, diag::err_expected) << tok::l_brace
+        << "Parentheses around 'for' conditions are required unless followed by a braced block {}";
+      return StmtError();
+    }
+  }
+
 
   // C++ Coroutines [stmt.iter]:
   //   'co_await' can only be used for a range-based for statement.
@@ -2264,17 +2292,20 @@ StmtResult Parser::ParseForStatement(SourceLocation *TrailingElseLoc,
   StmtResult ForRangeStmt;
   StmtResult ForEachStmt;
 
+  // ---> C4: Compute the safe closing source location <---
+  SourceLocation RParenLoc = HasParens && T ? T->getCloseLocation() : SourceLocation();
+
   if (ForRangeInfo.ParsedForRangeDecl()) {
     ForRangeStmt = Actions.ActOnCXXForRangeStmt(
         getCurScope(), ForLoc, CoawaitLoc, FirstPart.get(),
         ForRangeInfo.LoopVar.get(), ForRangeInfo.ColonLoc,
-        ForRangeInfo.RangeExpr.get(), T.getCloseLocation(), Sema::BFRK_Build,
+        ForRangeInfo.RangeExpr.get(), RParenLoc, Sema::BFRK_Build,
         ForRangeInfo.LifetimeExtendTemps);
   } else if (ForEach) {
     // Similarly, we need to do the semantic analysis for a for-range
     // statement immediately in order to close over temporaries correctly.
     ForEachStmt = Actions.ObjC().ActOnObjCForCollectionStmt(
-        ForLoc, FirstPart.get(), Collection.get(), T.getCloseLocation());
+        ForLoc, FirstPart.get(), Collection.get(), RParenLoc);
   } else {
     // In OpenMP loop region loop control variable must be captured and be
     // private. Perform analysis of first part (if any).
@@ -2282,6 +2313,7 @@ StmtResult Parser::ParseForStatement(SourceLocation *TrailingElseLoc,
       Actions.OpenMP().ActOnOpenMPLoopInitialization(ForLoc, FirstPart.get());
     }
   }
+
 
   // OpenACC Restricts a for-loop inside of certain construct/clause
   // combinations, so diagnose that here in OpenACC mode.
@@ -2343,10 +2375,15 @@ StmtResult Parser::ParseForStatement(SourceLocation *TrailingElseLoc,
   if (ForRangeInfo.ParsedForRangeDecl())
     return Actions.FinishCXXForRangeStmt(ForRangeStmt.get(), Body.get());
 
-  return Actions.ActOnForStmt(ForLoc, T.getOpenLocation(), FirstPart.get(),
-                              SecondPart, ThirdPart, T.getCloseLocation(),
+  // ---> C4: Extract locations safely from the optional tracker <---
+  SourceLocation LParenLoc = HasParens && T ? T->getOpenLocation() : SourceLocation();
+  RParenLoc = HasParens && T ? T->getCloseLocation() : SourceLocation();
+
+  return Actions.ActOnForStmt(ForLoc, LParenLoc, FirstPart.get(),
+                              SecondPart, ThirdPart, RParenLoc,
                               Body.get());
 }
+
 
 StmtResult Parser::ParseGotoStatement() {
   assert(Tok.is(tok::kw_goto) && "Not a goto stmt!");
