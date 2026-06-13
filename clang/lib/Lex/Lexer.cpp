@@ -3809,6 +3809,60 @@ bool Lexer::Lex(Token &Result) {
   return returnedToken;
 }
 
+// C4: /|| BOOKSHELF COMMENTS ||/
+bool Lexer::SkipBookshelfComment(Token &Result, const char *CurPtr) {
+  // Save the starting point of the full comment string for diagnostic fallback reporting
+  const char *StartPtr = CurPtr - 3;
+  unsigned NestingLevel = 1; // We have already matched the first open layer
+
+  while (NestingLevel > 0) {
+    // Loop lookahead boundary check
+    if (CurPtr >= BufferEnd) {
+      if (!isLexingRawMode())
+        Diag(StartPtr, diag::err_unterminated_block_comment);
+      return false;
+    }
+
+    char c = *CurPtr;
+
+    if (c == '\n' || c == '\r') {
+      // Correct modern Clang way to update state across line boundaries
+      IsAtStartOfLine = true; // Mark that the next processed token begins on a new line
+
+      // Handle multi-platform line endings cleanly (\r\n)
+      if (c == '\r' && CurPtr[1] == '\n') {
+        CurPtr++;
+      }
+      CurPtr++;
+    } else if (c == '/' && CurPtr[1] == '|' && CurPtr[2] == '|') {
+      // Step into a new nested comment tier: "/||"
+      NestingLevel++;
+      CurPtr += 3;
+    } else if (c == '|' && CurPtr[1] == '|' && CurPtr[2] == '/') {
+      // Exit out of the current nested comment tier: "||/"
+      NestingLevel--;
+      CurPtr += 3;
+    } else {
+      // Advance to look at the next individual payload character
+      CurPtr++;
+    }
+  }
+
+  // If the compilation unit requested comment tracking (e.g. documentation tools),
+  // wrap it up as a legitimate comment token. Otherwise, skip it.
+  if (inKeepCommentMode()) {
+    FormTokenWithChars(Result, CurPtr, tok::comment);
+    return true;
+  }
+
+  // Update the main Lexer object's buffer tracker cursor
+  BufferPtr = CurPtr;
+  return false;
+}
+
+
+
+
 /// LexTokenInternal - This implements a simple C family lexer.  It is an
 /// extremely performance critical piece of code.  This assumes that the buffer
 /// has a null character at the end of the file.  This returns a preprocessing
@@ -3937,16 +3991,25 @@ LexStart:
     // too (without going through the big switch stmt).
     if (CurPtr[0] == '/' && CurPtr[1] == '/' && !inKeepCommentMode() &&
         LineComment && (LangOpts.CPlusPlus || !LangOpts.TraditionalCPP)) {
-      if (SkipLineComment(Result, CurPtr + 2))
-        return true; // There is a token to return.
-      goto SkipIgnoredUnits;
-    } else if (CurPtr[0] == '/' && CurPtr[1] == '*' && !inKeepCommentMode()) {
-      if (SkipBlockComment(Result, CurPtr + 2))
-        return true; // There is a token to return.
-      goto SkipIgnoredUnits;
-    } else if (isHorizontalWhitespace(*CurPtr)) {
-      goto SkipHorizontalWhitespace;
+        if (SkipLineComment(Result, CurPtr + 2))
+            return true; // There is a token to return.
+        goto SkipIgnoredUnits;
     }
+    else if (CurPtr[0] == '/' && CurPtr[1] == '*' && !inKeepCommentMode()) {
+        if (SkipBlockComment(Result, CurPtr + 2))
+            return true; // There is a token to return.
+        goto SkipIgnoredUnits;
+    }
+    else if (CurPtr[0] == '/' && CurPtr[1] == '|' && CurPtr[2] == '|' && !inKeepCommentMode()) {
+        // C4: We found a "/||" prefix. Pass CurPtr past the prefix (+3 characters)
+        if (SkipBookshelfComment(Result, CurPtr + 3))
+            return true; // There is a token to return.
+        goto SkipIgnoredUnits;
+    }
+    else if (isHorizontalWhitespace(*CurPtr)) {
+        goto SkipHorizontalWhitespace;
+    }
+
     // We only saw whitespace, so just try again with this lexer.
     // (We manually eliminate the tail call to avoid recursion.)
     goto LexNextToken;
@@ -4269,6 +4332,26 @@ LexStart:
       // We only saw whitespace, so just try again with this lexer.
       // (We manually eliminate the tail call to avoid recursion.)
       goto LexNextToken;
+    }
+
+    // ---> C4: BOOKSHELf COMMENT SYNTAX HANDLER <---
+    if (Char == '|') {
+      // Look ahead one more character to see if it's the second pipe symbol
+      unsigned SizeTmp2;
+      char NextChar = getCharAndSize(CurPtr + SizeTmp, SizeTmp2);
+
+      if (NextChar == '|') {
+        // Advance our parsing pointer past the entire "/||" prefix string
+        const char *CommentStart = CurPtr + SizeTmp + SizeTmp2;
+
+        if (SkipBookshelfComment(Result, CommentStart))
+          return true; // There is a token to return (if tracking comments).
+
+        // If the comment was safely skipped, sync up our local cursor
+        // with the final state saved by the Skipper method, and continue lexing.
+        CurPtr = BufferPtr;
+        goto LexNextToken;
+      }
     }
 
     if (Char == '=') {
