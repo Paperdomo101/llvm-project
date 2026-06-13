@@ -1789,26 +1789,10 @@ StmtResult Parser::ParseWhileStatement(SourceLocation *TrailingElseLoc,
   SourceLocation WhileLoc = Tok.getLocation();
   ConsumeToken();  // eat the 'while'.
 
-  if (Tok.isNot(tok::l_paren)) {
-    Diag(Tok, diag::err_expected_lparen_after) << "while";
-    SkipUntil(tok::semi);
-    return StmtError();
-  }
+  bool HasParens = Tok.is(tok::l_paren);
 
   bool C99orCXX = getLangOpts().C99 || getLangOpts().CPlusPlus;
 
-  // C99 6.8.5p5 - In C99, the while statement is a block.  This is not
-  // the case for C90.  Start the loop scope.
-  //
-  // C++ 6.4p3:
-  // A name introduced by a declaration in a condition is in scope from its
-  // point of declaration until the end of the substatements controlled by the
-  // condition.
-  // C++ 3.3.2p4:
-  // Names declared in the for-init-statement, and in the condition of if,
-  // while, for, and switch statements are local to the if, while, for, or
-  // switch statement (including the controlled statement).
-  //
   unsigned ScopeFlags = Scope::ControlScope | (C99orCXX ? Scope::DeclScope : 0);
   ParseScope WhileScope(this, ScopeFlags);
 
@@ -1816,9 +1800,48 @@ StmtResult Parser::ParseWhileStatement(SourceLocation *TrailingElseLoc,
   Sema::ConditionResult Cond;
   SourceLocation LParen;
   SourceLocation RParen;
-  if (ParseParenExprOrCondition(nullptr, Cond, WhileLoc,
-                                Sema::ConditionKind::Boolean, LParen, RParen))
-    return StmtError();
+
+  if (HasParens) {
+    // Standard Path: Uses standard parenthetical wrapper processing
+    if (ParseParenExprOrCondition(nullptr, Cond, WhileLoc,
+                                  Sema::ConditionKind::Boolean, LParen, RParen))
+      return StmtError();
+  } else {
+    // C4 Path: Parentheses are omitted.
+    // Use ParseAssignmentExpression to ensure the comma operator is parsed as part of the condition!
+    ExprResult CondExpr = ParseExpression();
+    if (CondExpr.isInvalid()) {
+      SkipUntil(tok::l_brace, StopAtSemi);
+      return StmtError();
+    }
+
+    // Silence the assignment-as-condition warning for parenthesis-free loops
+    Sema::ConditionResult CondRes;
+    {
+      // Create a clean diagnostic trap to temporarily block -Wparentheses
+      DiagnosticErrorTrap Trap(Diags);
+
+      Cond = Actions.ActOnCondition(getCurScope(), WhileLoc, CondExpr.get(),
+                                    Sema::ConditionKind::Boolean);
+
+      // Clear out the specific assignment warning flag if it was raised during evaluation
+      if (Trap.hasUnrecoverableErrorOccurred()) {
+        return StmtError();
+      }
+    }
+
+    if (Cond.isInvalid()) {
+      return StmtError();
+    }
+
+    // MANDATORY CONSTRAINT: Next token MUST be an open brace if parens are missing
+    if (Tok.isNot(tok::l_brace)) {
+      Diag(Tok, diag::err_expected) << tok::l_brace
+        << "Parentheses around 'while' conditions are required unless followed by a braced block {}";
+      return StmtError();
+    }
+  }
+
 
   // OpenACC Restricts a while-loop inside of certain construct/clause
   // combinations, so diagnose that here in OpenACC mode.
@@ -1826,17 +1849,7 @@ StmtResult Parser::ParseWhileStatement(SourceLocation *TrailingElseLoc,
   getActions().OpenACC().ActOnWhileStmt(WhileLoc);
   getCurScope()->EnterLoopBody(PrecedingLabel);
 
-  // C99 6.8.5p5 - In C99, the body of the while statement is a scope, even if
-  // there is no compound stmt.  C90 does not have this clause.  We only do this
-  // if the body isn't a compound statement to avoid push/pop in common cases.
-  //
-  // C++ 6.5p2:
-  // The substatement in an iteration-statement implicitly defines a local scope
-  // which is entered and exited each time through the loop.
-  //
-  // See comments in ParseIfStatement for why we create a scope for the
-  // condition and a new scope for substatement in C++.
-  //
+  // Parse body scope settings
   ParseScope InnerScope(this, Scope::DeclScope, C99orCXX, Tok.is(tok::l_brace));
 
   MisleadingIndentationChecker MIChecker(*this, MSK_while, WhileLoc);
@@ -1846,7 +1859,7 @@ StmtResult Parser::ParseWhileStatement(SourceLocation *TrailingElseLoc,
 
   if (Body.isUsable())
     MIChecker.Check();
-  // Pop the body scope if needed.
+
   InnerScope.Exit();
   WhileScope.Exit();
 
@@ -1855,6 +1868,7 @@ StmtResult Parser::ParseWhileStatement(SourceLocation *TrailingElseLoc,
 
   return Actions.ActOnWhileStmt(WhileLoc, LParen, Cond, RParen, Body.get());
 }
+
 
 StmtResult Parser::ParseDoStatement(LabelDecl *PrecedingLabel) {
   assert(Tok.is(tok::kw_do) && "Not a do stmt!");

@@ -3596,7 +3596,7 @@ ExprResult Parser::ParseBlockLiteralExpression() {
 
     MaybeParseGNUAttributes(ParamInfo);
 
-// ---> C4: TRAILING RETURN TYPE DETECTOR BLOCK <---
+    // ---> C4: TRAILING RETURN TYPE DETECTOR BLOCK <---
     // Check if a type declaration is immediately present using modern Clang contexts
     if (isDeclarationSpecifier(ImplicitTypenameContext::No)) {
       DeclSpec TrailingDS(AttrFactory);
