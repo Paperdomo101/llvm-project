@@ -16,11 +16,6 @@
     }
     ```
 
-    ## defer
-    ```
-    data := new_data()
-    ->} data::free()
-    ```
 
 
     ## default members
@@ -75,6 +70,13 @@
 # ===|===|=== DONE ===|===|===
 # ____________________________
 
+
+
+    ## defer
+    ```
+    data := new_data()
+    ->} data::free()
+    ```
 
     ## default parameters
     ```

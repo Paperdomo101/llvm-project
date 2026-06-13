@@ -4268,23 +4268,39 @@ LexStart:
   case '-':
     Char = getCharAndSize(CurPtr, SizeTmp);
     if (Char == '-') {      // --
-      CurPtr = ConsumeChar(CurPtr, SizeTmp, Result);
-      Kind = tok::minusminus;
+        CurPtr = ConsumeChar(CurPtr, SizeTmp, Result);
+        Kind = tok::minusminus;
     } else if (Char == '>' && LangOpts.CPlusPlus &&
-               getCharAndSize(CurPtr+SizeTmp, SizeTmp2) == '*') {  // C++ ->*
-      CurPtr = ConsumeChar(ConsumeChar(CurPtr, SizeTmp, Result),
-                           SizeTmp2, Result);
-      Kind = tok::arrowstar;
-    } else if (Char == '>') {   // ->
-      CurPtr = ConsumeChar(CurPtr, SizeTmp, Result);
-      Kind = tok::arrow;
+                getCharAndSize(CurPtr+SizeTmp, SizeTmp2) == '*') {  // C++ ->*
+        CurPtr = ConsumeChar(ConsumeChar(CurPtr, SizeTmp, Result),
+                            SizeTmp2, Result);
+        Kind = tok::arrowstar;
+    } else if (Char == '>') {   // -> OR ->}
+        // First, consume the '>' character safely
+        CurPtr = ConsumeChar(CurPtr, SizeTmp, Result);
+
+        // ---> C4 ->} defer
+        // Peek ahead to check if the next immediate character is the closing brace '}'
+        unsigned SizeTmp3;
+        char NextChar = getCharAndSize(CurPtr, SizeTmp3);
+
+        if (NextChar == '}') {
+        // Consume the '}' character to unify it into your single custom token block
+        CurPtr = ConsumeChar(CurPtr, SizeTmp3, Result);
+        Kind = tok::arrow_r_brace;
+        } else {
+        // Standard C fallback if no closing brace follows the arrow operator
+        Kind = tok::arrow;
+        }
+
     } else if (Char == '=') {   // -=
-      CurPtr = ConsumeChar(CurPtr, SizeTmp, Result);
-      Kind = tok::minusequal;
+        CurPtr = ConsumeChar(CurPtr, SizeTmp, Result);
+        Kind = tok::minusequal;
     } else {
-      Kind = tok::minus;
+        Kind = tok::minus;
     }
     break;
+
   case '~':
     Kind = tok::tilde;
     break;

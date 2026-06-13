@@ -356,6 +356,9 @@ Retry:
     Res = ParseReturnStatement();
     SemiError = "co_return";
     break;
+
+  // ---> C4: ->} defer
+  case tok::arrow_r_brace:
   case tok::kw__Defer: // C defer TS: defer-statement
     return ParseDeferStatement(TrailingElseLoc);
 
@@ -2492,7 +2495,12 @@ StmtResult Parser::ParseReturnStatement() {
 
 
 StmtResult Parser::ParseDeferStatement(SourceLocation *TrailingElseLoc) {
-  assert(Tok.is(tok::kw__Defer));
+    // fprintf(stderr, "DEFER\n");
+  assert(Tok.isOneOf(tok::kw__Defer, tok::arrow_r_brace) && "Not a defer stmt!");
+
+  // Diag(Tok, diag::err_expected) << "CONFIRMED: The parser successfully reached ParseDeferStatement!";
+  //  return StmtError();
+
   SourceLocation DeferLoc = ConsumeToken();
 
   Actions.ActOnStartOfDeferStmt(DeferLoc, getCurScope());
