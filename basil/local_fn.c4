@@ -1,0 +1,29 @@
+#include <stdio.h>
+
+
+main () int {
+    bob := ^(int a, b, c) int {
+        nested := ^() {
+            printf("NESTED!\n")
+        }
+        nested()
+        return a + b * c;
+    }
+
+    print_int := ^(int value) {
+        "%d\n"::printf(value)
+    }
+
+    escape := ^() void (^)() {
+        printf("escape\n")
+        noob := ^() {
+            printf("noob\n")
+        }
+        return noob;
+    }
+
+    escape()()
+
+    bob(1, 2, 3)::bob(4, 5)::print_int()
+    return 0;
+}

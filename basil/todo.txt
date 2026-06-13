@@ -4,36 +4,19 @@
 
 # ===|===|=== TODO ===|===|===
 
+## /|| Bookshelf Comments ||/
+
 
 ## ||== / ||!=
 
 if l->src[pos] == ' ' || == '\t' || == '\n' {
 
 
-## pointer return types on procedures
-```
-parse_expression (struct Parser *parser, int a) const char * {  // <- currently error: Expected function body after function declarator
-
-```
-
 ## implicit return variables
 ```
 bob (int a, b, c) int result {
     result = a + b * c;
 }
-```
-
-## defer
-```
-data := new_data()
-->} data::free()
-```
-
-
-## optional parens + := in for statement
-```
-for i := 0; i < 10; ++i { ... }
-
 ```
 
 ## default parameters
@@ -44,6 +27,12 @@ main () int {
 	some_proc( 4, 5 )
 	some_proc( 9, 10, 0 )
 }
+```
+
+## defer
+```
+data := new_data()
+->} data::free()
 ```
 
 
@@ -98,6 +87,23 @@ loop if condition { }
 
 # ===|===|=== DONE ===|===|===
 
+
+## optional parens around while statement
+```
+while true { ... }
+```
+
+## optional parens + := in for statement
+```
+for i := 0; i < 10; ++i { ... }
+
+```
+
+## pointer return types on procedures
+```
+parse_expression (struct Parser *parser, int a) const char * {  // <- currently error: Expected function body after function declarator
+
+```
 
 
 ## struct initializer type inference
