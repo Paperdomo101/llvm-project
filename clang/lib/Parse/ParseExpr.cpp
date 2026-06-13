@@ -642,15 +642,18 @@ Parser::ParseRHSOfBinaryExpression(ExprResult LHS, prec::Level MinPrec) {
   }
 }
 
+
+// C4
 ExprResult Parser::ParseMethodDispatch(
     ExprResult Receiver,
     Token OpToken)
 {
-    // if (!getLangOpts().C4)
-    //         break;
 
     if (Tok.isNot(tok::identifier))
         return ExprError();
+
+    llvm::errs() << "Receiver AST:\n";
+    Receiver.get()->dump();
 
     IdentifierInfo &II = *Tok.getIdentifierInfo();
     SourceLocation ILoc = ConsumeToken();
@@ -684,7 +687,6 @@ ExprResult Parser::ParseMethodDispatch(
     PT.consumeOpen();
 
     ExprVector ArgExprs;
-
     bool ExpressionListIsInvalid = false;
 
     if (Tok.isNot(tok::r_paren))
@@ -700,8 +702,14 @@ ExprResult Parser::ParseMethodDispatch(
 
     SourceLocation RParLoc = Tok.getLocation();
 
+    // ---> FIXED: Insert the receiver BEFORE running the flattening loop! <---
+    // This places b.{x, y} at index 0 so it gets fully unzipped along with everything else.
+    if (Receiver.isUsable()) {
+        ArgExprs.insert(ArgExprs.begin(), Receiver.get());
+    }
+
     // --- CRITICAL UNPACKING FLATTENER FIX ---
-    // Safely decompose any nested member groups before building the final call.
+    // Now this will cleanly catch b.{x, y} at index 0 and unpack it into b.x and b.y!
     ExprVector FlattenedArgs;
     for (Expr *Arg : ArgExprs) {
         if (Arg && isa<ParenListExpr>(Arg)) {
@@ -717,7 +725,6 @@ ExprResult Parser::ParseMethodDispatch(
     ArgExprs = std::move(FlattenedArgs);
     // ----------------------------------------
 
-    ArgExprs.insert(ArgExprs.begin(), Receiver.get());
 
     ExprResult Result =
         Actions.ActOnCallExpr(
@@ -729,7 +736,6 @@ ExprResult Parser::ParseMethodDispatch(
             nullptr);
 
     PT.consumeClose();
-
     return Result;
 }
 

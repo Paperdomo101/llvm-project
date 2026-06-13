@@ -315,8 +315,42 @@ Retry:
   case tok::kw_default:             // C99 6.8.1: labeled-statement
     return ParseDefaultStatement(StmtCtx);
 
-  case tok::l_brace:                // C99 6.8.2: compound-statement
-    return ParseCompoundStatement();
+    case tok::l_brace: { // C99 6.8.2: compound-statement
+        // C4
+        // Lookahead: Check if this brace opens an expression instead of a block
+        bool IsMethodDispatch = false;
+
+        // We look ahead up to 1 token past the matching closing brace
+        // to see if a '::' (tok::coloncolon) immediately follows it.
+        if (GetLookAheadToken(1).isNot(tok::eof)) {
+            // Create a tentative parsing guard so we can safely roll back the token stream
+            TentativeParsingAction TPA(*this);
+
+            BalancedDelimiterTracker T(*this, tok::l_brace);
+            if (!T.consumeOpen()) {
+                // Skip to the matching closing brace
+                T.skipToEnd();
+
+                // Check if the token immediately following '}' is '::'
+                if (Tok.is(tok::coloncolon)) {
+                    IsMethodDispatch = true;
+                }
+            }
+
+            // Always revert the token stream back to the starting position
+            TPA.Revert();
+        }
+
+        // Route to the correct parsing pipeline based on lookahead
+        if (IsMethodDispatch) {
+            ParsedStmtContext SubStmtCtx = ParsedStmtContext();
+            return ParseExprStatement(SubStmtCtx);
+        }
+        // End C4
+
+        return ParseCompoundStatement();
+    }
+
   case tok::semi: {                 // C99 6.8.3p3: expression[opt] ';'
     bool HasLeadingEmptyMacro = Tok.hasLeadingEmptyMacro();
     return Actions.ActOnNullStmt(ConsumeToken(), HasLeadingEmptyMacro);

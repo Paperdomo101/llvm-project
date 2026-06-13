@@ -31,17 +31,15 @@ DrawHitbox (int x, y, Rectangle rec, Color color) {
     DrawRectangleLinesEx({x + rec.x, y + rec.y, rec.width, rec.height}, 1, color);
 }
 
-/*"""""""""""*\
-\*____ C ____*/
 
-void DrawBullets( void ) {
+DrawBullets () {
 
-    for (int i = 0; i < MAX_BULLETS; ++i) {
-        b := &bullets[i];
+    for i := 0; i < MAX_BULLETS; ++i {
+        b := &bullets[i]
 
-		if b->isActive {
-            DrawSprite( b->u + (int)b->animIndex, b->v, b->x, b->y, b->size, false, b->isVacuum ? GetColor(0xffffff44) : WHITE );
-            DrawHitbox( b->x, b->y, b->collisionRec, LIME );
+		if b.isActive {
+            DrawSprite( b.u + (int)b.animIndex, b.{v, x, y, size}, false, b.isVacuum ? GetColor(0xffffff44) : WHITE )
+            b.{x, y}::DrawHitbox( b.collisionRec, LIME )
         }
 
     	if (showArrays)

@@ -4,6 +4,7 @@
 
 // Structural setups for our testing domain
 typedef struct { float x, y; } Vector2;
+typedef struct { float x, y, width, height; } Rectangle;
 typedef struct { float w, h; } Size2D;
 
 typedef struct {
@@ -122,15 +123,61 @@ main () int {
     check_vector(compound_matrix_math, 9.0f, 17.0f, "Multi-Operand Matrix Element Math");
 
 
+    // --- TEST 10: Good 'ol swizzling ---
     Vector2 swiz = {1, 2}
     swiz.{x, y} = swiz.{y, x}
-    swiz::check_vector( 2, 1, "Swizzle x and y" )
+    swiz::check_vector( 2, 1, "Swizzle X and Y" )
 
+    j := swiz.{y, x} // option 1: NO TUPLES. this should just error
+    // j := swiz.{y, x} // option 2: creates a variable of anonymous struct type with the same parameter names as the swizzled struct in the order of swizzling
+
+    // i, j := swiz.{y, x} // `i` = `y`, `j` = `x`, `i` must not have a type or anything else, and swizzle count must match variable count, otherwise...
+    // int i, j := swiz.{y, x} // `j` becomes anonymous struct / error, `i` is uninitialized
+    // i, j, k := swiz.{y, x} // `k` becomes anonymous struct / error, `i` and `j` are uninitialized
+    // i, j := swiz.{y, x, z} // `j` becomes anonymous struct / error, `i` is uninitialized
+
+    // option 1: creates two variables, `i` gets assigned `y`, `j` gets assigned `x`, goes against traditional C variable declaration syntax
+
+
+    // --- TEST 11: Evaluation order of functions in swizzle ---
     f := ^() float { return 5.0; }
     g := ^() float { return 8.0; }
-
     swiz.{x, y} = (Vector2){f(), g()}.{y, x};
-    swiz::check_vector( 8.0, 5.0, "Evaluation order" )
+    swiz::check_vector( 8.0, 5.0, "Evaluation Order" )
+
+
+    // --- TEST 12: Method Dispatch with Inline Unzipped Receiver ---
+    // This evaluates the exact method-dispatch fix we just implemented!
+    // It verifies that b_pos.{x, y} flattens natively to become the first TWO
+    // arguments of the method call, sliding the trailing arguments into their proper slots.
+    Vector2 b_pos = { 100.0f, 200.0f };
+
+    (Vector2){b_pos.{x, y}}::check_vector(100, 200, "Compound Literal Method Dispatch");
+    {b_pos.{x, y}}::check_vector(100, 200, "Inferred Type Compound Literal Method Dispatch"); // type inferred crashes
+
+
+    // --- TEST 13: Chained Method Dispatching via Swizzled Vector Return ---
+    // A function returning a Vector2 struct is immediately piped into another
+    // method call using the swizzle operator as a transient bridging layer.
+    // This verifies temporary expression life cycles stay alive during flattening.
+    h := ^() Vector2 {
+        Vector2 temporary = { 100.0f, 200.0f };
+        return temporary;
+    };
+
+    // Calls DrawHitbox directly using the unzipped temporary result fields
+    // {h().{x, y}}::check_vector(100, 200, "Pipelined Method Dispatch");
+
+    // --- TEST 14: Method-Like Dispatch with Swizzling inside Trailing Parameter Slots ---
+    // Evaluates a method dispatch where the swizzle unzipping happens BOTH on the
+    // Left-Hand Side (receiver) and embedded deeply inside the trailing parameter lists.
+    Vector2 receiver_vec = { 100.0f, 200.0f }
+    Vector2 param_vec    = { 32.0f, 64.0f }
+
+    // The trailing brace block leverages param_vec.{x, y} to populate the Rectangle
+    Rectangle rec = {0, 0, param_vec.{x, y}};
+    // receiver_vec.{x, y}::check_vector(rec.{width, height}, "Trailing Population"}, LIME);
+
 
     printf("\nAll Advanced Syntax Validation Tests Cleared Natively!\n");
     return 0;
