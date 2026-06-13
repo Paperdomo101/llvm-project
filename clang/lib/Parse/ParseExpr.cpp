@@ -3571,46 +3571,60 @@ ExprResult Parser::ParseBlockLiteralExpression() {
   PrettyStackTraceLoc CrashInfo(PP.getSourceManager(), CaretLoc,
                                 "block literal parsing");
 
-  // Enter a scope to hold everything within the block.  This includes the
-  // argument decls, decls within the compound expression, etc.  This also
-  // allows determining whether a variable reference inside the block is
-  // within or outside of the block.
   ParseScope BlockScope(this, Scope::BlockScope | Scope::FnScope |
                                   Scope::CompoundStmtScope | Scope::DeclScope);
 
-  // Inform sema that we are starting a block.
   Actions.ActOnBlockStart(CaretLoc, getCurScope());
 
-  // Parse the return type if present.
+  // Parse the return type if present (Left untouched for backwards compatibility,
+  // or empty if you choose to purely use RHS return types).
   DeclSpec DS(AttrFactory);
   Declarator ParamInfo(DS, ParsedAttributesView::none(),
                        DeclaratorContext::BlockLiteral);
   ParamInfo.setFunctionDefinitionKind(FunctionDefinitionKind::Definition);
-  // FIXME: Since the return type isn't actually parsed, it can't be used to
-  // fill ParamInfo with an initial valid range, so do it manually.
   ParamInfo.SetSourceRange(SourceRange(Tok.getLocation(), Tok.getLocation()));
 
-  // If this block has arguments, parse them.  There is no ambiguity here with
-  // the expression case, because the expression case requires a parameter list.
   if (Tok.is(tok::l_paren)) {
     ParseParenDeclarator(ParamInfo);
-    // Parse the pieces after the identifier as if we had "int(...)".
-    // SetIdentifier sets the source range end, but in this case we're past
-    // that location.
     SourceLocation Tmp = ParamInfo.getSourceRange().getEnd();
     ParamInfo.SetIdentifier(nullptr, CaretLoc);
     ParamInfo.SetRangeEnd(Tmp);
     if (ParamInfo.isInvalidType()) {
-      // If there was an error parsing the arguments, they may have
-      // tried to use ^(x+y) which requires an argument list.  Just
-      // skip the whole block literal.
       Actions.ActOnBlockError(CaretLoc, getCurScope());
       return ExprError();
     }
 
     MaybeParseGNUAttributes(ParamInfo);
 
-    // Inform sema that we are starting a block.
+// ---> C4: TRAILING RETURN TYPE DETECTOR BLOCK <---
+    // Check if a type declaration is immediately present using modern Clang contexts
+    if (isDeclarationSpecifier(ImplicitTypenameContext::No)) {
+      DeclSpec TrailingDS(AttrFactory);
+      ParseSpecifierQualifierList(TrailingDS);
+
+      Declarator TrailingDeclarator(TrailingDS, ParsedAttributesView::none(),
+                                    DeclaratorContext::TypeName);
+      ParseDeclarator(TrailingDeclarator);
+
+      // Call ActOnTypeName with only the single required Declarator argument
+      TypeResult TrailingReturnType = Actions.ActOnTypeName(TrailingDeclarator);
+
+      if (!TrailingReturnType.isInvalid()) {
+        ParsedType T = TrailingReturnType.get();
+
+        // Safely update the return type by accessing the Declarator's function chunk
+        for (unsigned i = 0, e = ParamInfo.getNumTypeObjects(); i != e; ++i) {
+          DeclaratorChunk &Chunk = ParamInfo.getTypeObject(i);
+          if (Chunk.Kind == DeclaratorChunk::Function) {
+            Chunk.Fun.TrailingReturnType = T;
+            break;
+          }
+        }
+      }
+    }
+    // ---> MODIFICATION END <---
+
+    // Inform sema that we are starting a block with our final signature
     Actions.ActOnBlockArguments(CaretLoc, ParamInfo, getCurScope());
   } else if (!Tok.is(tok::l_brace)) {
     ParseBlockId(CaretLoc);
@@ -3640,10 +3654,37 @@ ExprResult Parser::ParseBlockLiteralExpression() {
 
     MaybeParseGNUAttributes(ParamInfo);
 
-    // Inform sema that we are starting a block.
+    // ---> C4: TRAILING RETURN TYPE DETECTOR BLOCK <---
+    // Check if a type declaration is immediately present using modern Clang contexts
+    if (isDeclarationSpecifier(ImplicitTypenameContext::No)) {
+      DeclSpec TrailingDS(AttrFactory);
+      ParseSpecifierQualifierList(TrailingDS);
+
+      Declarator TrailingDeclarator(TrailingDS, ParsedAttributesView::none(),
+                                    DeclaratorContext::TypeName);
+      ParseDeclarator(TrailingDeclarator);
+
+      // Call ActOnTypeName with only the single required Declarator argument
+      TypeResult TrailingReturnType = Actions.ActOnTypeName(TrailingDeclarator);
+
+      if (!TrailingReturnType.isInvalid()) {
+        ParsedType T = TrailingReturnType.get();
+
+        // Safely update the return type by accessing the Declarator's function chunk
+        for (unsigned i = 0, e = ParamInfo.getNumTypeObjects(); i != e; ++i) {
+          DeclaratorChunk &Chunk = ParamInfo.getTypeObject(i);
+          if (Chunk.Kind == DeclaratorChunk::Function) {
+            Chunk.Fun.TrailingReturnType = T;
+            break;
+          }
+        }
+      }
+    }
+    // ---> MODIFICATION END <---
+
+    // Inform sema that we are starting a block with our final signature
     Actions.ActOnBlockArguments(CaretLoc, ParamInfo, getCurScope());
   }
-
 
   ExprResult Result(true);
   if (!Tok.is(tok::l_brace)) {
@@ -3662,6 +3703,7 @@ ExprResult Parser::ParseBlockLiteralExpression() {
     Actions.ActOnBlockError(CaretLoc, getCurScope());
   return Result;
 }
+
 
 ExprResult Parser::ParseObjCBoolLiteral() {
   tok::TokenKind Kind = Tok.getKind();
