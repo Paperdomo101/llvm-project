@@ -43,21 +43,25 @@ main (int argc, char **argv) int {
 
     "%g, %g\n"::printf(pos.{x, y} );
 
-    FLAG_WINDOW_RESIZABLE::SetConfigFlags();
-    InitWindow( 800, 450, "Hello, raylib!" );
 
-    tex_test := LoadTexture( "test.png" );
+    FLAG_WINDOW_RESIZABLE::SetConfigFlags();
+    InitWindow( 800, 450, "Hello, raylib!" ) ->} CloseWindow()
+
+    tex_test := LoadTexture( "test.png" ) ->} tex_test::UnloadTexture()
 
     if !(tex_test::IsTextureValid())
         EXIT_FAILURE::exit()
 
+
     GetCurrentMonitor()::GetMonitorRefreshRate()::SetTargetFPS();
+
+
 
     #define vec2(x, y) (Vector2){x, y}
 
     while !WindowShouldClose()
     {
-        delta_time := GetFrameTime();
+        delta_time := GetFrameTime()
 
         wscale :=  GetScreenWidth() / tex_test.width;
         hscale := GetScreenHeight() / tex_test.height;
@@ -68,15 +72,16 @@ main (int argc, char **argv) int {
         positive := vec2( KEY_RIGHT::IsHeld(), KEY_DOWN::IsHeld() )
         negative := vec2( KEY_LEFT ::IsHeld(), KEY_UP  ::IsHeld() )
 
-        input := positive::Vector2Subtract( negative )
+
+        input := positive - negative;
         input_norm := input::Vector2Normalize()
 
         vel := input_norm::Vector2Scale( 150 * scale )
 
-        pos = pos::Vector2Add( vel::Vector2Scale(delta_time) )
-                 ::Vector2Clamp( {0, 0}, {400 * scale, 200 * scale} );
+        pos = (pos + vel::Vector2Scale(delta_time))
+            ::Vector2Clamp( {0, 0}, {400 * scale, 200 * scale} )
 
-        BeginDrawing();
+        BeginDrawing() ->} EndDrawing();
 
         BLACK::ClearBackground()
 
@@ -90,22 +95,20 @@ main (int argc, char **argv) int {
         }
 
         tex_test::DrawTexturePro(
-            {0, 0, tex_test.width, tex_test.height},
+            {0, 0, tex_test.{width, height} },
             {0, 0, scaled_tex_w, scaled_tex_h},
             {-bars.x / 2, -bars.y / 2}, 0, WHITE
         )
 
-        "This is so fucking cool holy"::DrawText( pos.x, pos.y, scale * 10, RED );
+        "This is so fucking cool holy"::DrawText( pos.{x, y}, scale * 10, RED )
 
 
-        DrawLineEx( pos, pos::Vector2Add(vel), scale, YELLOW );
+        DrawLineEx( pos, pos + vel, scale, YELLOW )
 
-        DrawFPS(10, 10);
+        DrawFPS(10, 10)
 
-        EndDrawing();
+
     }
 
-    tex_test::UnloadTexture();
 
-    CloseWindow();
 }

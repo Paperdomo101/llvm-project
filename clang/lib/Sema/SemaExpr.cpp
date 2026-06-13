@@ -15523,6 +15523,102 @@ static bool needsConversionOfHalfVec(bool OpRequiresConversion, ASTContext &Ctx,
   return HasVectorOfHalfType(E0) && (!E1 || HasVectorOfHalfType(E1));
 }
 
+
+
+/// C4
+ExprResult Sema::CheckStructArithmeticOperands(ExprResult &LHS, ExprResult &RHS,
+                                               SourceLocation OpLoc,
+                                               BinaryOperatorKind Opc,
+                                               QualType StructTy,
+                                               const RecordDecl *RD) {
+  SmallVector<Expr *, 8> InitExprs;
+  Expr *LHSExpr = LHS.get();
+  Expr *RHSExpr = RHS.get();
+
+  // Extract every nested child property element sequentially
+  for (const FieldDecl *Field : RD->fields()) {
+    DeclarationName Name = Field->getDeclName();
+
+    // 1. Set up a local LookupResult container for the LHS member access
+    LookupResult LHSR(*this, Name, OpLoc, Sema::LookupMemberName);
+    LHSR.addDecl(const_cast<FieldDecl *>(Field));
+    LHSR.resolveKind();
+
+    ExprResult LHSMember = BuildMemberReferenceExpr(
+        LHSExpr, StructTy, OpLoc, /*IsArrow=*/false, CXXScopeSpec(),
+        SourceLocation(), nullptr, LHSR, /*TemplateArgs=*/nullptr,
+        /*S=*/nullptr, /*SuppressQualifierCheck=*/true, /*ExtraArgs=*/nullptr);
+
+    // 2. Set up a local LookupResult container for the RHS member access
+    LookupResult RHSR(*this, Name, OpLoc, Sema::LookupMemberName);
+    RHSR.addDecl(const_cast<FieldDecl *>(Field));
+    RHSR.resolveKind();
+
+    ExprResult RHSMember = BuildMemberReferenceExpr(
+        RHSExpr, StructTy, OpLoc, /*IsArrow=*/false, CXXScopeSpec(),
+        SourceLocation(), nullptr, RHSR, /*TemplateArgs=*/nullptr,
+        /*S=*/nullptr, /*SuppressQualifierCheck=*/true, /*ExtraArgs=*/nullptr);
+
+    if (LHSMember.isInvalid() || RHSMember.isInvalid())
+      return ExprError();
+
+    // 3. Create a brand-new binary operation node combining the field elements: 'LHS.field + RHS.field'
+    ExprResult FieldOpResult = BuildBinOp(/*S=*/nullptr, OpLoc, Opc,
+                                          LHSMember.get(), RHSMember.get());
+    if (FieldOpResult.isInvalid())
+      return ExprError();
+
+    InitExprs.push_back(FieldOpResult.get());
+  }
+
+  ExprResult InitList =
+      BuildInitList(OpLoc, InitExprs, OpLoc, false);
+
+  if (InitList.isInvalid())
+      return ExprError();
+
+  TypeSourceInfo *TInfo =
+      Context.getTrivialTypeSourceInfo(StructTy, OpLoc);
+
+  return BuildCompoundLiteralExpr(
+      OpLoc,     // (
+      TInfo,
+      OpLoc,     // )
+      InitList.get());
+}
+
+ExprResult Sema::CheckStructCompoundAssignmentOperands(ExprResult &LHS, ExprResult &RHS,
+                                                       SourceLocation OpLoc,
+                                                       BinaryOperatorKind Opc,
+                                                       QualType StructTy,
+                                                       const RecordDecl *RD) {
+  // 1. Map the compound assignment opcode back to its foundational arithmetic operator.
+  // Example: BO_AddAssign (+=) transforms into BO_Add (+)
+  BinaryOperatorKind StandardOpc;
+  switch (Opc) {
+    case BO_AddAssign: StandardOpc = BO_Add; break;
+    case BO_SubAssign: StandardOpc = BO_Sub; break;
+    case BO_MulAssign: StandardOpc = BO_Mul; break;
+    case BO_DivAssign: StandardOpc = BO_Div; break;
+    default: return ExprError(); // Guard safety fallback
+  }
+
+  // 2. Leverage your working math implementation to synthesize the element-wise compound literal.
+  // This computes 'a + b' and safely packs it into a verified CompoundLiteralExpr node tree.
+  ExprResult EvaluatedMathLiteral = CheckStructArithmeticOperands(LHS, RHS, OpLoc, StandardOpc, StructTy, RD);
+  if (EvaluatedMathLiteral.isInvalid())
+    return ExprError();
+
+  // 3. Transform the operation into a unified local assignment expression: 'a = (Vector2){a.x + b.x, a.y + b.y}'
+  // Passing LHS.get() and our new literal block to BuildBinOp automatically generates
+  // the exact LValue/RValue memory storage assignments required by CodeGen!
+  return BuildBinOp(/*S=*/nullptr, OpLoc, BO_Assign, LHS.get(), EvaluatedMathLiteral.get());
+}
+
+
+
+
+
 ExprResult Sema::CreateBuiltinBinOp(SourceLocation OpLoc,
                                     BinaryOperatorKind Opc, Expr *LHSExpr,
                                     Expr *RHSExpr, bool ForFoldExpression) {
@@ -15545,6 +15641,8 @@ ExprResult Sema::CreateBuiltinBinOp(SourceLocation OpLoc,
   }
 
   ExprResult LHS = LHSExpr, RHS = RHSExpr;
+
+
   QualType ResultTy;     // Result type of the binary operator.
   // The following two variables are used for compound assignment operators
   QualType CompLHSTy;    // Type of LHS after promotions for computation
@@ -15583,6 +15681,50 @@ ExprResult Sema::CreateBuiltinBinOp(SourceLocation OpLoc,
 
   checkTypeSupport(LHSExpr->getType(), OpLoc, /*ValueDecl*/ nullptr);
   checkTypeSupport(RHSExpr->getType(), OpLoc, /*ValueDecl*/ nullptr);
+
+  // ---> C4 STRUCT ARITHMETIC <---
+  // Inside Sema::CreateBuiltinBinOp (clang/lib/Sema/SemaExpr.cpp)
+  // Right after checkTypeSupport(...) calls:
+
+  if (LHS.isUsable() && RHS.isUsable()) {
+    QualType LHSType = LHS.get()->getType();
+    QualType RHSType = RHS.get()->getType();
+
+    // 1. Isolate operations running on matching Record (Struct) layouts
+    if (LHSType->isRecordType() && RHSType->isRecordType() &&
+        Context.hasSameUnqualifiedType(LHSType, RHSType)) {
+
+      // 2. Explicitly validate that the opcode is one of our supported math or math-assignment targets
+      bool IsBaseMath = BinaryOperator::isMultiplicativeOp(Opc) || BinaryOperator::isAdditiveOp(Opc);
+      bool IsCompoundMath = (Opc == BO_AddAssign || Opc == BO_SubAssign ||
+                             Opc == BO_MulAssign || Opc == BO_DivAssign);
+
+      if (IsBaseMath || IsCompoundMath) {
+        const RecordDecl *RD = LHSType->getAsRecordDecl();
+        bool IsValidNumericStruct = true;
+        unsigned FieldCount = 0;
+
+        for (const FieldDecl *Field : RD->fields()) {
+          FieldCount++;
+          if (!Field->getType()->isArithmeticType()) {
+            IsValidNumericStruct = false;
+            break;
+          }
+        }
+
+        if (IsValidNumericStruct && FieldCount > 0) {
+          // If it is a compound math assignment, route to our compounding transformer
+          if (IsCompoundMath) {
+            return CheckStructCompoundAssignmentOperands(LHS, RHS, OpLoc, Opc, LHSType, RD);
+          }
+
+          // Otherwise, pass through to your pristine working standard arithmetic handler (+, -, *, /)
+          return CheckStructArithmeticOperands(LHS, RHS, OpLoc, Opc, LHSType, RD);
+        }
+      }
+    }
+  }
+  // ---> END OF C4 STRUCT ARITHMETIC INTERCEPTOR <---
 
   switch (Opc) {
   case BO_Assign:
@@ -15996,6 +16138,98 @@ static void DiagnoseBinOpPrecedence(Sema &Self, BinaryOperatorKind Opc,
 ExprResult Sema::ActOnBinOp(Scope *S, SourceLocation TokLoc,
                             tok::TokenKind Kind,
                             Expr *LHSExpr, Expr *RHSExpr) {
+
+  // ---> C4: SWIZZLED ELEMENT MATH SUPPORT <---
+  // If the LHS is a ParenListExpr holding exactly 1 element, extract it transparently.
+  // This seamlessly transforms 'base.{x} * 2.0f' into 'base.x * 2.0f' inside Sema!
+  if (LHSExpr && isa<ParenListExpr>(LHSExpr)) {
+    auto *PLE = cast<ParenListExpr>(LHSExpr);
+    if (PLE->getNumExprs() == 1) {
+      LHSExpr = PLE->getExpr(0);
+    }
+  }
+
+  // Do the exact same protective extraction check for the RHS operand
+  if (RHSExpr && isa<ParenListExpr>(RHSExpr)) {
+    auto *PLE = cast<ParenListExpr>(RHSExpr);
+    if (PLE->getNumExprs() == 1) {
+      RHSExpr = PLE->getExpr(0);
+    }
+  }
+  // ----------------------------------------------------
+
+  // ---> C4: PARALLEL BATCH SWIZZLE ASSIGNMENTS <---
+  if (Kind == tok::equal && LHSExpr && RHSExpr &&
+      isa<ParenListExpr>(LHSExpr) && isa<ParenListExpr>(RHSExpr)) {
+
+    auto *LHSList = cast<ParenListExpr>(LHSExpr);
+    auto *RHSList = cast<ParenListExpr>(RHSExpr);
+
+    // 1. Enforce that the number of variables on both sides match perfectly
+    if (LHSList->getNumExprs() == RHSList->getNumExprs()) {
+      unsigned NumOps = LHSList->getNumExprs();
+
+      SmallVector<Stmt *, 8> SynthesizedAssignments;
+      SmallVector<Expr *, 4> TempVarRefs;
+
+      // --- PHASE A: Cache all RHS expressions inside hidden local variables ---
+      for (unsigned i = 0; i < NumOps; ++i) {
+        Expr *RHSVal = RHSList->getExpr(i);
+
+        IdentifierInfo *TmpII = &Context.Idents.get(
+            "__swiz_tmp_" + std::to_string(i) + "_" + std::to_string(TokLoc.getRawEncoding()));
+
+        VarDecl *TmpVD = VarDecl::Create(
+            Context, getCurLexicalContext(), TokLoc, TokLoc, TmpII,
+            RHSVal->getType(), Context.getTrivialTypeSourceInfo(RHSVal->getType(), TokLoc),
+            SC_None);
+        TmpVD->setImplicit(true);
+        TmpVD->setInit(RHSVal);
+
+        // Directly invoke the Sema action to convert the decl to a Stmt block
+        DeclGroupPtrTy DG = ConvertDeclToDeclGroup(TmpVD);
+        StmtResult DeclSt = ActOnDeclStmt(DG, TokLoc, TokLoc);
+        if (DeclSt.isUsable())
+          SynthesizedAssignments.push_back(DeclSt.get());
+
+        ExprResult TmpRef = BuildDeclRefExpr(TmpVD, RHSVal->getType(), VK_LValue, TokLoc);
+        TempVarRefs.push_back(TmpRef.get());
+      }
+
+      // --- PHASE B: Perform sequential assignments from the temps back to LHS targets ---
+      for (unsigned i = 0; i < NumOps; ++i) {
+        Expr *LHSTarget = LHSList->getExpr(i);
+        Expr *TmpValue = TempVarRefs[i];
+
+        // Construct individual assignment expressions: 'swiz.x = __swiz_tmp_0'
+        ExprResult SubAssign = BuildBinOp(S, TokLoc, BO_Assign, LHSTarget, TmpValue);
+        if (SubAssign.isUsable()) {
+          StmtResult ExprSt = ActOnExprStmt(SubAssign.get());
+          if (ExprSt.isUsable())
+            SynthesizedAssignments.push_back(ExprSt.get());
+        }
+      }
+
+      // --- PHASE C: Package everything cleanly inside a Statement Expression ---
+      CompoundStmt *CS = CompoundStmt::Create(Context, SynthesizedAssignments,
+                                              FPOptionsOverride(), TokLoc, TokLoc);
+
+      // Correct Clang allocation placement-new method for constructing a StmtExpr
+      Expr *FinalResult = new (Context) StmtExpr(
+          CS,
+          LHSList->getExpr(0)->getType(),
+          TokLoc,
+          TokLoc,
+          /*TemplateDepth=*/0);
+
+      return FinalResult;
+    }
+  }
+  // ---------------------------------------------------------
+
+
+
+
   BinaryOperatorKind Opc = ConvertTokenKindToBinaryOpcode(Kind);
   assert(LHSExpr && "ActOnBinOp(): missing left expression");
   assert(RHSExpr && "ActOnBinOp(): missing right expression");

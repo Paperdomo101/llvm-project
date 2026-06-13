@@ -1,0 +1,24 @@
+#include <stdio.h>
+
+typedef struct { float x, y; } Vector2;
+
+Vector2_print (Vector2 v) {
+    "{%g,%g}\n"::printf(v.{x, y})
+}
+
+main () int {
+    Vector2 a = {0, 5}, b = {-4, 20}
+    Vector2_print(a) // fine
+    Vector2_print(b) // fine
+    c := a + b; // CRASH
+    Vector2_print(c)
+    d := a * b; // c = {0, 100}
+    Vector2_print(d)
+    e := a - b; // c = {4, -15}
+    Vector2_print(e)
+    f := a / b; // c = {0, 0.25}
+    Vector2_print(f)
+    c += d;
+    c += d;
+    Vector2_print(c)
+}

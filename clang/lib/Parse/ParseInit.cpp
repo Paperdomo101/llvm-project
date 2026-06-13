@@ -509,9 +509,26 @@ ExprResult Parser::ParseBraceInitializer() {
 
   bool closed = !T.consumeClose();
 
-  if (InitExprsOk && closed)
+  if (InitExprsOk && closed) {
+    // ---> C4: NESTED SWIZZLE UNPACKING FLATTENER FOR BRACE LISTS <---
+    // This replicates your custom call-site flattener inside brace contexts!
+    ExprVector FlattenedInits;
+    for (Expr *Arg : InitExprs) {
+      if (Arg && isa<ParenListExpr>(Arg)) {
+        auto *PLE = cast<ParenListExpr>(Arg);
+        for (unsigned i = 0, e = PLE->getNumExprs(); i != e; ++i) {
+          FlattenedInits.push_back(PLE->getExpr(i));
+        }
+      } else if (Arg) {
+        FlattenedInits.push_back(Arg);
+      }
+    }
+    InitExprs = std::move(FlattenedInits);
+    // ----------------------------------------------------------------------
+
     return Actions.ActOnInitList(LBraceLoc, InitExprs,
                                  T.getCloseLocation());
+  }
 
   return ExprError(); // an error occurred.
 }

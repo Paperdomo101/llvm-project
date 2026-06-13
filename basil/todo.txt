@@ -17,7 +17,6 @@
     ```
 
 
-
     ## default members
     ```
     typedef struct {
@@ -44,7 +43,10 @@
     ## Struct arithmetic
     ```
     Vector2 a = {0, 5}, b = {-4, 20};
-    Vector3 c = a + b; // c = {-4, 25}
+    c := a + b; // c = {-4, 25}
+    d := a * b; // c = {0, 100}
+    e := a - b; // c = {4, -15}
+    f := a / b; // c = {0, 0.25}
     ```
 
 

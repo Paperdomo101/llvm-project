@@ -2594,6 +2594,20 @@ public:
   ExprResult BuildBuiltinBitCastExpr(SourceLocation KWLoc, TypeSourceInfo *TSI,
                                      Expr *Operand, SourceLocation RParenLoc);
 
+  // C4
+  ExprResult CheckStructArithmeticOperands(ExprResult &LHS, ExprResult &RHS,
+                                               SourceLocation OpLoc,
+                                               BinaryOperatorKind Opc,
+                                               QualType StructTy,
+                                               const RecordDecl *RD);
+
+  ExprResult CheckStructCompoundAssignmentOperands(ExprResult &LHS, ExprResult &RHS,
+                                                       SourceLocation OpLoc,
+                                                       BinaryOperatorKind Opc,
+                                                       QualType StructTy,
+                                                       const RecordDecl *RD);
+  // END C4
+
   // Checks that reinterpret casts don't have undefined behavior.
   void CheckCompatibleReinterpretCast(QualType SrcType, QualType DestType,
                                       bool IsDereference, SourceRange Range);
