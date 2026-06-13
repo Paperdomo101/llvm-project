@@ -1,0 +1,296 @@
+#include <stdio.h>
+
+main () int {
+    // ============================================================
+    // TYPE-INFERRED ASSIGNMENT TESTS
+    // ============================================================
+
+    typedef struct {
+        float x;
+        float y;
+    } Vector2;
+
+    get_float := ^() float {
+        return 5.0;
+    }
+
+    get_vector := ^() Vector2 {
+        return (Vector2){10.0, 20.0};
+    }
+
+    takes_float := ^(float f) {}
+    takes_vec2  := ^(Vector2 v) {}
+
+    // ------------------------------------------------------------
+    // TEST 1: Simple scalar inference
+    // ------------------------------------------------------------
+
+    a := 42;
+    takes_float(a);
+
+    // expected: OK
+    // inferred type: int
+
+    // ------------------------------------------------------------
+    // TEST 2: Float inference
+    // ------------------------------------------------------------
+
+    b := 3.14;
+    takes_float(b);
+
+    // expected: OK
+    // inferred type: double or float (language dependent)
+
+    // ------------------------------------------------------------
+    // TEST 3: Struct inference
+    // ------------------------------------------------------------
+
+    v := get_vector();
+    takes_vec2(v);
+
+    // expected: OK
+    // inferred type: Vector2
+
+    // ------------------------------------------------------------
+    // TEST 4: Function return inference
+    // ------------------------------------------------------------
+
+    c := get_float();
+
+    // expected: OK
+    // inferred type: float
+
+    // ------------------------------------------------------------
+    // TEST 5: Swizzle single component
+    // ------------------------------------------------------------
+
+    swiz := get_vector();
+
+    d := swiz.x;
+
+    // expected: OK
+    // inferred type: float
+
+    // ------------------------------------------------------------
+    // TEST 6: Multi-component swizzle to one variable
+    // ------------------------------------------------------------
+
+    e := swiz.{x, y};
+
+    // expected: ERROR
+    // cannot assign multi-component swizzle to one variable
+
+    // ------------------------------------------------------------
+    // TEST 7: Two-variable destructuring
+    // ------------------------------------------------------------
+
+    f, g := swiz.{x, y};
+
+    // expected: OK
+    // f == swiz.x
+    // g == swiz.y
+
+    takes_float(f);
+    takes_float(g);
+
+    // ------------------------------------------------------------
+    // TEST 8: Reverse-order swizzle
+    // ------------------------------------------------------------
+
+    h, i := swiz.{y, x};
+
+    // expected: OK
+    // h == swiz.y
+    // i == swiz.x
+
+    // ------------------------------------------------------------
+    // TEST 9: Too many variables
+    // ------------------------------------------------------------
+
+    j, k, l := swiz.{x, y};
+
+    // expected: ERROR
+    // expression yields 2 values but 3 variables provided
+
+    // ------------------------------------------------------------
+    // TEST 10: Too few variables
+    // ------------------------------------------------------------
+
+    m := swiz.{x, y};
+
+    // expected: ERROR
+    // expression yields 2 values but 1 variable provided
+
+    // ------------------------------------------------------------
+    // TEST 11: Swizzle larger than target list
+    // ------------------------------------------------------------
+
+    n, o := swiz.{x, y, x};
+
+    // expected: ERROR
+    // expression yields 3 values but 2 variables provided
+
+    // ------------------------------------------------------------
+    // TEST 12: Scope insertion
+    // ------------------------------------------------------------
+
+    p, q := swiz.{x, y};
+
+    takes_float(p);
+    takes_float(q);
+
+    // expected: OK
+    // verifies PushOnScopeChains()
+
+    // ------------------------------------------------------------
+    // TEST 13: Reuse variables after declaration
+    // ------------------------------------------------------------
+
+    r, s := swiz.{x, y};
+
+    r = 100.0;
+    s = 200.0;
+
+    // expected: OK
+
+    // ------------------------------------------------------------
+    // TEST 14: Nested block scope
+    // ------------------------------------------------------------
+
+    {
+        t, u := swiz.{x, y};
+
+        takes_float(t);
+        takes_float(u);
+    }
+
+    // expected: OK
+
+    // ------------------------------------------------------------
+    // TEST 15: Shadowing
+    // ------------------------------------------------------------
+
+    v1 := 10;
+
+    {
+        v1 := 20;
+
+        takes_float(v1);
+    }
+
+    // expected: same behavior as ordinary local declarations
+
+    // ------------------------------------------------------------
+    // TEST 16: Function-call swizzle
+    // ------------------------------------------------------------
+
+    w, x := get_vector().{x, y};
+
+    // expected: OK
+
+    // ------------------------------------------------------------
+    // TEST 17: Evaluation order
+    // ------------------------------------------------------------
+
+    __block int counter = 0;
+
+    next := ^() float {
+        counter = counter + 1;
+        return counter;
+    };
+
+    y, z := { next(), next() };
+
+    "y == %d\n"::printf(y)
+    "z == %d\n"::printf(z)
+
+    // expected:
+    // y == 1
+    // z == 2
+    // next() evaluated exactly once per component
+
+    // ------------------------------------------------------------
+    // TEST 18: Chained destructuring
+    // ------------------------------------------------------------
+
+    aa, bb := swiz.{x, y};
+
+    cc := aa;
+    dd := bb;
+
+    // expected: OK
+
+    // ------------------------------------------------------------
+    // TEST 19: Void-return rejection
+    // ------------------------------------------------------------
+
+    void_func := ^() void { };
+
+    ee := void_func();
+
+    // expected: ERROR
+    // cannot infer type from void expression
+
+    // ------------------------------------------------------------
+    // TEST 20: Type correctness
+    // ------------------------------------------------------------
+
+    ff, gg := swiz.{x, y};
+
+    takes_vec2(ff);
+
+    // expected: ERROR
+    // ff is float, not Vector2
+
+    // ------------------------------------------------------------
+    // TEST 21: Duplicate variable names
+    // ------------------------------------------------------------
+
+    hh, hh := swiz.{x, y};
+
+    // expected:
+    // either error or same behavior as duplicate local declarations
+
+    // ------------------------------------------------------------
+    // TEST 22: Mixed scalar and tuple assignment
+    // ------------------------------------------------------------
+
+    ii, jj := 123;
+
+    // expected: ERROR
+    // scalar expression cannot destructure into 2 variables
+
+    // ------------------------------------------------------------
+    // TEST 23: Triple swizzle
+    // ------------------------------------------------------------
+
+    typedef struct {
+        float x;
+        float y;
+        float z;
+    } Vector3;
+
+    v3 := (Vector3){1,2,3};
+
+    kk, ll, mm := v3.{x,y,z};
+
+    // expected: OK
+
+    // ------------------------------------------------------------
+    // TEST 24: Triple swizzle mismatch
+    // ------------------------------------------------------------
+
+    nn, oo := v3.{x,y,z};
+
+    // expected: ERROR
+
+    // ------------------------------------------------------------
+    // TEST 25: Destructured variables visible afterwards
+    // ------------------------------------------------------------
+
+    pp, qq := swiz.{x, y};
+
+    printf("%g %g\n", pp, qq);
+
+    // expected: OK
+}

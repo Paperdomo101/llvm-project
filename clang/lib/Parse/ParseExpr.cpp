@@ -652,8 +652,8 @@ ExprResult Parser::ParseMethodDispatch(
     if (Tok.isNot(tok::identifier))
         return ExprError();
 
-    llvm::errs() << "Receiver AST:\n";
-    Receiver.get()->dump();
+    // llvm::errs() << "Receiver AST:\n";
+    // Receiver.get()->dump();
 
     IdentifierInfo &II = *Tok.getIdentifierInfo();
     SourceLocation ILoc = ConsumeToken();
@@ -1841,7 +1841,40 @@ Parser::ParsePostfixExpressionSuffix(ExprResult LHS) {
   // parsed, see if there are any postfix-expression pieces here.
   SourceLocation Loc;
   auto SavedType = PreferredType;
+
   while (true) {
+    // --- C4: PREVENT EXPRESSION BLEEDING ACROSS NEWLINES ---
+    // If the next token is on a new line, check if the previous token allows an optional semi.
+    SourceManager &SM = Actions.getASTContext().getSourceManager();
+    SourceLocation CurrentLoc = Tok.getLocation();
+    SourceLocation PrevLoc = PrevTokLocation;
+
+    if (CurrentLoc.isValid() && PrevLoc.isValid()) {
+      SourceLocation TargetLoc = PrevLoc.isMacroID() ? SM.getSpellingLoc(PrevLoc)
+                                                     : SM.getFileLoc(PrevLoc);
+      SourceLocation TokenStartLoc = Lexer::GetBeginningOfToken(TargetLoc, SM, getLangOpts());
+
+      if (TokenStartLoc.isValid()) {
+        Token TheTrailingToken;
+        if (!Lexer::getRawToken(TokenStartLoc, TheTrailingToken, SM, getLangOpts(), true)) {
+          tok::TokenKind K = TheTrailingToken.getKind();
+
+          // If the expression just finished a closing delimiter ), ], or }
+          if (K == tok::r_paren || K == tok::r_square || K == tok::r_brace) {
+            unsigned CurrentLine = SM.getSpellingLineNumber(CurrentLoc);
+            unsigned PrevLine = SM.getSpellingLineNumber(PrevLoc);
+
+            // If the next active token is on a completely new line,
+            // FORCE the postfix operator builder to stop chewing tokens immediately!
+            if (CurrentLine > PrevLine) {
+              return LHS;
+            }
+          }
+        }
+      }
+    }
+    // ------------------------------------------------------
+
     // Each iteration relies on preferred type for the whole expression.
     PreferredType = SavedType;
     switch (Tok.getKind()) {
@@ -2151,7 +2184,19 @@ Parser::ParsePostfixExpressionSuffix(ExprResult LHS) {
           }
           // -------------------------------------------------------------
 
-          // --- FEATURE 2: MEMBER GROUP EXPANSION (bob.{x, y, z}) ---
+          // --- C4: FEATURE 2: MEMBER GROUP EXPANSION (bob.{x, y, z}) ---
+          // If the next token is an opening brace, intercept it immediately and bypass
+          // Clang's default single-identifier member access engine.
+
+
+          // --- CRITICAL DEFENSIVE GUARD ---
+          // If the base expression (e.g., 'ent') failed to parse due to a missing type,
+          // OrigLHS will be invalid. Bailing out here prevents passing a null/broken pointer
+          // to ActOnMemberAccessExpr, allowing Clang to show the real "unknown type" error.
+          if (LHS.isInvalid() || !LHS.isUsable()) {
+            return ExprError();
+          }
+
           // If the next token is an opening brace, intercept it immediately and bypass
           // Clang's default single-identifier member access engine.
           if (Tok.is(tok::l_brace)) {

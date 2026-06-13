@@ -3,6 +3,22 @@
 # ===|===|=== TODO ===|===|===
 # ____________________________
 
+    ## Bounds-checked arrays
+
+    ## Require / Satisfy
+
+    ## strip
+
+    ## symbol aliasing
+
+    ## multiple returns
+
+    ## multi-line strings
+    /"
+        not_indented
+            indented
+        not_indented
+    "/
 
     ## ||== / ||!=
 
@@ -39,8 +55,6 @@
     List[int] bob;
     bob::append( 30, 40, 50 )
     ```
-
-    ## Bounds-checked arrays
 
 
     ## ^ pointers

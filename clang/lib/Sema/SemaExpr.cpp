@@ -15697,7 +15697,7 @@ ExprResult Sema::CreateBuiltinBinOp(SourceLocation OpLoc,
       // 2. Explicitly validate that the opcode is one of our supported math or math-assignment targets
       bool IsBaseMath = BinaryOperator::isMultiplicativeOp(Opc) || BinaryOperator::isAdditiveOp(Opc);
       bool IsCompoundMath = (Opc == BO_AddAssign || Opc == BO_SubAssign ||
-                             Opc == BO_MulAssign || Opc == BO_DivAssign);
+                             Opc == BO_MulAssign || Opc == BO_DivAssign );
 
       if (IsBaseMath || IsCompoundMath) {
         const RecordDecl *RD = LHSType->getAsRecordDecl();
@@ -16298,10 +16298,27 @@ static ExprResult BuildOverloadedBinOp(Sema &S, Scope *Sc, SourceLocation OpLoc,
 }
 
 ExprResult Sema::BuildBinOp(Scope *S, SourceLocation OpLoc,
-                            BinaryOperatorKind Opc, Expr *LHSExpr,
-                            Expr *RHSExpr, bool ForFoldExpression) {
-  if (!LHSExpr || !RHSExpr)
-    return ExprError();
+                            BinaryOperatorKind Opc,
+                            Expr *LHSExpr, Expr *RHSExpr, bool ForFoldExpression) {
+  if (!LHSExpr || !RHSExpr) return ExprError();
+
+  // --- C4 FIX FOR COMPOUND ASSIGNMENT CRASH ---
+  // If this is a compound assignment (e.g., +=, -=, *=) and the LHS
+  // is one of your custom unzipped swizzle packs (ParenListExpr), reject it.
+  if (BinaryOperator::isAssignmentOp(Opc) && Opc != BO_Assign) {
+    if (dyn_cast<ParenListExpr>(LHSExpr->IgnoreImplicit())) {
+
+      // Fire a clean native compiler error instead of crashing
+      Diag(OpLoc, diag::err_swizzle_compound_assignment_unsupported)
+        << BinaryOperator::getOpcodeStr(Opc)
+        << LHSExpr->getSourceRange() << RHSExpr->getSourceRange();
+
+      return ExprError();
+    }
+  }
+  // --------------------------------------------------
+
+  // ... standard Clang binary operation processing continues ...
 
   // We want to end up calling one of SemaPseudoObject::checkAssignment
   // (if the LHS is a pseudo-object), BuildOverloadedBinOp (if

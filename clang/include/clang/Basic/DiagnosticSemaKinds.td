@@ -246,6 +246,26 @@ def err_variably_modified_nontype_template_param : Error<
 def err_variably_modified_new_type : Error<
   "'new' cannot allocate object of variably modified type %0">;
 
+
+// C4 swizzle
+def err_swizzle_single_variable_tuple : Error<
+  "cannot assign a multi-component swizzle or tuple to a single untyped variable; "
+  "destructuring assignment requires matched variable names">;
+def err_expected_ident_after_comma : Error<
+  "expected variable identifier after ',' in multi-variable type-inferred assignment">;
+def err_expected_colon_equal : Error<
+  "expected ':=' after variable list in type-inferred assignment">;
+def err_swizzle_variable_count_mismatch : Error<
+  "assignment count mismatch: expression yields %0 values, but %1 variables are provided">;
+def err_swizzle_compound_assignment_unsupported : Error<
+  "compound assignment operator '%0' cannot be applied to a swizzle unpacking list; "
+  "use explicit individual assignments or separate expansions instead">;
+def err_swizzle_decl_unsupported : Error<
+  "cannot declare or type-infer into a complex member expression; "
+  "type-inferred declarations via ':=' require raw identifiers on the left hand side">;
+
+
+
 // C99 Designated Initializers
 def ext_designated_init : Extension<
   "designated initializers are a C99 feature">, InGroup<C99Designator>, DefaultIgnore;

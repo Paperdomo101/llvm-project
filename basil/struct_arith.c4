@@ -6,19 +6,33 @@ Vector2_print (Vector2 v) {
     "{%g,%g}\n"::printf(v.{x, y})
 }
 
+typedef struct { int x, y; } Vector2I;
+
 main () int {
-    Vector2 a = {0, 5}, b = {-4, 20}
+    Vector2I i = {1, 4}, j = {3, 5}
+    i.{x, y} = j.{y, x} // this works
+    // i.{x, y} := j.{y, x} // this crashes
+    Vector2_print({i.{x, y}})
+
+    Vector2 a = {0, 5},
+            b = {-4, 20}
+    "a = "::printf()
     Vector2_print(a) // fine
+    "b = "::printf()
     Vector2_print(b) // fine
     c := a + b; // CRASH
+    "a + b = "::printf()
     Vector2_print(c)
     d := a * b; // c = {0, 100}
+    "a * b = "::printf()
     Vector2_print(d)
     e := a - b; // c = {4, -15}
+    "a - b = "::printf()
     Vector2_print(e)
     f := a / b; // c = {0, 0.25}
+    "a / b = "::printf()
     Vector2_print(f)
     c += d;
-    c += d;
+    "c += d = "::printf()
     Vector2_print(c)
 }

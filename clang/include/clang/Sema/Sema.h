@@ -15826,8 +15826,13 @@ public:
   void performFunctionEffectAnalysis(TranslationUnitDecl *TU);
 
 
+  // C4
   StmtResult ActOnTypeInferredAssignment(Scope *S, IdentifierInfo *Name,
                                              SourceLocation NameLoc, Expr *InitExpr);
+  StmtResult ActOnMultiTypeInferredAssignment(Scope *S,
+                                                 ArrayRef<IdentifierInfo*> Idents,
+                                                 ArrayRef<SourceLocation> Locs,
+                                                 Expr *InitExpr);
 
   ///@}
 };

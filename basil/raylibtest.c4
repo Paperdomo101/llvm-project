@@ -85,9 +85,8 @@ main (int argc, char **argv) int {
 
         BLACK::ClearBackground()
 
-
-        float scaled_tex_w = (tex_test.width * scale)
-        float scaled_tex_h = (tex_test.height * scale)
+        scaled_tex_w := (tex_test.width * scale)
+        scaled_tex_h := (tex_test.height * scale)
 
         Vector2 bars = {
             .x = GetScreenWidth() - scaled_tex_w,
@@ -106,7 +105,6 @@ main (int argc, char **argv) int {
         DrawLineEx( pos, pos + vel, scale, YELLOW )
 
         DrawFPS(10, 10)
-
 
     }
 

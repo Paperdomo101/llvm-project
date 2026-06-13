@@ -54,27 +54,104 @@ StmtResult Parser::ParseStatement(SourceLocation *TrailingElseLoc,
 }
 
 
+
+// C4
 StmtResult Parser::ParseTypeInferredAssignment() {
+  // We already know Tok is an identifier from our lookahead check
+  SmallVector<IdentifierInfo*, 4> Idents;
+  SmallVector<SourceLocation, 4> IdLocs;
 
-  assert(Tok.is(tok::identifier) && NextToken().is(tok::colonequal));
+  // 1. Loop and harvest all LHS identifiers
+  while (Tok.is(tok::identifier)) {
+    Idents.push_back(Tok.getIdentifierInfo());
+    IdLocs.push_back(ConsumeToken()); // Consumes identifier
 
-  // 1. Capture the identifier token and its info
-  IdentifierInfo *Name = Tok.getIdentifierInfo();
-  SourceLocation NameLoc = ConsumeToken(); // Consumes the identifier
+    if (Tok.is(tok::comma)) {
+      ConsumeToken(); // Consumes ','
+      if (Tok.isNot(tok::identifier)) {
+        Diag(Tok.getLocation(), diag::err_expected_ident_after_comma);
+        SkipUntil(tok::semi, StopAtSemi);
+        return StmtError();
+      }
+    } else {
+      break; // No more commas, break out of loop
+    }
+  }
 
+  // 2. Now ensure the very next token is your custom ':=' operator
+  if (Tok.isNot(tok::colonequal)) {
+    Diag(Tok.getLocation(), diag::err_expected_colon_equal);
+    SkipUntil(tok::semi, StopAtSemi);
+    return StmtError();
+  }
   SourceLocation ColonEqualLoc = ConsumeToken(); // Consumes ':='
-  (void)ColonEqualLoc; // silence warning
 
-  // 2. Parse the right hand side expression (e.g., "40")
+  // 3. Parse the right hand side expression
   ExprResult InitExpr = ParseAssignmentExpression();
-  if (InitExpr.isInvalid()) {
-    SkipUntil(tok::semi);
+
+  // CRITICAL PROTECTION GUARD: Stop null pointer dereferences immediately
+  // if the expression failed to parse or is empty.
+  if (InitExpr.isInvalid() || !InitExpr.isUsable() || !InitExpr.get()) {
+    SkipUntil(tok::semi, StopAtSemi);
     return StmtError();
   }
 
-  // 3. Delegate AST building to Sema
-  return Actions.ActOnTypeInferredAssignment(getCurScope(), Name, NameLoc, InitExpr.get());
+  // 4. Implement Rule C Safety Logic
+  size_t SwizzleCount = 1;
+
+  // Only count inner sub-elements if the user is explicitly trying to unpack
+  // into multiple variables (e.g., a, b := ...).
+  if (Idents.size() > 1) {
+    Expr *E = InitExpr.get()->IgnoreImplicit();
+
+    // Unwrap explicit C casts or Compound Literals so we can see the multi-element structure
+    if (auto *CE = dyn_cast<CastExpr>(E)) {
+      E = CE->getSubExpr()->IgnoreImplicit();
+    } else if (auto *CLE = dyn_cast<CompoundLiteralExpr>(E)) {
+      E = CLE->getInitializer()->IgnoreImplicit();
+    }
+
+    if (auto *ILE = dyn_cast<InitListExpr>(E)) {
+        SwizzleCount = ILE->getNumInits();
+    }
+    else if (auto *PLE = dyn_cast<ParenListExpr>(E)) {
+        SwizzleCount = PLE->getNumExprs();
+    }
+    else {
+        SwizzleCount = 1;
+    }
+  } else {
+    // If there is exactly 1 variable (e.g., v3 := ... or c := ...),
+    // it always expects exactly 1 unified expression value.
+    SwizzleCount = 1;
+  }
+
+  // If the number of variables does not match the number of components, reject it!
+  if (Idents.size() != SwizzleCount) {
+    Diag(ColonEqualLoc, diag::err_swizzle_variable_count_mismatch)
+      << (int)SwizzleCount << (int)Idents.size()
+      << SourceRange(IdLocs.front(), InitExpr.get()->getEndLoc());
+
+    SkipUntil(tok::semi, StopAtSemi);
+    return StmtError();
+  }
+
+
+  // 5. Build the variables
+  if (Idents.size() == 1) {
+    // Prevent passing expressions with broken or null type fields to Sema
+    if (InitExpr.get()->getType().isNull()) {
+      SkipUntil(tok::semi, StopAtSemi);
+      return StmtError();
+    }
+    return Actions.ActOnTypeInferredAssignment(getCurScope(), Idents[0], IdLocs[0], InitExpr.get());
+  }
+
+  // Route multi-variable destructuring to our new Sema action
+  return Actions.ActOnMultiTypeInferredAssignment(getCurScope(), Idents, IdLocs, InitExpr.get());
 }
+
+
 
 
 StmtResult Parser::ParseStatementOrDeclaration(StmtVector &Stmts,
@@ -84,19 +161,25 @@ StmtResult Parser::ParseStatementOrDeclaration(StmtVector &Stmts,
 
   ParenBraceBracketBalancer BalancerRAIIObj(*this);
 
-  if (Tok.is(tok::identifier) && GetLookAheadToken(1).is(tok::colonequal)) {
+  // Look ahead to see if this statement starts an inferred assignment.
+  // We check if it's an identifier followed immediately by ':=' OR a comma ','
+  if (Tok.is(tok::identifier) &&
+     (GetLookAheadToken(1).is(tok::colonequal) || GetLookAheadToken(1).is(tok::comma))) {
+
         StmtResult AssignmentRes = ParseTypeInferredAssignment();
+
         if (AssignmentRes.isUsable()) {
           Stmts.push_back(AssignmentRes.get());
-
-          // --- C4 IR FIX ---
-          // Return an EMPTY StmtResult. This prevents the parent compound
-          // statement loop from pushing this statement into the AST a second time.
-          // fixes `a := do_thing()` from calling do_thing() twice
-          return StmtResult();
+          return StmtResult(); // Return empty to prevent duplicate injection
         }
-        return AssignmentRes;
+
+        // CRITICAL FIX: Forcefully consume the line up to the semicolon on error.
+        // This guarantees that standard C fallthrough never triggers a crash.
+        SkipUntil(tok::semi, StopAtSemi);
+        return AssignmentRes; // Return the error state immediately
     }
+
+
 
 
   // Because we're parsing either a statement or a declaration, the order of
@@ -621,6 +704,18 @@ StmtResult Parser::ParseExprStatement(ParsedStmtContext StmtCtx) {
       ConsumeToken();
     return Actions.ActOnExprStmtError();
   }
+
+
+  // --- C4: FIX FOR i.{x, y} := ... CRASH ---
+  if (Tok.is(tok::colonequal)) {
+      Diag(Tok.getLocation(), diag::err_swizzle_decl_unsupported)
+      << Expr.get()->getSourceRange();
+      SkipUntil(tok::semi, StopAtSemi);
+      return StmtError();
+  }
+  // -----------------------------------------------
+
+
 
   if (Tok.is(tok::colon) && getCurScope()->isSwitchScope() &&
       Actions.CheckCaseExpression(Expr.get())) {

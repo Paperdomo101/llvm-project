@@ -403,7 +403,7 @@ prefix_operator (Parser *parser, Token token) Expression * {
 
     Expression *expr = sizeof(Expression)::malloc()
     expr.type = EXPR_PREFIX;
-    expr.PREFIX.operator = token.type;
+    // expr.PREFIX.operator = sv_from_parts(token.start, token.length)
     return expr;
 }
 

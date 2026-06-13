@@ -6982,23 +6982,46 @@ Sema::CheckTypedefForVariablyModifiedType(Scope *S, TypedefNameDecl *NewTD) {
 }
 
 //// C4 FEATURE ////
-StmtResult Sema::ActOnTypeInferredAssignment(Scope *S, IdentifierInfo *Name,
-                                             SourceLocation NameLoc, Expr *InitExpr) {
-  if (!InitExpr) return StmtError();
+StmtResult Sema::ActOnTypeInferredAssignment(
+    Scope *S,
+    IdentifierInfo *Name,
+    SourceLocation NameLoc,
+    Expr *InitExpr) {
 
-  // 1. Deduce the target type directly from the evaluated initializer expression
-  QualType InferredType = InitExpr->getType();
-
-  // Prevent invalid assignments from things like "void" returning functions
-  if (InferredType->isVoidType()) {
-    Diag(NameLoc, diag::err_typecheck_decl_incomplete_type) << InferredType;
+  if (!InitExpr) {
+    llvm::errs() << "InitExpr is NULL\n";
     return StmtError();
   }
 
-  // 2. Resolve the active declaration context (where the variable is being defined)
+  // InitExpr->dump();
+  // llvm::errs() << InitExpr->getStmtClassName() << "\n";
+  // InitExpr->getType().dump();
+
+  // 1. Rule C Validation: Prevent multi-element swizzles/tuples from binding to a single variable
+  // If your custom swizzle uses an InitListExpr under the hood:
+  Expr *E = InitExpr->IgnoreImplicit();
+
+  if (auto *PLE = dyn_cast<ParenListExpr>(E)) {
+      if (PLE->getNumExprs() > 1) {
+          Diag(NameLoc, diag::err_swizzle_single_variable_tuple);
+          return StmtError();
+      }
+  }
+
+  // 2. Deduce the target type directly from the evaluated initializer expression
+  QualType InferredType = InitExpr->getType();
+
+  if (InferredType.isNull()) {
+      llvm::errs() << "Cannot infer type from expression class "
+                   << InitExpr->getStmtClassName()
+                   << "\n";
+      return StmtError();
+  }
+
+  // 3. Resolve the active declaration context (where the variable is being defined)
   DeclContext *DC = CurContext;
 
-  // 3. Create the VarDecl directly using the AST Context
+  // 4. Create the VarDecl directly using the AST Context
   VarDecl *NewVD = VarDecl::Create(
       Context, DC, NameLoc, NameLoc, Name, InferredType,
       Context.getTrivialTypeSourceInfo(InferredType, NameLoc), SC_None);
@@ -7006,17 +7029,71 @@ StmtResult Sema::ActOnTypeInferredAssignment(Scope *S, IdentifierInfo *Name,
   // Mark the variable as a local block auto variable
   NewVD->setLocalExternDecl();
 
-  // 4. Register the variable into the active scope so future code can look it up
+  // 5. Register the variable into the active scope so future code can look it up
   PushOnScopeChains(NewVD, S);
 
-  // 5. Attach the initializer expression to our fresh variable declaration
+  // 6. Attach the initializer expression to our fresh variable declaration
   AddInitializerToDecl(NewVD, InitExpr, /*DirectInit=*/false);
-  // NewVD->dump(); // DEBUG DUMP AST
 
-  // 6. Wrap the declaration in a standard C statement group wrapper
-  DeclGroupRef DG(NewVD);
+  // 7. Wrap the declaration in a standard C statement group wrapper
   return ActOnDeclStmt(ConvertDeclToDeclGroup(NewVD), NameLoc, InitExpr->getEndLoc());
 }
+
+StmtResult Sema::ActOnMultiTypeInferredAssignment(Scope *S,
+                                                 ArrayRef<IdentifierInfo*> Idents,
+                                                 ArrayRef<SourceLocation> Locs,
+                                                 Expr *InitExpr) {
+  if (!InitExpr) return StmtError();
+
+  size_t VarCount = Idents.size();
+  SmallVector<Decl*, 4> DeclsInGroup;
+  Expr *E = InitExpr->IgnoreImplicit();
+
+  // We loop over each variable the user provided (e.g., 'n', 'm', then 'o')
+  for (size_t i = 0; i < VarCount; ++i) {
+    QualType ElementType;
+    Expr *SubInitExpr = nullptr; // Track the unique sub-expression for this variable
+
+    // Extract the precise type AND the sub-expression for the current index
+    if (auto *ILE = dyn_cast<InitListExpr>(E)) {
+      ElementType = ILE->getInit(i)->getType();
+      SubInitExpr = ILE->getInit(i);
+    } else if (auto *PLE = dyn_cast<ParenListExpr>(E)) {
+      ElementType = PLE->getExpr(i)->getType();
+      SubInitExpr = PLE->getExpr(i);
+    } else {
+      ElementType = InitExpr->getType();
+      SubInitExpr = InitExpr; // Fallback
+    }
+
+    if (ElementType->isVoidType()) {
+      Diag(Locs[i], diag::err_typecheck_decl_incomplete_type) << ElementType;
+      return StmtError();
+    }
+
+    // Create the VarDecl using the unique identifier and its structural type
+    VarDecl *NewVD = VarDecl::Create(
+        Context, CurContext, Locs[i], Locs[i], Idents[i], ElementType,
+        Context.getTrivialTypeSourceInfo(ElementType, Locs[i]), SC_None);
+
+    NewVD->setLocalExternDecl();
+    PushOnScopeChains(NewVD, S);
+
+    // CRITICAL FIX: Pass the specific indexed sub-expression (SubInitExpr)
+    // instead of the root multi-component InitExpr.
+    // This tells LLVM to generate code specifically for 'z' on index 0, 'y' on index 1, etc.
+    AddInitializerToDecl(NewVD, SubInitExpr, /*DirectInit=*/false);
+
+    DeclsInGroup.push_back(NewVD);
+  }
+
+  // Wrap our collection of fresh variables into a standard C declaration statement
+  DeclGroupRef DG = DeclGroupRef::Create(Context, DeclsInGroup.data(), DeclsInGroup.size());
+  return ActOnDeclStmt(DeclGroupPtrTy::make(DG), Locs.front(), InitExpr->getEndLoc());
+}
+
+
+// end C4
 
 
 
