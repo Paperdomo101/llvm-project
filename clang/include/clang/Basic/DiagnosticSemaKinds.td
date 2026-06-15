@@ -268,6 +268,8 @@ def err_invalid_size_intrinsic_target : Error<
   "the '#.' size intrinsic operator can only be applied to custom bounds-checked arrays">;
 def err_array_index_out_of_bounds : Error<
   "index %0 is out of bounds for array of size %2 [%0/%1]">;
+def err_bounds_checked_array_type_mismatch : Error<
+  "passing bounds-checked array with incompatible element type %0 to parameter expecting element type %1">;
 
 
 // C99 Designated Initializers

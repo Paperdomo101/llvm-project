@@ -14092,59 +14092,40 @@ void Sema::AddInitializerToDecl(Decl *RealDecl, Expr *Init, bool DirectInit) {
           size_t ElementCount = ILE->getNumInits();
           QualType ElementTy = DataField->getType()->getPointeeType();
 
-          // 1. Properly scale the raw backing array configuration
+          // 1. Properly scale the raw backing array configuration type
           QualType BackingArrayTy = Context.getConstantArrayType(
               ElementTy, llvm::APInt(32, ElementCount), nullptr, ArraySizeModifier::Normal, 0);
           ILE->setType(BackingArrayTy);
 
-          // 2. Synthesize an independent local variable declaration to hold the array memory on the stack.
-          // FIX: Use VDeclCheck->getIdentifier() to cleanly generate a unique backing variable name.
-          IdentifierInfo *VarII = VDeclCheck->getIdentifier();
-          std::string BackingName = VarII ? (VarII->getName().str() + "__backing_arr") : "__backing_arr";
-          IdentifierInfo *BackingArrII = &Context.Idents.get(BackingName);
+          // 2. Wrap your ILE directly inside a CompoundLiteralExpr.
+          // This forces Clang to treat the array elements as a local stack object,
+          // generating dynamic runtime store instructions for non-constants like 'a'.
+          TypeSourceInfo *TInfo = Context.getTrivialTypeSourceInfo(BackingArrayTy, Init->getBeginLoc());
+          CompoundLiteralExpr *CLE = new (Context) CompoundLiteralExpr(
+              Init->getBeginLoc(), TInfo, BackingArrayTy, VK_LValue, ILE, /*FileScope=*/false);
 
-          VarDecl *BackingVD = VarDecl::Create(
-              Context, VDeclCheck->getDeclContext(), Init->getBeginLoc(), Init->getBeginLoc(),
-              BackingArrII, BackingArrayTy, Context.getTrivialTypeSourceInfo(BackingArrayTy, Init->getBeginLoc()), SC_None);
-          BackingVD->setInit(ILE);
-          BackingVD->setLocalExternDecl();
+          // 3. Implicitly decay the Compound Literal array into a raw data pointer
+          ExprResult DecayedPtr = DefaultFunctionArrayLvalueConversion(CLE);
+          if (DecayedPtr.isInvalid()) return;
 
-          // Push it into the active execution context block
-          VDeclCheck->getDeclContext()->addDecl(BackingVD);
-
-          // 3. Build a clean reference tracking expression pointing to our new array variable
-          // FIX: Use DeclRefExpr constructor natively to bypass .get() member missing errors.
-          Expr *ArrRef = DeclRefExpr::Create(
-              Context, NestedNameSpecifierLoc(), SourceLocation(),
-              BackingVD, false, Init->getBeginLoc(), BackingArrayTy, VK_LValue);
-
-          // Implicitly decay the array reference to a pointer to fit our '__data' pointer field type
-          ExprResult DecayedPtr = DefaultFunctionArrayLvalueConversion(ArrRef);
-
-          // 4. Construct the structural container initializer list components using the pointer address
+          // 4. Construct the structural container initializer list components
           SmallVector<Expr*, 2> StructInits;
-          StructInits.push_back(DecayedPtr.get()); // Map the clean pointer memory address to __data
+          StructInits.push_back(DecayedPtr.get()); // Field 0: __data pointer address
 
           llvm::APInt SizeVal(Context.getTypeSize(Context.getSizeType()), ElementCount);
           Expr *SizeLiteral = IntegerLiteral::Create(Context, SizeVal, Context.getSizeType(), Init->getBeginLoc());
-          StructInits.push_back(SizeLiteral);     // Map the tracking count to __size
+          StructInits.push_back(SizeLiteral);     // Field 1: __size metadata parameter
 
           // Create the parent implicit struct layout container wrapper
           InitListExpr *NewStructInit = new (Context) InitListExpr(Context, Init->getBeginLoc(), StructInits, Init->getEndLoc(), false);
           NewStructInit->setType(VDeclCheck->getType());
 
-          // 5. Inject the clean structural allocation tree into the variable definition slot
+          // 5. Update the initialization nodes inline and let execution fall through naturally.
+          // This removes all custom early returns and lets Clang handle final compilation steps.
+          Init = NewStructInit;
           VDeclCheck->setInit(NewStructInit);
-          this->CheckCompleteVariableDeclaration(VDeclCheck);
 
-          // --- FIXED MACHINE BINARY EMISSION HOOK ---
-          // Capture the AST Consumer as a reference rather than a raw pointer
-          auto &Consumer = getASTConsumer();
-          Consumer.HandleTopLevelDecl(DeclGroupRef(VDeclCheck));
-          // --------------------------------------------
-
-          // llvm::errs() << "BOUNDS STRUCT INJECTED SUCCESSFULLY\n";
-          return;
+          llvm::errs() << "BOUNDS STRUCT INJECTED SUCCESSFULLY via CompoundLiteralExpr\n";
         }
       }
     }

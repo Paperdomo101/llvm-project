@@ -10,6 +10,21 @@
     bob[4] = 20; // ERROR: 4 is out of bounds for array 'bob', which is of size '3'
     ```
 
+    ## capacity operator ##.
+    ```
+    ##.int // returns INT_MAX
+    ```
+
+    [size]
+
+    ## references
+    ```
+    pass_by_ref(&int bob) { ... }
+
+    a := 5;
+    pass_by_ref(a)
+    ```
+
     ## Require / Satisfy
 
     ## strip

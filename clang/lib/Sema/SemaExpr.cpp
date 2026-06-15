@@ -15602,6 +15602,32 @@ static bool needsConversionOfHalfVec(bool OpRequiresConversion, ASTContext &Ctx,
 
 
 /// C4
+ExprResult Sema::ActOnTypeSizeIntrinsic(ParsedType Ty, SourceLocation OpLoc) {
+  if (!Ty) return ExprError();
+
+  // 1. Resolve the front-end ParsedType wrapper into Clang's internal QualType context
+  TypeSourceInfo *TInfo = nullptr;
+  QualType TargetTy = GetTypeFromParser(Ty, &TInfo);
+  if (TargetTy.isNull()) return ExprError();
+
+  // 2. Reject incomplete or void types that carry no hardware storage layout constraints
+  if (TargetTy->isIncompleteType() || TargetTy->isVoidType()) {
+    Diag(OpLoc, diag::err_sizeof_alignof_incomplete_or_sizeless_type)
+        << 0 << TargetTy << SourceRange(OpLoc);
+    return ExprError();
+  }
+
+  // 3. Query the target platform metadata layout engine to pull the exact byte size capacity
+  CharUnits TypeSizeInBytes = Context.getTypeSizeInChars(TargetTy);
+  uint64_t ByteQuantity = TypeSizeInBytes.getQuantity();
+
+  // 4. Construct and return an implicit Unsigned Long IntegerLiteral AST node context.
+  // This allows the value (like 4 or 8) to act as a pure compile-time constant!
+  llvm::APInt SizeVal(Context.getTypeSize(Context.getSizeType()), ByteQuantity);
+  return IntegerLiteral::Create(Context, SizeVal, Context.getSizeType(), OpLoc);
+}
+
+
 ExprResult Sema::ActOnArraySizeIntrinsic(Expr *SubExpr, SourceLocation HashDotLoc, SourceLocation EndLoc) {
   if (!SubExpr) return ExprError();
 
@@ -17938,9 +17964,7 @@ bool Sema::DiagnoseAssignmentResult(AssignConvertType ConvTy,
   if (Complained)
     *Complained = false;
 
-  // === C4: ANONYMOUS SLICE ARRAY TYPE COMPATIBILITY TUNNEL ===
-  // Force structurally matching bounds-checked array anonymous structs
-  // to evaluate as fully compatible across function boundaries.
+  // === C4: DETAILED BOUNDS-CHECKED ARRAY TYPE ERROR ===
   if (ConvTy != AssignConvertType::Compatible &&
       !DstType.isNull() && !SrcType.isNull() &&
       DstType->isRecordType() && SrcType->isRecordType()) {
@@ -17952,13 +17976,34 @@ bool Sema::DiagnoseAssignmentResult(AssignConvertType ConvTy,
       if (DstRD->lookup(&Context.Idents.get("__size")).isSingleResult() &&
           SrcRD->lookup(&Context.Idents.get("__size")).isSingleResult()) {
 
-        // Transparently override the mismatch flag: return false to signal
-        // to Clang that this assignment/parameter pass was a total success!
-        return false;
+        FieldDecl *DstDataField = *DstRD->field_begin();
+        FieldDecl *SrcDataField = *SrcRD->field_begin();
+
+        QualType DstElemTy = DstDataField->getType()->getPointeeType();
+        QualType SrcElemTy = SrcDataField->getType()->getPointeeType();
+
+        if (Context.hasSameType(DstElemTy, SrcElemTy)) {
+          return false;
+        }
+
+        // 1. Fire our clear, modern custom element type error
+        Diag(Loc, diag::err_bounds_checked_array_type_mismatch)
+            << SrcElemTy << DstElemTy << SrcExpr->getSourceRange();
+
+        // 2. CRITICAL DUPLICATE SUPPRESSION FIX:
+        // Set Complained to true AND overwrite the mutable parameter state reference.
+        // This tells Clang's downstream diagnostic loops that this type error has been
+        // completely finalized, stopping the default fallback anonymous struct error from printing!
+        if (Complained) *Complained = true;
+        ConvTy = AssignConvertType::Compatible;
+
+        return true;
       }
     }
   }
   // ==========================================================
+
+
 
   // Decode the result (notice that AST's are still created for extensions).
   bool CheckInferredResultType = false;

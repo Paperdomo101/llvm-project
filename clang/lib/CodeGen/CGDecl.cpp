@@ -2882,6 +2882,67 @@ void CodeGenFunction::EmitParmDecl(const VarDecl &D, ParamValue Arg,
                             Builder.CreateIsNotNull(Arg.getAnyValue()));
     }
   }
+
+
+  // === C4 LANGUAGE EXTENSION: BOUNDS-CHECKED ARRAY DEEP COPY ===
+  if (Ty->isRecordType()) {
+    if (const RecordDecl *RD = Ty->getAsRecordDecl()) {
+      // Verify it matches our custom 2-field anonymous array metadata layout
+      if (RD->getIdentifier() == nullptr &&
+          RD->lookup(&CGM.getContext().Idents.get("__size")).isSingleResult()) {
+
+        // 1. Safely cast the base variable down to the required parameter declaration node
+        const ParmVarDecl *PVD = cast<ParmVarDecl>(&D);
+
+        // 2. Extract the local LValue address structure for the parameter struct container
+        LValue ParamLV = MakeAddrLValue(GetAddrOfLocalVar(PVD), Ty);
+
+        // 3. Locate the public field definitions inside the struct declaration explicitly by name
+        FieldDecl *DataField = nullptr;
+        FieldDecl *SizeField = nullptr;
+        for (FieldDecl *Field : RD->fields()) {
+          if (Field->getName() == "__data") DataField = Field;
+          else if (Field->getName() == "__size") SizeField = Field;
+        }
+
+        if (DataField && SizeField) {
+          // 4. Load the runtime tracking size and base pointer from the incoming argument copy
+          LValue SizeLV = EmitLValueForField(ParamLV, SizeField);
+          llvm::Value *SizeVal = EmitLoadOfScalar(SizeLV, SourceLocation());
+
+          LValue DataLV = EmitLValueForField(ParamLV, DataField);
+          llvm::Value *OrigDataPtr = EmitLoadOfScalar(DataLV, SourceLocation());
+
+          // 5. DYNAMIC STACK CLONING BLOCK:
+          // Allocate an isolated temporary array buffer right on this function's stack frame.
+          // We scale the allocation size dynamically using the loaded __size variable value.
+          QualType PointeeTy = DataField->getType()->getPointeeType();
+          llvm::Type *LLVMElemTy = ConvertTypeForMem(PointeeTy);
+
+          llvm::Value *NewBackingArr = Builder.CreateAlloca(
+              LLVMElemTy, SizeVal, D.getName() + "__clone_buffer");
+
+          // Match your machine primitive type boundaries safely
+          CharUnits EltAlign = getContext().getTypeAlignInChars(PointeeTy);
+          cast<llvm::AllocaInst>(NewBackingArr)->setAlignment(EltAlign.getAsAlign());
+
+          // 6. HARDWARE MEMORY COPY:
+          // Trigger a highly efficient memcpy layout block to duplicate the element array bytes
+          llvm::Value *ElementSizeVal = llvm::ConstantInt::get(
+              SizeVal->getType(), getContext().getTypeSizeInChars(PointeeTy).getQuantity());
+          llvm::Value *ByteCount = Builder.CreateMul(SizeVal, ElementSizeVal, "bytes_to_copy");
+
+          // Execute the memory duplication transfer natively
+          Builder.CreateMemCpy(NewBackingArr, EltAlign.getAsAlign(),
+                               OrigDataPtr, EltAlign.getAsAlign(), ByteCount);
+
+          // 7. OVERWRITE LOCAL ADDRESS REFERENCE:
+          // Overwrite the parameter's local '__data' field slot to target your fresh clone.
+          EmitStoreOfScalar(NewBackingArr, DataLV, /*isInit=*/false);
+        }
+      }
+    }
+  }
 }
 
 void CodeGenModule::EmitOMPDeclareReduction(const OMPDeclareReductionDecl *D,

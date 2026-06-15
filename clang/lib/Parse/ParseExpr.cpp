@@ -928,13 +928,23 @@ Parser::ParseCastExpression(CastParseKind ParseKind, bool isAddressOfOperand,
   // to handle the postfix expression suffixes.  Cases that cannot be followed
   // by postfix exprs should set AllowSuffix to false.
   switch (SavedKind) {
-
-  // === C4 LANGUAGE EXTENSION: BOUNDS-CHECKED ARRAY SIZE OPERATOR (#.) ===
-  case tok::hashdot: { // Replace with your exact custom token enum name
+  // === C4 LANGUAGE EXTENSION: UNIVERSAL SIZE OPERATOR (#.) ===
+  case tok::hashdot: {
     SourceLocation SizeOpLoc = ConsumeToken(); // Consumes your '#.' punctuator token
 
-    // Parse the target expression following the '#.' token (e.g., 'bob' or an array expression)
-    // We pass 'AnyCastExpr' to cleanly evaluate cast-level precedence bindings
+    // --- PART A: TYPE NAME SIZE LOOKUP INTERCEPT (#.int) ---
+    // Look ahead to check if the next token is a native type keyword or an identifier class type
+    if (isDeclarationSpecifier(ImplicitTypenameContext::No)) {
+      TypeResult Ty = ParseTypeName();
+      if (Ty.isInvalid()) {
+        return ExprError();
+      }
+
+      // Delegate to Sema to calculate the static byte capacity of this type definition
+      return Actions.ActOnTypeSizeIntrinsic(Ty.get(), SizeOpLoc);
+    }
+
+    // --- PART B: EXISTING BOUNDS-CHECKED VARIABLE SIZE LOOKUP (#.bob) ---
     ExprResult SubExpr = ParseCastExpression(CastParseKind::AnyCastExpr,
                                              /*isAddressOfOperand=*/false,
                                              NotCastExpr, CorrectionBehavior);
@@ -942,11 +952,10 @@ Parser::ParseCastExpression(CastParseKind ParseKind, bool isAddressOfOperand,
       return ExprError();
     }
 
-    // Delegate the node generation directly to Sema.
-    // We pass SizeOpLoc for both hash and period context since they are unified in your token.
     return Actions.ActOnArraySizeIntrinsic(SubExpr.get(), SizeOpLoc, SizeOpLoc);
   }
-  // ======================================================================
+  // ==========================================================
+
 
   case tok::l_paren: {
     // If this expression is limited to being a unary-expression, the paren can

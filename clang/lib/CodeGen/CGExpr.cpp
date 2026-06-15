@@ -4977,6 +4977,97 @@ void CodeGenFunction::EmitCountedByBoundsChecking(
 
 LValue CodeGenFunction::EmitArraySubscriptExpr(const ArraySubscriptExpr *E,
                                                bool Accessed) {
+  // --- C4: ARRAY OVERLOAD BOUNDS CHECKING TRAPS ---
+  const Expr *BaseExpr = E->getBase()->IgnoreImplicit();
+
+  // Track down the absolute base container expression by unrolling field selectors
+  // (This handles 'joe.__data' and isolates the parent variable object 'joe' automatically!)
+  if (const auto *ME = dyn_cast<MemberExpr>(BaseExpr)) {
+    BaseExpr = ME->getBase()->IgnoreImplicit();
+  }
+
+  QualType BaseTy = BaseExpr->getType();
+
+  // If the base object represents our custom 2-field array metadata structure layout
+  if (BaseTy->isRecordType()) {
+    const RecordDecl *RD = BaseTy->getAsRecordDecl();
+    if (RD && RD->getIdentifier() == nullptr &&
+        RD->lookup(&CGM.getContext().Idents.get("__size")).isSingleResult()) {
+
+      // 1. Emit CodeGen tracking instructions to fetch the runtime Index value
+      llvm::Value *IndexVal = EmitScalarExpr(E->getIdx());
+
+      // 2. Load the implicit '__size' component from the parent structure instance
+      LValue BaseLV = EmitLValue(BaseExpr);
+      FieldDecl *SizeField = nullptr;
+      for (FieldDecl *Field : RD->fields()) {
+        if (Field->getName() == "__size") SizeField = Field;
+      }
+
+      LValue SizeLV = EmitLValueForField(BaseLV, SizeField);
+      llvm::Value *SizeVal = EmitLoadOfScalar(SizeLV, SourceLocation());
+
+      // 3. Align operand bit-widths for clean hardware matching
+      if (IndexVal->getType() != SizeVal->getType()) {
+        IndexVal = Builder.CreateIntCast(IndexVal, SizeVal->getType(), /*isSigned=*/true);
+      }
+
+      // 4. Perform the dynamic unsigned logical comparison evaluation:
+      // Index >= Size catches positive overflows AND negative underflows (like -1) instantly!
+      llvm::Value *IsOutOfBounds = Builder.CreateICmpUGE(IndexVal, SizeVal, "is_out_of_bounds");
+
+      llvm::BasicBlock *SafeAccessBB = createBasicBlock("safe_array_access");
+      llvm::BasicBlock *TrapBB = createBasicBlock("bounds_panic_abort");
+
+      Builder.CreateCondBr(IsOutOfBounds, TrapBB, SafeAccessBB);
+
+      // --- TRAP BLOCK TARGET REMAPPED TO PANIC DIAGNOSTIC ---
+      EmitBlock(TrapBB);
+
+      // 1. Map the standard C library function prototypes
+      llvm::FunctionCallee FPrintfFn = CGM.getModule().getOrInsertFunction(
+          "fprintf",
+          llvm::FunctionType::get(
+              IntTy, {VoidPtrTy, VoidPtrTy}, true));
+
+      llvm::FunctionCallee ExitFn = CGM.getModule().getOrInsertFunction(
+          "exit",
+          llvm::FunctionType::get(VoidTy, {IntTy}, false));
+
+      // 2. Fetch the platform-specific standard error descriptor stream pointer reference.
+      // On macOS/Darwin, stderr is exported via the global symbol '__stderrp'.
+      llvm::Value *StdErrExt = CGM.getModule().getOrInsertGlobal("__stderrp", VoidPtrTy);
+
+      // FIX: Call CreateAlignedLoad directly to bypass the customized Address object overloads.
+      // We pass VoidPtrTy as the element layout type, and 8-byte pointer alignment for ARM64/Mac.
+      llvm::Value *StdErrPtr = Builder.CreateAlignedLoad(
+          VoidPtrTy, StdErrExt, llvm::Align(8), "stderr");
+
+      // 3. Synthesize the descriptive panic format string layout using the modern Builder API
+      const char *PanicFormatStr =
+          "\033[33mc:: \033[31merror: \033[0;2mArray index %zu is out of bounds for array of size %zu!\033[0m\n";
+      llvm::Value *FormatStrPtr = Builder.CreateGlobalString(PanicFormatStr, "bounds_panic_fmt");
+
+      // 4. Upcast values to 64-bit size parameters for accurate printf format mapping
+      llvm::Value *Idx64 = Builder.CreateIntCast(IndexVal, Int64Ty, /*isSigned=*/false);
+      llvm::Value *Size64 = Builder.CreateIntCast(SizeVal, Int64Ty, /*isSigned=*/false);
+
+      // 5. Generate the function execution blocks
+      Builder.CreateCall(FPrintfFn, {StdErrPtr, FormatStrPtr, Idx64, Size64});
+      Builder.CreateCall(ExitFn, {llvm::ConstantInt::get(IntTy, 1)});
+
+      Builder.CreateUnreachable();
+      // ------------------------------------------------------
+
+      // --- SAFE ACCESS BLOCK CONTINUATION ---
+      EmitBlock(SafeAccessBB);
+
+
+      // Boundary safety verified! Let execution continue to process the array lookup natively.
+    }
+  }
+  // =========================================================
+
   // The index must always be an integer, which is not an aggregate.  Emit it
   // in lexical order (this complexity is, sadly, required by C++17).
   llvm::Value *IdxPre =

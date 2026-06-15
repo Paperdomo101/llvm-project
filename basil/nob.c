@@ -158,6 +158,10 @@ CompilerTest custom_test_suite[] = {
     ///  RUNTIME
     /// --------------
     {
+        "Runtime Bounds Check",
+        "tests/bounds_check_runtime.c4", true
+    },
+    {
         "Defer Sigil Unwinding Verification",
         "tests/defer.c4", true,
     },

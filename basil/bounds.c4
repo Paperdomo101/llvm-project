@@ -1,12 +1,40 @@
 #include <stdio.h>
 
-foo (size_t s, [] int bob) {
-    "%zu, %d\n"::printf(#.bob, bob[0])
+foo (size_t s, [] int arr) {
+    for i := 0; i < #.arr; ++i {
+        "arr[%d]: %d\n"::printf(i, arr[i])
+        arr[i] += i;
+    }
 }
 
+// ptr (^[] int arrptr) {
+//     for i := 0; i < #.*arrptr; ++i {
+//         "arr[%d]: %d\n"::printf(i, *arrptr[i])
+//         arr[i] += i;
+//     }
+// }
+
 main () int {
-    [] int bob = { 10, 20, 30 }
-    bob[0] = 20;
-    #.bob::foo(bob)
-    return 0;
+    a := 24;
+    [] int joe = { a, 5 }
+    #.joe::foo(joe)
+    // #.joe::ptr(&joe)
+    // ^[] int joeptr;
+    // #.joe::ptr(joeptr)
 }
+
+    // foo(#.joe, joe)
+    // printf("[%d, %d]\n", joe[0], joe[1])
+
+
+
+
+
+
+/// ADD size in []
+//  if [size] specified in param to function  foo ([10] int arr)
+//      Check that size of passed array matches
+
+// printf("deliberate array breach...\n")
+// index := #.int;
+// joe[index] = 5;
