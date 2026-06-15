@@ -20,7 +20,7 @@ main () int {
     Vector2_print(a) // fine
     "b = "::printf()
     Vector2_print(b) // fine
-    c := a + b; // CRASH
+    c := a + b;
     "a + b = "::printf()
     Vector2_print(c)
     d := a * b; // c = {0, 100}

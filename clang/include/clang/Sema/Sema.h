@@ -2595,6 +2595,8 @@ public:
                                      Expr *Operand, SourceLocation RParenLoc);
 
   // C4
+  ExprResult ActOnArraySizeIntrinsic(Expr *SubExpr, SourceLocation HashLoc, SourceLocation PeriodLoc);
+
   ExprResult CheckStructArithmeticOperands(ExprResult &LHS, ExprResult &RHS,
                                                SourceLocation OpLoc,
                                                BinaryOperatorKind Opc,

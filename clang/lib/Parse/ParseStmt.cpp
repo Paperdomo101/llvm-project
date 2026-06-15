@@ -321,6 +321,27 @@ Retry:
     [[fallthrough]];
   }
 
+  // === C4 LANGUAGE EXTENSION: BOUNDS-CHECKED ARRAY DECLARATION LOOKAHEAD ===
+  case tok::l_square: {
+    if (NextToken().is(tok::r_square)) {
+      // Both C++11 and GNU attributes preceding the declaration appertain to it,
+      // so put them in a single list to pass on to ParseDeclaration().
+      takeAndConcatenateAttrs(CXX11Attrs, std::move(GNUAttrs));
+
+      SourceLocation DeclEnd;
+      DeclGroupPtrTy Decl = ParseDeclaration(DeclaratorContext::Block, DeclEnd,
+                                             CXX11Attrs, GNUAttrs);
+
+      SourceLocation DeclStart = Tok.getLocation();
+      return Actions.ActOnDeclStmt(Decl, DeclStart, DeclEnd);
+    }
+    // If it's a single '[', fall through to default to let it parse as a standard
+    // C expression statement (e.g. an array access or ObjC message expression).
+    [[fallthrough]];
+  }
+  // =========================================================================
+
+
   default: {
     if (getLangOpts().CPlusPlus && MaybeParseCXX11Attributes(CXX11Attrs, true))
       goto Retry;

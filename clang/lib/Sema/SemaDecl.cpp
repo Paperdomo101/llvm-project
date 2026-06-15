@@ -7879,7 +7879,53 @@ NamedDecl *Sema::ActOnVariableDeclarator(
   IdentifierInfo *II = Name.getAsIdentifierInfo();
   bool IsPlaceholderVariable = false;
 
+  // === C4: BOUNDS-CHECKED ARRAY TYPE TRANSFORMATION ===
+  if (D.getDeclSpec().isBoundsCheckedArray()) {
+    QualType ElementTy = R;
+
+    // 1. Synthesize an anonymous structure record layout
+    RecordDecl *AnonRecord = RecordDecl::Create(Context, TagDecl::TagKind::Struct,
+                                                CurContext, D.getBeginLoc(),
+                                                D.getIdentifierLoc(),
+                                                /*Id=*/nullptr);
+    AnonRecord->startDefinition();
+
+    // 2. Create the '__data' pointer field
+    QualType DataPtrTy = Context.getPointerType(ElementTy);
+    FieldDecl *DataField = FieldDecl::Create(Context, AnonRecord, D.getBeginLoc(),
+                                             D.getIdentifierLoc(),
+                                             &Context.Idents.get("__data"),
+                                             DataPtrTy, /*TInfo=*/nullptr,
+                                             /*BitWidth=*/nullptr, /*Mutable=*/false,
+                                             ICIS_NoInit);
+    DataField->setAccess(AS_public);
+    AnonRecord->addDecl(DataField);
+
+    // 3. Create the '__size' tracking field
+    QualType SizeTy = Context.getSizeType(); // size_t
+    FieldDecl *SizeField = FieldDecl::Create(Context, AnonRecord, D.getBeginLoc(),
+                                             D.getIdentifierLoc(),
+                                             &Context.Idents.get("__size"),
+                                             SizeTy, /*TInfo=*/nullptr,
+                                             /*BitWidth=*/nullptr, /*Mutable=*/false,
+                                             ICIS_NoInit);
+    SizeField->setAccess(AS_public);
+    AnonRecord->addDecl(SizeField);
+
+    AnonRecord->completeDefinition();
+
+
+    // 4. FIXED: Explicitly upcast to TypeDecl* to guide the compiler
+    // past the ambiguous deleted-function inheritance trap!
+    R = Context.getTypeDeclType(cast<TypeDecl>(AnonRecord));
+    TInfo = Context.getTrivialTypeSourceInfo(R, D.getIdentifierLoc());
+
+  }
+
+  // ====================================================
+
   if (D.isDecompositionDeclarator()) {
+
     // Take the name of the first declarator as our name for diagnostic
     // purposes.
     auto &Decomp = D.getDecompositionDeclarator();
@@ -14029,6 +14075,84 @@ void Sema::AddInitializerToDecl(Decl *RealDecl, Expr *Init, bool DirectInit) {
     return;
   }
 
+   // --- C4: IN-PLACE STRUCTURAL INITIALIZER REWRITE ---
+  VarDecl *VDeclCheck = dyn_cast<VarDecl>(RealDecl);
+  if (VDeclCheck && VDeclCheck->getType()->isRecordType() && Init) {
+    const RecordDecl *RD = VDeclCheck->getType()->getAsRecordDecl();
+
+    if (RD && RD->getNumFields() == 2) {
+      auto It = RD->field_begin();
+      FieldDecl *DataField = *It++;
+      FieldDecl *SizeField = *It;
+
+      if (DataField->getType()->isPointerType() && SizeField->getName() == "__size") {
+        Expr *E = Init->IgnoreImplicit();
+
+        if (auto *ILE = dyn_cast<InitListExpr>(E)) {
+          size_t ElementCount = ILE->getNumInits();
+          QualType ElementTy = DataField->getType()->getPointeeType();
+
+          // 1. Properly scale the raw backing array configuration
+          QualType BackingArrayTy = Context.getConstantArrayType(
+              ElementTy, llvm::APInt(32, ElementCount), nullptr, ArraySizeModifier::Normal, 0);
+          ILE->setType(BackingArrayTy);
+
+          // 2. Synthesize an independent local variable declaration to hold the array memory on the stack.
+          // FIX: Use VDeclCheck->getIdentifier() to cleanly generate a unique backing variable name.
+          IdentifierInfo *VarII = VDeclCheck->getIdentifier();
+          std::string BackingName = VarII ? (VarII->getName().str() + "__backing_arr") : "__backing_arr";
+          IdentifierInfo *BackingArrII = &Context.Idents.get(BackingName);
+
+          VarDecl *BackingVD = VarDecl::Create(
+              Context, VDeclCheck->getDeclContext(), Init->getBeginLoc(), Init->getBeginLoc(),
+              BackingArrII, BackingArrayTy, Context.getTrivialTypeSourceInfo(BackingArrayTy, Init->getBeginLoc()), SC_None);
+          BackingVD->setInit(ILE);
+          BackingVD->setLocalExternDecl();
+
+          // Push it into the active execution context block
+          VDeclCheck->getDeclContext()->addDecl(BackingVD);
+
+          // 3. Build a clean reference tracking expression pointing to our new array variable
+          // FIX: Use DeclRefExpr constructor natively to bypass .get() member missing errors.
+          Expr *ArrRef = DeclRefExpr::Create(
+              Context, NestedNameSpecifierLoc(), SourceLocation(),
+              BackingVD, false, Init->getBeginLoc(), BackingArrayTy, VK_LValue);
+
+          // Implicitly decay the array reference to a pointer to fit our '__data' pointer field type
+          ExprResult DecayedPtr = DefaultFunctionArrayLvalueConversion(ArrRef);
+
+          // 4. Construct the structural container initializer list components using the pointer address
+          SmallVector<Expr*, 2> StructInits;
+          StructInits.push_back(DecayedPtr.get()); // Map the clean pointer memory address to __data
+
+          llvm::APInt SizeVal(Context.getTypeSize(Context.getSizeType()), ElementCount);
+          Expr *SizeLiteral = IntegerLiteral::Create(Context, SizeVal, Context.getSizeType(), Init->getBeginLoc());
+          StructInits.push_back(SizeLiteral);     // Map the tracking count to __size
+
+          // Create the parent implicit struct layout container wrapper
+          InitListExpr *NewStructInit = new (Context) InitListExpr(Context, Init->getBeginLoc(), StructInits, Init->getEndLoc(), false);
+          NewStructInit->setType(VDeclCheck->getType());
+
+          // 5. Inject the clean structural allocation tree into the variable definition slot
+          VDeclCheck->setInit(NewStructInit);
+          this->CheckCompleteVariableDeclaration(VDeclCheck);
+
+          // --- FIXED MACHINE BINARY EMISSION HOOK ---
+          // Capture the AST Consumer as a reference rather than a raw pointer
+          auto &Consumer = getASTConsumer();
+          Consumer.HandleTopLevelDecl(DeclGroupRef(VDeclCheck));
+          // --------------------------------------------
+
+          // llvm::errs() << "BOUNDS STRUCT INJECTED SUCCESSFULLY\n";
+          return;
+        }
+      }
+    }
+  }
+
+  // =============================================================
+
+
   if (auto *Method = dyn_cast<CXXMethodDecl>(RealDecl)) {
     if (!Method->isInvalidDecl()) {
       // Pure-specifiers are handled in ActOnPureSpecifier.
@@ -14093,6 +14217,11 @@ void Sema::AddInitializerToDecl(Decl *RealDecl, Expr *Init, bool DirectInit) {
   }
 
   this->CheckAttributesOnDeducedType(RealDecl);
+
+
+  this->CheckAttributesOnDeducedType(RealDecl);
+
+
 
   // we don't initialize groupshared variables so warn and return
   if (VDecl->hasAttr<HLSLGroupSharedAddressSpaceAttr>()) {
@@ -15853,6 +15982,51 @@ Decl *Sema::ActOnParamDeclarator(Scope *S, Declarator &D,
 
   TypeSourceInfo *TInfo = GetTypeForDeclarator(D);
   QualType parmDeclType = TInfo->getType();
+
+  // === C4: BOUNDS-CHECKED ARRAY PARAMETER TYPE TRANSFORMATION ===
+  if (D.getDeclSpec().isBoundsCheckedArray()) {
+    QualType ElementTy = parmDeclType;
+
+    // 1. Synthesize an anonymous structure record layout for the parameter
+    RecordDecl *AnonRecord = RecordDecl::Create(Context, TagDecl::TagKind::Struct,
+                                                CurContext, D.getBeginLoc(),
+                                                D.getIdentifierLoc(),
+                                                /*Id=*/nullptr);
+    AnonRecord->startDefinition();
+
+    // Field 0: __data pointer payload
+    QualType DataPtrTy = Context.getPointerType(ElementTy);
+    FieldDecl *DataField = FieldDecl::Create(Context, AnonRecord, D.getBeginLoc(),
+                                             D.getIdentifierLoc(),
+                                             &Context.Idents.get("__data"),
+                                             DataPtrTy, /*TInfo=*/nullptr,
+                                             /*BitWidth=*/nullptr, /*Mutable=*/false,
+                                             ICIS_NoInit);
+    DataField->setAccess(AS_public);
+    AnonRecord->addDecl(DataField);
+
+    // Field 1: __size metadata parameter
+    QualType SizeTy = Context.getSizeType(); // size_t
+    FieldDecl *SizeField = FieldDecl::Create(Context, AnonRecord, D.getBeginLoc(),
+                                             D.getIdentifierLoc(),
+                                             &Context.Idents.get("__size"),
+                                             SizeTy, /*TInfo=*/nullptr,
+                                             /*BitWidth=*/nullptr, /*Mutable=*/false,
+                                             ICIS_NoInit);
+    SizeField->setAccess(AS_public);
+    AnonRecord->addDecl(SizeField);
+
+    AnonRecord->completeDefinition();
+
+    // 2. Override the parameter type using an explicit pointer upcast
+    // to bypass the ambiguous deleted-function inheritance trap
+    parmDeclType = Context.getTypeDeclType(cast<TypeDecl>(AnonRecord));
+
+    // Explicitly update TInfo so the function signature tracks the true struct type
+    TInfo = Context.getTrivialTypeSourceInfo(parmDeclType, D.getIdentifierLoc());
+  }
+  // ==============================================================
+
 
   // Check for redeclaration of parameters, e.g. int foo(int x, int x);
   const IdentifierInfo *II = D.getIdentifier();

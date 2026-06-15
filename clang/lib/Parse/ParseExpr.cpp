@@ -906,6 +906,9 @@ Parser::ParseCastExpression(CastParseKind ParseKind, bool isAddressOfOperand,
                             bool isVectorLiteral, bool *NotPrimaryExpression) {
   ExprResult Res;
   tok::TokenKind SavedKind = Tok.getKind();
+
+
+
   auto SavedType = PreferredType;
   NotCastExpr = false;
 
@@ -925,6 +928,26 @@ Parser::ParseCastExpression(CastParseKind ParseKind, bool isAddressOfOperand,
   // to handle the postfix expression suffixes.  Cases that cannot be followed
   // by postfix exprs should set AllowSuffix to false.
   switch (SavedKind) {
+
+  // === C4 LANGUAGE EXTENSION: BOUNDS-CHECKED ARRAY SIZE OPERATOR (#.) ===
+  case tok::hashdot: { // Replace with your exact custom token enum name
+    SourceLocation SizeOpLoc = ConsumeToken(); // Consumes your '#.' punctuator token
+
+    // Parse the target expression following the '#.' token (e.g., 'bob' or an array expression)
+    // We pass 'AnyCastExpr' to cleanly evaluate cast-level precedence bindings
+    ExprResult SubExpr = ParseCastExpression(CastParseKind::AnyCastExpr,
+                                             /*isAddressOfOperand=*/false,
+                                             NotCastExpr, CorrectionBehavior);
+    if (SubExpr.isInvalid() || !SubExpr.isUsable()) {
+      return ExprError();
+    }
+
+    // Delegate the node generation directly to Sema.
+    // We pass SizeOpLoc for both hash and period context since they are unified in your token.
+    return Actions.ActOnArraySizeIntrinsic(SubExpr.get(), SizeOpLoc, SizeOpLoc);
+  }
+  // ======================================================================
+
   case tok::l_paren: {
     // If this expression is limited to being a unary-expression, the paren can
     // not start a cast expression.

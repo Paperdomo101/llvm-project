@@ -4587,6 +4587,11 @@ LexStart:
     if (Char == '#') {
       Kind = tok::hashhash;
       CurPtr = ConsumeChar(CurPtr, SizeTmp, Result);
+    }
+    // C4: #. sizeof operator
+    else if (Char == '.') {
+      Kind = tok::hashdot;
+      CurPtr = ConsumeChar(CurPtr, SizeTmp, Result);
     } else if (Char == '@' && LangOpts.MicrosoftExt) {  // #@ -> Charize
       Kind = tok::hashat;
       if (!isLexingRawMode())

@@ -3426,6 +3426,23 @@ void Parser::ParseDeclarationSpecifiers(
 
     SourceLocation Loc = Tok.getLocation();
 
+
+    // === C4 PATCH: BOUNDS-CHECKED ARRAY PREFIX INTERCEPT ===
+    if (Tok.is(tok::l_square) && GetLookAheadToken(1).is(tok::r_square)) {
+      ConsumeBracket(); // Consumes '['
+      ConsumeBracket(); // Consumes ']'
+
+      // Update your DeclSpec to hold this state.
+      // Make sure you add 'bool IsBoundsCheckedArray;' alongside helper
+      // getters/setters in 'include/clang/Sema/DeclSpec.h'
+      DS.SetTypeSpecBoundsCheckedArray(true, Loc);
+
+      // Advance to the next loop iteration to process the remaining
+      // types (like 'int' or 'float') behind the brackets.
+      continue;
+    }
+    // =======================================================
+
     // C4 PATCH: Implicit Void Return Types for Functions
     // Safeguarded against system headers, struct fields, function pointers, AND right-side lookups
     if (!DS.hasTypeSpecifier() &&

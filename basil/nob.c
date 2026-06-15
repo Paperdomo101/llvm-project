@@ -1,32 +1,23 @@
 #define NOB_IMPLEMENTATION
 #include <nob.h>
 
-static char *run_and_capture(const char *cmd)
-{
-    FILE *pipe = popen(cmd, "r");
-    if (!pipe) return NULL;
-    char *buf = NULL;
-    size_t len = 0;
-    char tmp[256];
-    while (fgets(tmp, sizeof tmp, pipe)) {
-        size_t add = strlen(tmp);
-        char *newbuf = realloc(buf, len + add + 1);
-        if (!newbuf) { free(buf); pclose(pipe); return NULL; }
-        buf = newbuf;
-        memcpy(buf + len, tmp, add);
-        len += add;
-        buf[len] = '\0';
-    }
-    pclose(pipe);    /* strip trailing newline if there is one */
-    if (len && buf[len - 1] == '\n')
-        buf[len - 1] = '\0';
-    return buf;
-}
+
+int cmd_run_and_capture(Cmd *cmd, char *output_buf, size_t buf_size);
+bool run_compiler_tests(const char *compiler_path);
+
 
 int main( int argc, char **argv )
 {
     GO_REBUILD_URSELF( argc, argv );
 
+    const char *compiler_bin = "../build/bin/clang";
+
+    for (int i = 1; i < argc; ++i) {
+        if (strcmp(argv[i], "-test") == 0) {
+            bool tests_passed = run_compiler_tests(compiler_bin);
+            exit(tests_passed ? EXIT_SUCCESS : EXIT_FAILURE);
+        }
+    }
 
     String_View filename = {0};
     for (int i = 1; i < argc; ++i)
@@ -36,13 +27,6 @@ int main( int argc, char **argv )
 
         filename = sv_from_cstr(argv[i]);
         break;
-        // String_View arg = sv_from_cstr(argv[i]);
-
-        // if (sv_ends_with_cstr(arg, ".c4") || sv_ends_with_cstr(arg, ".civ"))
-        // {
-        //     filename = arg;
-        //     break;
-        // }
     }
 
     const char *inferred_extension = "";
@@ -58,9 +42,8 @@ int main( int argc, char **argv )
         }
     }
 
-
     if (!filename.data) {
-        nob_log( ERROR, "please specify a c4 source file" );
+        nob_log( ERROR, "please specify a c4 source file or pass '-test'" );
         exit( EXIT_FAILURE );
     }
 
@@ -72,20 +55,9 @@ int main( int argc, char **argv )
             exit( EXIT_FAILURE );
     }
 
-
     Cmd cmd = {0};
 
-    char *sdk_path = run_and_capture("xcrun --show-sdk-path");
-    if (!sdk_path) {
-        nob_log( ERROR, "Failed to obtain SDK path" );
-        exit( EXIT_FAILURE );
-    }
-
-    // -isysroot $(xcrun --show-sdk-path)
-
-
-
-    cmd_append( &cmd, "bang",
+    cmd_append( &cmd, compiler_bin,
         "-o", temp_sv_to_cstr(filename_no_ext),
         "-O2",
         temp_sprintf( SV_Fmt"%s", SV_Arg(filename), inferred_extension ),
@@ -93,15 +65,13 @@ int main( int argc, char **argv )
         "-I.",
         "-L.",
         "-I/usr/local/include",
-        "-isysroot", sdk_path,
-        "-L/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/lib",
+#ifdef __APPLE__
         "-framework", "IOKit",
         "-framework", "Cocoa",
+#endif
         "-Wno-nullability-completeness"
     );
-    // da_foreach( const char *, item, &cmd ) {
-    //     printf("%s\n", *item);
-    // }
+
     if (!cmd_run( &cmd ))
         return 1;
 
@@ -116,6 +86,10 @@ int main( int argc, char **argv )
 
     if (!build_only)
     {
+        // Clear past command fields before appending runtime executable string path targets
+        cmd_free(cmd);
+        memset(&cmd, 0, sizeof(Cmd));
+
         const char *exec = temp_sprintf("./"SV_Fmt, SV_Arg(filename_no_ext));
         printf( "%s\n", exec );
         cmd_append( &cmd, exec );
@@ -124,5 +98,251 @@ int main( int argc, char **argv )
             return 1;
     }
 
+    cmd_free(cmd);
     exit( EXIT_SUCCESS );
+}
+
+
+#define MAX_ERRORS (10)
+// Helper structure to track expected error diagnostics
+typedef struct {
+    const char *test_name;
+    const char *file_path;
+    bool is_runtime_test;
+    int expected_error_count;
+    const char *expected_errors[MAX_ERRORS]; // NULL if it should compile successfully
+} CompilerTest;
+
+
+CompilerTest custom_test_suite[] = {
+    /// --------------
+    ///  COMPILE TIME
+    /// --------------
+    {
+        "Bookshelf Comments",
+        "tests/bookshelf.c4",
+        false, 2, {
+            "incompatible pointer to integer conversion initializing 'int' with an expression of type 'char[66]'",
+            "initializer element is not a compile-time constant",
+        }
+    },
+    {
+        "Valid Array & Cross-Boundary Parameters",
+        "tests/valid_array.c4",
+    },
+    {
+        "Compile-Time Bounds Check (Positive Overflow)",
+        "tests/positive_overflow.c4",
+        false, 1, {"is out of bounds for array of size 3"}
+    },
+    {
+        "Compile-Time Bounds Check (Negative Underflow)",
+        "tests/negative_underflow.c4",
+        false, 1, {"is out of bounds for array of size 3"}
+    },
+    {
+        "Size Intrinsic Type Constraint Guard",
+        "tests/size_guard.c4",
+        false, 1, {"size intrinsic operator can only be applied"}
+    },
+    {
+        "Type Inference (compile time)",
+        "tests/type_inference_errors.c4",
+        false, 3, {
+            "assignment count mismatch: expression yields 3 values, but 2 variables are provided",
+            "passing 'float' to parameter of incompatible type 'Vector2'",
+            "assignment count mismatch: expression yields 1 values, but 2 variables are provided",
+        }
+    },
+    /// --------------
+    ///  RUNTIME
+    /// --------------
+    {
+        "Defer Sigil Unwinding Verification",
+        "tests/defer.c4", true,
+    },
+    {
+        "Default Parameter Extraction Pipeline",
+        "tests/default_params.c4", true,
+    },
+    {
+        "Swizzling Compound Literals",
+        "tests/swizzle.c4", true,
+    },
+    {
+        "Type Inference (runtime)",
+        "tests/type_inference_runtime.c4", true,
+    },
+};
+
+bool run_compiler_tests(const char *compiler_path) {
+    nob_log(INFO, "=== Running Automated Compiler Feature Test Suite ===");
+    int passed = 0;
+    int total = sizeof(custom_test_suite) / sizeof(custom_test_suite[0]);
+
+    char compiler_log_buffer[4096];
+    const char *temp_bin = "./temp_nob_runtime_bin";
+
+    for (int i = 0; i < total; ++i) {
+        CompilerTest test = custom_test_suite[i];
+
+        if (!file_exists(test.file_path)) {
+            printf("\033[31m[FAIL]\033[0;2m %s (Missing test file: %s)\033[0m\n", test.test_name, test.file_path);
+            continue;
+        }
+
+        Cmd cmd = {0};
+        if (test.is_runtime_test) {
+            cmd_append(&cmd, compiler_path, "-o", temp_bin, "-O2", "-UNDEBUG", test.file_path);
+        } else {
+            cmd_append(&cmd, compiler_path, "-fsyntax-only", test.file_path);
+        }
+
+        // Capture the exit code integer status
+        int exit_code = cmd_run_and_capture(&cmd, compiler_log_buffer, sizeof(compiler_log_buffer));
+        cmd_free(cmd);
+
+        if (exit_code == -1) {
+            printf("\033[31m[FAIL]\033[0;2m %s (Process crashed, timed out, or encountered a signal violation)\033[0m\n", test.test_name);
+            continue;
+        }
+
+        // --- STAGE A: RUNTIME TESTS VERIFICATION ---
+        if (test.is_runtime_test) {
+            if (!file_exists(temp_bin)) {
+                printf("\033[31m[FAIL]\033[0;2m %s (Compilation failed to produce a binary! Compiler Output):\n%s\033[0m\n",
+                       test.test_name, compiler_log_buffer);
+                continue;
+            }
+
+            Cmd run_cmd = {0};
+            cmd_append(&run_cmd, temp_bin);
+            char run_log_buf[4096];
+
+            // Execute the compiled test binary and extract its exit code status
+            int runtime_exit_code = cmd_run_and_capture(&run_cmd, run_log_buf, sizeof(run_log_buf));
+            cmd_free(run_cmd);
+            remove(temp_bin);
+
+            // CRITICAL CONTRACT CHECK: A runtime test passes IF and ONLY IF it exits with exactly 0
+            if (runtime_exit_code == 0) {
+                printf("\033[32m[PASS]\033[0;2m %s (Program executed and passed assertions smoothly)\033[0m\n", test.test_name);
+                passed++;
+            } else {
+                printf("\033[31m[FAIL]\033[0;2m %s (Program failed! Terminated with non-zero exit code: %d. Output):\n%s\033[0m\n",
+                       test.test_name, runtime_exit_code, run_log_buf);
+            }
+            continue;
+        }
+
+        // --- STAGE B: COMPILE-TIME DIAGNOSTIC CHECKS ---
+        // For compile-time checks, we ignore the exit code value completely and evaluate the error strings!
+        int total_errors_seen = 0;
+        const char *search_ptr = compiler_log_buffer;
+        while ((search_ptr = strstr(search_ptr, "error:")) != NULL) {
+            total_errors_seen++;
+            search_ptr += 6;
+        }
+
+
+        if (total_errors_seen != test.expected_error_count) {
+            printf("\033[31m[FAIL]\033[0;2m %s (Mismatched error count! Compiler reported %d errors instead of the expected %d):\n%s\033[0m\n",
+                   test.test_name, total_errors_seen, test.expected_error_count, compiler_log_buffer);
+            continue;
+        }
+
+        bool all_expected_errors_found = true;
+        for (int err_idx = 0; err_idx < test.expected_error_count; ++err_idx) {
+            const char *expected_msg = test.expected_errors[err_idx];
+            if (!expected_msg) continue;
+
+            if (strstr(compiler_log_buffer, expected_msg) == NULL) {
+                printf("\033[31m[FAIL]\033[0;2m %s (Missing required diagnostic target phrase! Did not see: '%s')\n",
+                       test.test_name, expected_msg);
+                all_expected_errors_found = false;
+                break;
+            }
+        }
+
+        if (all_expected_errors_found) {
+            if (test.expected_error_count == 0) {
+                printf("\033[32m[PASS]\033[0;2m %s\033[0m\n", test.test_name);
+            } else {
+                printf("\033[32m[PASS]\033[0;2m %s (Compiler successfully caught all %d custom violations uniquely)\033[0m\n",
+                       test.test_name, test.expected_error_count);
+            }
+            passed++;
+        } else {
+            printf("\033[31m[FAIL]\033[0;2m %s (Error verification mismatched. Raw logs):\n%s\033[0m\n",
+                   test.test_name, compiler_log_buffer);
+        }
+    }
+
+    nob_log(INFO, "Test Results: \033[33m%d\033[0m / %d Compiler Verification Suites Passed.", passed, total);
+    return passed == total;
+}
+
+
+
+#include <sys/types.h>
+#include <unistd.h>
+
+// Runs a command silently, capturing its entire stderr output into a text buffer.
+// Returns true if the process executed (regardless of its exit code status).
+// Runs a command silently, captures output, and returns the exact process exit status code.
+// Returns -1 if the process crashed, was killed by a signal, or failed to fork.
+int cmd_run_and_capture(Cmd *cmd, char *output_buf, size_t buf_size) {
+    if (cmd->count == 0 || output_buf == NULL || buf_size == 0) return -1;
+
+    memset(output_buf, 0, buf_size);
+
+    int pipe_fds[2];
+    if (pipe(pipe_fds) < 0) {
+        nob_log(ERROR, "Failed to create POSIX pipe for stream capture");
+        return -1;
+    }
+
+    pid_t pid = fork();
+    if (pid < 0) {
+        nob_log(ERROR, "Failed to fork compiler test subprocess");
+        close(pipe_fds[0]);
+        close(pipe_fds[1]);
+        return -1;
+    }
+
+    if (pid == 0) {
+        // --- CHILD PROCESS ---
+        close(pipe_fds[0]); // Close read end
+
+        dup2(pipe_fds[1], 1);
+        dup2(pipe_fds[1], 2);
+        close(pipe_fds[1]);
+
+        da_append(cmd, NULL);
+        execvp(cmd->items[0], (char* const*)cmd->items);
+        exit(EXIT_FAILURE);
+    }
+
+    // --- PARENT PROCESS ---
+    close(pipe_fds[1]); // Close write end
+
+    size_t total_read = 0;
+    ssize_t bytes_read;
+    while (total_read < buf_size - 1 && (bytes_read = read(pipe_fds[0], output_buf + total_read, buf_size - 1 - total_read)) > 0) {
+        total_read += bytes_read;
+    }
+    output_buf[total_read] = '\0';
+    close(pipe_fds[0]);
+
+    int wait_status;
+    while (waitpid(pid, &wait_status, 0) < 0) {
+        if (errno != EINTR) return -1;
+    }
+
+    // --- RETURN THE ACTUAL STATUS INTEGERS ---
+    if (WIFEXITED(wait_status)) {
+        return WEXITSTATUS(wait_status);
+    }
+
+    return -1; // Crashed (e.g., Segfault)
 }

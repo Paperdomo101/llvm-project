@@ -1,0 +1,15 @@
+
+
+
+- CMAKE -
+
+== mac ==
+cmake -G Ninja ../llvm -DDEFAULT_SYSROOT="$(xcrun --show-sdk-path)" -DCMAKE_BUILD_TYPE=Release -DLLVM_ENABLE_PROJECTS="clang;clang-tools-extra"
+
+== win ==
+cmake -G "Visual Studio 17 2022" ../llvm -DCLANG_DEFAULT_LINKER="link.exe" -DMSVC_HAS_SHARED_PATH=ON -DCMAKE_BUILD_TYPE=Release -DLLVM_ENABLE_PROJECTS="clang;clang-tools-extra"
+
+
+- IR DUMP -
+
+../build/bin/clang -S -emit-llvm <file>.c4 -o <file>.ll

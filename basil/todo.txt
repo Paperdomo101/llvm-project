@@ -4,6 +4,11 @@
 # ____________________________
 
     ## Bounds-checked arrays
+    ```
+    [] int bob = { 10, 20, 30 } // bounds-checked arrays are declared on the left side
+    "%d\n"::printf(#.bob) // prints '3'  `#.` provides access to the intrinsic `size` variable
+    bob[4] = 20; // ERROR: 4 is out of bounds for array 'bob', which is of size '3'
+    ```
 
     ## Require / Satisfy
 
@@ -12,6 +17,8 @@
     ## symbol aliasing
 
     ## multiple returns
+
+    ## .ENUM
 
     ## multi-line strings
     /"

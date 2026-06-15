@@ -429,6 +429,11 @@ private:
   SourceLocation FriendLoc, ModulePrivateLoc, ConstexprLoc;
   SourceLocation TQ_pipeLoc;
 
+  // --- C4 Language Extension Fields ---
+    bool IsBoundsCheckedArray = false;
+    SourceLocation BoundsCheckedArrayLoc;
+  // ------------------------------------
+
   WrittenBuiltinSpecs writtenBS;
   void SaveWrittenBuiltinSpecs();
 
@@ -450,6 +455,16 @@ private:
   DeclSpec(const DeclSpec &) = delete;
   void operator=(const DeclSpec &) = delete;
 public:
+  // --- C4 Language Extension Accessors ---
+  void SetTypeSpecBoundsCheckedArray(bool val, SourceLocation loc) {
+    IsBoundsCheckedArray = val;
+    BoundsCheckedArrayLoc = loc;
+  }
+
+  bool isBoundsCheckedArray() const { return IsBoundsCheckedArray; }
+  SourceLocation getBoundsCheckedArrayLoc() const { return BoundsCheckedArrayLoc; }
+  // ---------------------------------------
+
   static bool isDeclRep(TST T) {
     return (T == TST_enum || T == TST_struct ||
             T == TST_interface || T == TST_union ||
@@ -638,6 +653,10 @@ public:
     TQ_pipeLoc = SourceLocation();
     OB_state = static_cast<unsigned>(OverflowBehaviorState::Unspecified);
     OB_Loc = SourceLocation();
+
+    // --- Reset C4 Custom Fields ---
+    IsBoundsCheckedArray = false;
+    BoundsCheckedArrayLoc = SourceLocation();
   }
 
   // function-specifier

@@ -1,0 +1,12 @@
+#include <stdio.h>
+
+foo (size_t s, [] int bob) {
+    "%zu, %d\n"::printf(#.bob, bob[0])
+}
+
+main () int {
+    [] int bob = { 10, 20, 30 }
+    bob[0] = 20;
+    #.bob::foo(bob)
+    return 0;
+}
