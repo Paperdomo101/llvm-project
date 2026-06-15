@@ -3426,6 +3426,20 @@ void Parser::ParseDeclarationSpecifiers(
 
     SourceLocation Loc = Tok.getLocation();
 
+    // === C4: BOUNDS-CHECKED ARRAY POINTER PREFIX INTERCEPT (^[]) ===
+    if (Tok.is(tok::caret) && GetLookAheadToken(1).is(tok::l_square) &&
+        GetLookAheadToken(2).is(tok::r_square)) {
+
+      ConsumeToken();   // Consumes '^'
+      ConsumeBracket(); // Consumes '['
+      ConsumeBracket(); // Consumes ']'
+
+      // Ensure you add 'bool IsBoundsCheckedArrayPtr;' alongside helper
+      // getters/setters to your custom DeclSpec class definition in DeclSpec.h
+      DS.SetTypeSpecBoundsCheckedArrayPtr(true, Loc);
+
+      continue; // Jump straight to processing the element type keyword (like 'int')
+    }
 
     // === C4 PATCH: BOUNDS-CHECKED ARRAY PREFIX INTERCEPT ===
     if (Tok.is(tok::l_square) && GetLookAheadToken(1).is(tok::r_square)) {
@@ -5912,6 +5926,18 @@ bool Parser::isDeclarationSpecifier(
     bool DisambiguatingWithExpression) {
   switch (Tok.getKind()) {
   default: return false;
+
+  // === C4: DESTRUCTION POINTER REGISTRY LOOKAHEAD ===
+  case tok::caret: {
+    // If the caret is immediately followed by a bounds-checked array bracket pair,
+    // force Clang to recognize this as a highly valid type declaration specifier!
+    if (NextToken().is(tok::l_square) && GetLookAheadToken(2).is(tok::r_square)) {
+      return true;
+    }
+    return false; // Fall back to standard C behavior for regular blocks
+  }
+  // ===================================================
+
 
   // OpenCL 2.0 and later define this keyword.
   case tok::kw_pipe:

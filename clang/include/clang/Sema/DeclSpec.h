@@ -432,6 +432,8 @@ private:
   // --- C4 Language Extension Fields ---
     bool IsBoundsCheckedArray = false;
     SourceLocation BoundsCheckedArrayLoc;
+    bool IsBoundsCheckedArrayPtr = false;
+    SourceLocation BoundsCheckedArrayPtrLoc;
   // ------------------------------------
 
   WrittenBuiltinSpecs writtenBS;
@@ -455,14 +457,22 @@ private:
   DeclSpec(const DeclSpec &) = delete;
   void operator=(const DeclSpec &) = delete;
 public:
+
   // --- C4 Language Extension Accessors ---
   void SetTypeSpecBoundsCheckedArray(bool val, SourceLocation loc) {
     IsBoundsCheckedArray = val;
     BoundsCheckedArrayLoc = loc;
   }
-
   bool isBoundsCheckedArray() const { return IsBoundsCheckedArray; }
   SourceLocation getBoundsCheckedArrayLoc() const { return BoundsCheckedArrayLoc; }
+
+
+  void SetTypeSpecBoundsCheckedArrayPtr(bool val, SourceLocation loc) {
+    IsBoundsCheckedArrayPtr = val;
+    BoundsCheckedArrayPtrLoc = loc;
+  }
+  bool isBoundsCheckedArrayPtr() const { return IsBoundsCheckedArrayPtr; }
+  SourceLocation getBoundsCheckedArrayPtrLoc() const { return BoundsCheckedArrayPtrLoc; }
   // ---------------------------------------
 
   static bool isDeclRep(TST T) {

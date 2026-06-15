@@ -2,29 +2,90 @@
 
 foo (size_t s, [] int arr) {
     for i := 0; i < #.arr; ++i {
-        "arr[%d]: %d\n"::printf(i, arr[i])
-        arr[i] += i;
+        "[%d] before: %d\n"::printf(i, arr[i])
+        arr[i] += 1;
+        "[%d] after: %d\n"::printf(i, arr[i])
     }
 }
 
-// ptr (^[] int arrptr) {
-//     for i := 0; i < #.*arrptr; ++i {
-//         "arr[%d]: %d\n"::printf(i, *arrptr[i])
-//         arr[i] += i;
-//     }
-// }
+ptr (^[] int arrptr) {
+    for i := 0; i < #.*arrptr; ++i {
+        "^[%d] before: %d\n"::printf(i, (*arrptr)[i])
+        (*arrptr)[i] += 1;
+        "^[%d] after: %d\n"::printf(i, (*arrptr)[i])
+    }
+}
+
+print([] int arr) {
+    putchar('[');
+    for i := 0; i < #.arr; ++i {
+        printf("%d", arr[i])
+        if (i < #.arr - 1) printf(", ")
+    }
+    printf("]\n");
+}
 
 main () int {
     a := 24;
-    [] int joe = { a, 5 }
+    c := 24;
+    b := 4.5;
+
+    [] int joe = { a, b, c, 10 }
+
+    ^[] int joeptr = &joe;
+
+    printf("%d\n", joe[0] )
+    printf("%d\n", joe.items[0] )
+    printf("%d\n", (*joeptr)[0] )
+    printf("%d\n", joeptr.items[0] )
+
+    printf("%zu\n", #.joe )
+    printf("%zu\n", joe.count )
+    printf("%zu\n", joeptr.count )
+    printf("%zu\n", joeptr->count )
+    printf("%zu\n", #.joeptr )
+    printf("%zu\n", #.(joeptr) )
+
     #.joe::foo(joe)
-    // #.joe::ptr(&joe)
-    // ^[] int joeptr;
-    // #.joe::ptr(joeptr)
+    joe::print()
+    ptr(&joe)
+    joe::print()
+    i := 4;
+    joe[i] = 9;
 }
 
+
+// expected output:
+// ```
+// arr[0]: 24
+// arr[0]: 25
+// arr[1]: 5
+// arr[1]: 6
+// [24, 5]
+// arr[0]: 24
+// arr[0]: 25
+// arr[1]: 5
+// arr[1]: 6
+// [25, 6]
+// ```
+// got:
+// ```
+// arr[0]: 24
+// arr[0]: 24
+// arr[1]: 5
+// arr[1]: 6
+// [24, 5]
+// arr[0]: 24
+// arr[0]: 24
+// arr[1]: 5
+// arr[1]: 6
+// [24, 6]
+// ```
+
+    // ^[] int joeptr;
+    // #.joe::ptr(joeptr)
+
     // foo(#.joe, joe)
-    // printf("[%d, %d]\n", joe[0], joe[1])
 
 
 

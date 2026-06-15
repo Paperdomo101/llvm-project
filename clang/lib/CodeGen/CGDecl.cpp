@@ -2885,11 +2885,13 @@ void CodeGenFunction::EmitParmDecl(const VarDecl &D, ParamValue Arg,
 
 
   // === C4 LANGUAGE EXTENSION: BOUNDS-CHECKED ARRAY DEEP COPY ===
-  if (Ty->isRecordType()) {
+  // Inside CodeGenFunction::EmitParmDecl
+  // Only execute value-copy duplication blocks if the parameter is passed directly by value!
+  if (Ty->isRecordType() && !Ty->isPointerType()) { // FIX: Skip if it's a pointer type
     if (const RecordDecl *RD = Ty->getAsRecordDecl()) {
       // Verify it matches our custom 2-field anonymous array metadata layout
       if (RD->getIdentifier() == nullptr &&
-          RD->lookup(&CGM.getContext().Idents.get("__size")).isSingleResult()) {
+          RD->lookup(&CGM.getContext().Idents.get(C4_ARRAY_SIZE_FIELD)).isSingleResult()) {
 
         // 1. Safely cast the base variable down to the required parameter declaration node
         const ParmVarDecl *PVD = cast<ParmVarDecl>(&D);
@@ -2901,8 +2903,8 @@ void CodeGenFunction::EmitParmDecl(const VarDecl &D, ParamValue Arg,
         FieldDecl *DataField = nullptr;
         FieldDecl *SizeField = nullptr;
         for (FieldDecl *Field : RD->fields()) {
-          if (Field->getName() == "__data") DataField = Field;
-          else if (Field->getName() == "__size") SizeField = Field;
+          if (Field->getName() == C4_ARRAY_DATA_FIELD) DataField = Field;
+          else if (Field->getName() == C4_ARRAY_SIZE_FIELD) SizeField = Field;
         }
 
         if (DataField && SizeField) {

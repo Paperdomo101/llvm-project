@@ -7879,8 +7879,42 @@ NamedDecl *Sema::ActOnVariableDeclarator(
   IdentifierInfo *II = Name.getAsIdentifierInfo();
   bool IsPlaceholderVariable = false;
 
-  // === C4: BOUNDS-CHECKED ARRAY TYPE TRANSFORMATION ===
-  if (D.getDeclSpec().isBoundsCheckedArray()) {
+  // --- C4: BOUNDS-CHECKED ARRAY POINTER TYPE TRANSFORMATION ---
+  if (D.getDeclSpec().isBoundsCheckedArrayPtr()) {
+    QualType ElementTy = R;
+
+    // 1. Synthesize the identical anonymous structure definition layout
+    RecordDecl *AnonRecord = RecordDecl::Create(Context, TagDecl::TagKind::Struct,
+                                                CurContext, D.getBeginLoc(),
+                                                D.getIdentifierLoc(), /*Id=*/nullptr);
+    AnonRecord->startDefinition();
+
+    QualType DataPtrTy = Context.getPointerType(ElementTy);
+    FieldDecl *DataField = FieldDecl::Create(Context, AnonRecord, D.getBeginLoc(), D.getIdentifierLoc(),
+                                             &Context.Idents.get(C4_ARRAY_DATA_FIELD), DataPtrTy, nullptr, nullptr, false, ICIS_NoInit);
+    AnonRecord->addDecl(DataField);
+
+    QualType SizeTy = Context.getSizeType();
+    FieldDecl *SizeField = FieldDecl::Create(Context, AnonRecord, D.getBeginLoc(), D.getIdentifierLoc(),
+                                             &Context.Idents.get(C4_ARRAY_SIZE_FIELD), SizeTy, nullptr, nullptr, false, ICIS_NoInit);
+    AnonRecord->addDecl(SizeField);
+    AnonRecord->completeDefinition();
+
+    // 2. CRITICAL POINTER WRAPPING:
+    // Overwrite the type variable 'R' to be a concrete POINTER to this fresh structure!
+    QualType RecordTy = Context.getTypeDeclType(cast<TypeDecl>(AnonRecord));
+    R = Context.getPointerType(RecordTy);
+
+    TInfo = Context.getTrivialTypeSourceInfo(R, D.getIdentifierLoc());
+  }
+
+
+  // === C4: HARDENED ARRAY TYPE TRANSFORMATION ENTRY GUARD ===
+  // Explicitly ensure this transformation ONLY fires on real instances of your array syntax,
+  // completely preventing standard scalar variables like 'a := 24' from bleeding layout states!
+  if (D.getDeclSpec().isBoundsCheckedArray() &&
+      D.getDeclSpec().getTypeSpecType() != DeclSpec::TST_error) { // Verify it's an explicit array specification
+
     QualType ElementTy = R;
 
     // 1. Synthesize an anonymous structure record layout
@@ -7894,7 +7928,7 @@ NamedDecl *Sema::ActOnVariableDeclarator(
     QualType DataPtrTy = Context.getPointerType(ElementTy);
     FieldDecl *DataField = FieldDecl::Create(Context, AnonRecord, D.getBeginLoc(),
                                              D.getIdentifierLoc(),
-                                             &Context.Idents.get("__data"),
+                                             &Context.Idents.get(C4_ARRAY_DATA_FIELD),
                                              DataPtrTy, /*TInfo=*/nullptr,
                                              /*BitWidth=*/nullptr, /*Mutable=*/false,
                                              ICIS_NoInit);
@@ -7905,7 +7939,7 @@ NamedDecl *Sema::ActOnVariableDeclarator(
     QualType SizeTy = Context.getSizeType(); // size_t
     FieldDecl *SizeField = FieldDecl::Create(Context, AnonRecord, D.getBeginLoc(),
                                              D.getIdentifierLoc(),
-                                             &Context.Idents.get("__size"),
+                                             &Context.Idents.get(C4_ARRAY_SIZE_FIELD),
                                              SizeTy, /*TInfo=*/nullptr,
                                              /*BitWidth=*/nullptr, /*Mutable=*/false,
                                              ICIS_NoInit);
@@ -14085,30 +14119,50 @@ void Sema::AddInitializerToDecl(Decl *RealDecl, Expr *Init, bool DirectInit) {
       FieldDecl *DataField = *It++;
       FieldDecl *SizeField = *It;
 
-      if (DataField->getType()->isPointerType() && SizeField->getName() == "__size") {
+      if (DataField->getType()->isPointerType() && SizeField->getName() == C4_ARRAY_SIZE_FIELD) {
         Expr *E = Init->IgnoreImplicit();
 
         if (auto *ILE = dyn_cast<InitListExpr>(E)) {
           size_t ElementCount = ILE->getNumInits();
           QualType ElementTy = DataField->getType()->getPointeeType();
 
-          // 1. Properly scale the raw backing array configuration type
+          // 1. HARDENED ELEMENT TYPE COERCION LOOP
+          for (size_t idx = 0; idx < ElementCount; ++idx) {
+            Expr *Element = ILE->getInit(idx);
+            QualType ElementSrcTy = Element->getType();
+
+            if (!Context.hasSameType(ElementTy, ElementSrcTy)) {
+              CastKind CK = CK_NoOp;
+              if (ElementSrcTy->isFloatingType() && ElementTy->isIntegerType()) {
+                CK = CK_FloatingToIntegral;
+              } else if (ElementSrcTy->isIntegerType() && ElementTy->isFloatingType()) {
+                CK = CK_IntegralToFloating;
+              } else if (ElementSrcTy->isIntegerType() && ElementTy->isIntegerType()) {
+                CK = CK_IntegralCast;
+              }
+
+              ExprResult CastExpr = ImpCastExprToType(Element, ElementTy, CK);
+              if (!CastExpr.isInvalid()) {
+                ILE->setInit(idx, CastExpr.get());
+              }
+            }
+          }
+
+          // 2. Properly scale the raw backing array configuration type context
           QualType BackingArrayTy = Context.getConstantArrayType(
               ElementTy, llvm::APInt(32, ElementCount), nullptr, ArraySizeModifier::Normal, 0);
           ILE->setType(BackingArrayTy);
 
-          // 2. Wrap your ILE directly inside a CompoundLiteralExpr.
-          // This forces Clang to treat the array elements as a local stack object,
-          // generating dynamic runtime store instructions for non-constants like 'a'.
+          // 3. Wrap your modified ILE directly inside a local CompoundLiteralExpr
           TypeSourceInfo *TInfo = Context.getTrivialTypeSourceInfo(BackingArrayTy, Init->getBeginLoc());
           CompoundLiteralExpr *CLE = new (Context) CompoundLiteralExpr(
               Init->getBeginLoc(), TInfo, BackingArrayTy, VK_LValue, ILE, /*FileScope=*/false);
 
-          // 3. Implicitly decay the Compound Literal array into a raw data pointer
+          // 4. Implicitly decay the Compound Literal array into a raw data pointer
           ExprResult DecayedPtr = DefaultFunctionArrayLvalueConversion(CLE);
           if (DecayedPtr.isInvalid()) return;
 
-          // 4. Construct the structural container initializer list components
+          // 5. Construct the structural container initializer list components
           SmallVector<Expr*, 2> StructInits;
           StructInits.push_back(DecayedPtr.get()); // Field 0: __data pointer address
 
@@ -14120,13 +14174,20 @@ void Sema::AddInitializerToDecl(Decl *RealDecl, Expr *Init, bool DirectInit) {
           InitListExpr *NewStructInit = new (Context) InitListExpr(Context, Init->getBeginLoc(), StructInits, Init->getEndLoc(), false);
           NewStructInit->setType(VDeclCheck->getType());
 
-          // 5. Update the initialization nodes inline and let execution fall through naturally.
-          // This removes all custom early returns and lets Clang handle final compilation steps.
+          // --- CRITICAL MUTABILITY FORCE FIX ---
+          // Forcefully toggle the value kind on all nested expression nodes!
+          // This overrides Clang's default temporary optimizations and flags the
+          // memory as a fully writeable LValue, ensuring modifications to 'arr[0]' persist.
+          CLE->setValueKind(VK_LValue);
+          DecayedPtr.get()->setValueKind(VK_PRValue);
+          NewStructInit->setValueKind(VK_LValue);
+          // -------------------------------------
+
+          // 6. Update the initialization nodes inline and let execution fall through naturally
           Init = NewStructInit;
           VDeclCheck->setInit(NewStructInit);
-
-          llvm::errs() << "BOUNDS STRUCT INJECTED SUCCESSFULLY via CompoundLiteralExpr\n";
         }
+
       }
     }
   }
@@ -15964,8 +16025,60 @@ Decl *Sema::ActOnParamDeclarator(Scope *S, Declarator &D,
   TypeSourceInfo *TInfo = GetTypeForDeclarator(D);
   QualType parmDeclType = TInfo->getType();
 
-  // === C4: BOUNDS-CHECKED ARRAY PARAMETER TYPE TRANSFORMATION ===
-  if (D.getDeclSpec().isBoundsCheckedArray()) {
+
+  // === C4: BOUNDS-CHECKED ARRAY PARAMETER POINTER TYPE TRANSFORMATION ===
+  if (D.getDeclSpec().isBoundsCheckedArrayPtr()) {
+    QualType ElementTy = parmDeclType;
+
+    // 1. Synthesize an anonymous structure record layout for the underlying array
+    RecordDecl *AnonRecord = RecordDecl::Create(Context, TagDecl::TagKind::Struct,
+                                                CurContext, D.getBeginLoc(),
+                                                D.getIdentifierLoc(),
+                                                /*Id=*/nullptr);
+    AnonRecord->startDefinition();
+
+    // Field 0: __data pointer payload
+    QualType DataPtrTy = Context.getPointerType(ElementTy);
+    FieldDecl *DataField = FieldDecl::Create(Context, AnonRecord, D.getBeginLoc(),
+                                             D.getIdentifierLoc(),
+                                             &Context.Idents.get(C4_ARRAY_DATA_FIELD),
+                                             DataPtrTy, /*TInfo=*/nullptr,
+                                             /*BitWidth=*/nullptr, /*Mutable=*/false,
+                                             ICIS_NoInit);
+    DataField->setAccess(AS_public);
+    AnonRecord->addDecl(DataField);
+
+    // Field 1: __size metadata parameter
+    QualType SizeTy = Context.getSizeType(); // size_t
+    FieldDecl *SizeField = FieldDecl::Create(Context, AnonRecord, D.getBeginLoc(),
+                                             D.getIdentifierLoc(),
+                                             &Context.Idents.get(C4_ARRAY_SIZE_FIELD),
+                                             SizeTy, /*TInfo=*/nullptr,
+                                             /*BitWidth=*/nullptr, /*Mutable=*/false,
+                                             ICIS_NoInit);
+    SizeField->setAccess(AS_public);
+    AnonRecord->addDecl(SizeField);
+
+    AnonRecord->completeDefinition();
+
+    // 2. CRITICAL CHANGE: Extract the base structure type representation...
+    QualType RecordTy = Context.getTypeDeclType(cast<TypeDecl>(AnonRecord));
+
+    // ...and forcefully wrap it inside a PointerType context!
+    parmDeclType = Context.getPointerType(RecordTy);
+
+    // Update TInfo so the function prototype tracks the true pointer-to-struct signature
+    TInfo = Context.getTrivialTypeSourceInfo(parmDeclType, D.getIdentifierLoc());
+  }
+  // ======================================================================
+
+
+
+  // === C4: HARDENED ARRAY TYPE TRANSFORMATION ENTRY GUARD ===
+  // Explicitly ensure this transformation ONLY fires on real instances of your array syntax,
+  // completely preventing standard scalar variables like 'a := 24' from bleeding layout states!
+  if (D.getDeclSpec().isBoundsCheckedArray() &&
+      D.getDeclSpec().getTypeSpecType() != DeclSpec::TST_error) { // Verify it's an explicit array specification
     QualType ElementTy = parmDeclType;
 
     // 1. Synthesize an anonymous structure record layout for the parameter
@@ -15979,7 +16092,7 @@ Decl *Sema::ActOnParamDeclarator(Scope *S, Declarator &D,
     QualType DataPtrTy = Context.getPointerType(ElementTy);
     FieldDecl *DataField = FieldDecl::Create(Context, AnonRecord, D.getBeginLoc(),
                                              D.getIdentifierLoc(),
-                                             &Context.Idents.get("__data"),
+                                             &Context.Idents.get(C4_ARRAY_DATA_FIELD),
                                              DataPtrTy, /*TInfo=*/nullptr,
                                              /*BitWidth=*/nullptr, /*Mutable=*/false,
                                              ICIS_NoInit);
@@ -15990,7 +16103,7 @@ Decl *Sema::ActOnParamDeclarator(Scope *S, Declarator &D,
     QualType SizeTy = Context.getSizeType(); // size_t
     FieldDecl *SizeField = FieldDecl::Create(Context, AnonRecord, D.getBeginLoc(),
                                              D.getIdentifierLoc(),
-                                             &Context.Idents.get("__size"),
+                                             &Context.Idents.get(C4_ARRAY_SIZE_FIELD),
                                              SizeTy, /*TInfo=*/nullptr,
                                              /*BitWidth=*/nullptr, /*Mutable=*/false,
                                              ICIS_NoInit);

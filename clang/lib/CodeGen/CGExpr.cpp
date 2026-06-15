@@ -4980,11 +4980,20 @@ LValue CodeGenFunction::EmitArraySubscriptExpr(const ArraySubscriptExpr *E,
   // --- C4: ARRAY OVERLOAD BOUNDS CHECKING TRAPS ---
   const Expr *BaseExpr = E->getBase()->IgnoreImplicit();
 
-  // Track down the absolute base container expression by unrolling field selectors
-  // (This handles 'joe.__data' and isolates the parent variable object 'joe' automatically!)
+  // FIX: If the base expression is a pointer dereference (*arrptr), unwrap it
+  // to isolate the parent structure layout context beneath!
+  if (auto *UO = dyn_cast<UnaryOperator>(BaseExpr)) {
+    if (UO->getOpcode() == UO_Deref) {
+      BaseExpr = UO->getSubExpr()->IgnoreImplicit();
+    }
+  }
+
   if (const auto *ME = dyn_cast<MemberExpr>(BaseExpr)) {
     BaseExpr = ME->getBase()->IgnoreImplicit();
   }
+
+  // BaseExpr is now successfully mapped back to the core record object!
+
 
   QualType BaseTy = BaseExpr->getType();
 
@@ -4992,7 +5001,7 @@ LValue CodeGenFunction::EmitArraySubscriptExpr(const ArraySubscriptExpr *E,
   if (BaseTy->isRecordType()) {
     const RecordDecl *RD = BaseTy->getAsRecordDecl();
     if (RD && RD->getIdentifier() == nullptr &&
-        RD->lookup(&CGM.getContext().Idents.get("__size")).isSingleResult()) {
+        RD->lookup(&CGM.getContext().Idents.get(C4_ARRAY_SIZE_FIELD)).isSingleResult()) {
 
       // 1. Emit CodeGen tracking instructions to fetch the runtime Index value
       llvm::Value *IndexVal = EmitScalarExpr(E->getIdx());
@@ -5001,7 +5010,7 @@ LValue CodeGenFunction::EmitArraySubscriptExpr(const ArraySubscriptExpr *E,
       LValue BaseLV = EmitLValue(BaseExpr);
       FieldDecl *SizeField = nullptr;
       for (FieldDecl *Field : RD->fields()) {
-        if (Field->getName() == "__size") SizeField = Field;
+        if (Field->getName() == C4_ARRAY_SIZE_FIELD) SizeField = Field;
       }
 
       LValue SizeLV = EmitLValueForField(BaseLV, SizeField);
@@ -5021,7 +5030,8 @@ LValue CodeGenFunction::EmitArraySubscriptExpr(const ArraySubscriptExpr *E,
 
       Builder.CreateCondBr(IsOutOfBounds, TrapBB, SafeAccessBB);
 
-      // --- TRAP BLOCK TARGET REMAPPED TO PANIC DIAGNOSTIC ---
+
+      // --- TRAP BLOCK TARGET REMAPPED TO MATCH COMPILE-TIME FORMAT ---
       EmitBlock(TrapBB);
 
       // 1. Map the standard C library function prototypes
@@ -5034,33 +5044,55 @@ LValue CodeGenFunction::EmitArraySubscriptExpr(const ArraySubscriptExpr *E,
           "exit",
           llvm::FunctionType::get(VoidTy, {IntTy}, false));
 
-      // 2. Fetch the platform-specific standard error descriptor stream pointer reference.
-      // On macOS/Darwin, stderr is exported via the global symbol '__stderrp'.
+      // 2. Fetch the platform-specific standard error descriptor stream pointer reference
       llvm::Value *StdErrExt = CGM.getModule().getOrInsertGlobal("__stderrp", VoidPtrTy);
-
-      // FIX: Call CreateAlignedLoad directly to bypass the customized Address object overloads.
-      // We pass VoidPtrTy as the element layout type, and 8-byte pointer alignment for ARM64/Mac.
       llvm::Value *StdErrPtr = Builder.CreateAlignedLoad(
           VoidPtrTy, StdErrExt, llvm::Align(8), "stderr");
 
-      // 3. Synthesize the descriptive panic format string layout using the modern Builder API
+      // 3. COMPILE-TIME METADATA EXTRACTION:
+      SourceLocation Loc = E->getExprLoc();
+      PresumedLoc PLoc = getContext().getSourceManager().getPresumedLoc(Loc);
+      const char *FileName = PLoc.isValid() ? PLoc.getFilename() : "<unknown_file>";
+      unsigned LineNumber = PLoc.isValid() ? PLoc.getLine() : 0;
+
+      std::string ArrayNameStr = "array";
+      if (const auto *DRE = dyn_cast<DeclRefExpr>(BaseExpr)) {
+        if (const auto *VD = dyn_cast<VarDecl>(DRE->getDecl())) {
+          ArrayNameStr = VD->getNameAsString();
+        }
+      }
+
+      // 4. MATCHED ANSI-COLOUR FORMAT STRING:
+      // Formats exactly like: filename:line: c:: error: index X is out of bounds for array 'NAME' of size Y [X/Z]
       const char *PanicFormatStr =
-          "\033[33mc:: \033[31merror: \033[0;2mArray index %zu is out of bounds for array of size %zu!\033[0m\n";
+          "\033[0m%s:%u: \033[33mc:: \033[31merror: \033[0;2mindex %zu is out of bounds for array '%s' of size %zu [%zu/%zu]\033[0m\n";
       llvm::Value *FormatStrPtr = Builder.CreateGlobalString(PanicFormatStr, "bounds_panic_fmt");
 
-      // 4. Upcast values to 64-bit size parameters for accurate printf format mapping
+      // 5. Build the argument parameters list for the runtime fprintf call
+      llvm::Value *FileNamePtr = Builder.CreateGlobalString(FileName, "bounds_panic_file");
+      llvm::Value *ArrayNamePtr = Builder.CreateGlobalString(ArrayNameStr, "bounds_panic_arrname");
+      llvm::Value *LineVal = llvm::ConstantInt::get(Int32Ty, LineNumber);
+
+      // Upcast size trackers to 64-bit size parameters for perfect printf alignment
       llvm::Value *Idx64 = Builder.CreateIntCast(IndexVal, Int64Ty, /*isSigned=*/false);
       llvm::Value *Size64 = Builder.CreateIntCast(SizeVal, Int64Ty, /*isSigned=*/false);
 
-      // 5. Generate the function execution blocks
-      Builder.CreateCall(FPrintfFn, {StdErrPtr, FormatStrPtr, Idx64, Size64});
+      // Calculate the maximum valid index value (size - 1) for the bracket display
+      llvm::Value *MaxIdx64 = Builder.CreateSub(Size64, llvm::ConstantInt::get(Int64Ty, 1), "max_valid_idx");
+
+      // 6. Generate the function execution blocks sequentially
+      // Arguments mapping matches our format specifiers in exact order:
+      // (%s=filename, %u=line, %zu=index, %s=arrayname, %zu=size, %zu=index, %zu=max_valid_idx)
+      Builder.CreateCall(FPrintfFn, {StdErrPtr, FormatStrPtr, FileNamePtr, LineVal, Idx64, ArrayNamePtr, Size64, Idx64, MaxIdx64});
       Builder.CreateCall(ExitFn, {llvm::ConstantInt::get(IntTy, 1)});
 
       Builder.CreateUnreachable();
-      // ------------------------------------------------------
+      // ---------------------------------------------------------------------
 
       // --- SAFE ACCESS BLOCK CONTINUATION ---
       EmitBlock(SafeAccessBB);
+
+
 
 
       // Boundary safety verified! Let execution continue to process the array lookup natively.

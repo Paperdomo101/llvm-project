@@ -83,6 +83,12 @@ template <> struct DenseMapInfo<ScalableVecTyKey> {
 } // namespace llvm
 
 namespace clang {
+  // === C4 LANGUAGE EXTENSION: REUSABLE ARRAY METADATA NAMES ===
+  // Centralised definition slots. Change these values here to instantly
+  // update the entire compiler architecture simultaneously!
+  constexpr llvm::StringLiteral C4_ARRAY_DATA_FIELD = "items";
+  constexpr llvm::StringLiteral C4_ARRAY_SIZE_FIELD = "count";
+  // ============================================================
 
 class APValue;
 class ASTMutationListener;

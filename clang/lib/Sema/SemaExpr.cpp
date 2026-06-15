@@ -5098,7 +5098,7 @@ ExprResult Sema::ActOnArraySubscriptExpr(Scope *S, Expr *base,
   if (base && !base->getType().isNull() && base->getType()->isRecordType()) {
     RecordDecl *RD = base->getType()->getAsRecordDecl();
     if (RD && RD->getIdentifier() == nullptr &&
-        RD->lookup(&Context.Idents.get("__size")).isSingleResult()) {
+        RD->lookup(&Context.Idents.get(C4_ARRAY_SIZE_FIELD)).isSingleResult()) {
 
       Expr *Idx = ArgExprs.front();
 
@@ -5147,7 +5147,7 @@ ExprResult Sema::ActOnArraySubscriptExpr(Scope *S, Expr *base,
       }
 
       // --- PART B: TRANSPARENT AST IN-PLACE POINTER REWRITE ---
-      DeclarationName DataName(&Context.Idents.get("__data"));
+      DeclarationName DataName(&Context.Idents.get(C4_ARRAY_DATA_FIELD));
       LookupResult R(*this, DataName, lbLoc, LookupMemberName);
       LookupQualifiedName(R, RD);
 
@@ -15634,12 +15634,29 @@ ExprResult Sema::ActOnArraySizeIntrinsic(Expr *SubExpr, SourceLocation HashDotLo
   Expr *E = SubExpr->IgnoreImplicit();
   QualType TargetTy = E->getType();
 
+  // STAGE 1: Extract the true declared type of the underlying symbol if it is a variable reference
   if (auto *DRE = dyn_cast<DeclRefExpr>(E)) {
     if (auto *VD = dyn_cast_or_null<VarDecl>(DRE->getDecl())) {
       TargetTy = VD->getType();
     }
   }
 
+  // STAGE 2: If the incoming expression or variable is an explicit pointer dereference (*arrptr),
+  // peel off the outer PointerType layer to expose the underlying struct payload!
+  if (auto *UO = dyn_cast<UnaryOperator>(E)) {
+    if (UO->getOpcode() == UO_Deref) {
+      if (TargetTy->isPointerType()) {
+        TargetTy = TargetTy->getPointeeType();
+      }
+    }
+  }
+
+  // STAGE 3: Fallback check for implicit reference tracking layers
+  if (TargetTy->isPointerType()) {
+    TargetTy = TargetTy->getPointeeType();
+  }
+
+  // STAGE 4: Enforce your existing standard unnamed record matching guards...
   const RecordType *RT = TargetTy.getCanonicalType()->getAs<RecordType>();
   if (!RT) {
     Diag(HashDotLoc, diag::err_invalid_size_intrinsic_target) << SubExpr->getSourceRange();
@@ -15650,15 +15667,15 @@ ExprResult Sema::ActOnArraySizeIntrinsic(Expr *SubExpr, SourceLocation HashDotLo
 
   // --- REWRITTEN FIX FOR STANDALONE UNNAMED STRUCTS ---
   // A custom slice array structural type is uniquely identified because it has no
-  // tag name identifier, has exactly 2 fields, and contains our single '__size' variable.
+  // tag name identifier, has exactly 2 fields, and contains our single 'C4_ARRAY_SIZE_FIELD' variable.
   if (RD->getIdentifier() != nullptr ||
-      !RD->lookup(&Context.Idents.get("__size")).isSingleResult()) {
+      !RD->lookup(&Context.Idents.get(C4_ARRAY_SIZE_FIELD)).isSingleResult()) {
     Diag(HashDotLoc, diag::err_invalid_size_intrinsic_target) << SubExpr->getSourceRange();
     return ExprError();
   }
   // ----------------------------------------------------
 
-  DeclarationName SizeName(&Context.Idents.get("__size"));
+  DeclarationName SizeName(&Context.Idents.get(C4_ARRAY_SIZE_FIELD));
   LookupResult R(*this, SizeName, HashDotLoc, LookupMemberName);
   LookupQualifiedName(R, RD);
 
@@ -15667,8 +15684,15 @@ ExprResult Sema::ActOnArraySizeIntrinsic(Expr *SubExpr, SourceLocation HashDotLo
     return ExprError();
   }
 
+  // HARDENED POINTER INTRINSIC RESOLUTION:
+  // Check if the stripped expression 'E' itself evaluates to a pointer type.
+  // If it is a pointer (like joeptr), we MUST force IsArrow to true so Clang
+  // builds a proper arrow reference (->) instead of a dot reference (.),
+  // completely preventing the LLVM backend exit code 70 crash!
+  bool NeedsArrowOperator = E->getType()->isPointerType();
+
   return BuildMemberReferenceExpr(E, E->getType(), HashDotLoc,
-                                  /*IsArrow=*/false, CXXScopeSpec(),
+                                  /*IsArrow=*/NeedsArrowOperator, CXXScopeSpec(),
                                   SourceLocation(), /*FirstQualifierInScope=*/nullptr,
                                   R, /*TemplateArgs=*/nullptr, /*S=*/getCurScope());
 }
@@ -17964,40 +17988,48 @@ bool Sema::DiagnoseAssignmentResult(AssignConvertType ConvTy,
   if (Complained)
     *Complained = false;
 
-  // === C4: DETAILED BOUNDS-CHECKED ARRAY TYPE ERROR ===
+  // === C4: ENFORCED ANONYMOUS SLICE ARRAY TYPE CHECKING ===
   if (ConvTy != AssignConvertType::Compatible &&
-      !DstType.isNull() && !SrcType.isNull() &&
-      DstType->isRecordType() && SrcType->isRecordType()) {
+      !DstType.isNull() && !SrcType.isNull()) {
 
-    const RecordDecl *DstRD = DstType->getAsRecordDecl();
-    const RecordDecl *SrcRD = SrcType->getAsRecordDecl();
+    QualType PureDst = DstType;
+    QualType PureSrc = SrcType;
 
-    if (DstRD && SrcRD && DstRD->getIdentifier() == nullptr && SrcRD->getIdentifier() == nullptr) {
-      if (DstRD->lookup(&Context.Idents.get("__size")).isSingleResult() &&
-          SrcRD->lookup(&Context.Idents.get("__size")).isSingleResult()) {
+    // --- NEW REFERENCE POINTER UNWRAPPING ---
+    // If both sides are pointers, look through them to find the underlying structs
+    if (PureDst->isPointerType() && PureSrc->isPointerType()) {
+      PureDst = PureDst->getPointeeType();
+      PureSrc = PureSrc->getPointeeType();
+    }
+    // ----------------------------------------
 
-        FieldDecl *DstDataField = *DstRD->field_begin();
-        FieldDecl *SrcDataField = *SrcRD->field_begin();
+    if (PureDst->isRecordType() && PureSrc->isRecordType()) {
+      const RecordDecl *DstRD = PureDst->getAsRecordDecl();
+      const RecordDecl *SrcRD = PureSrc->getAsRecordDecl();
 
-        QualType DstElemTy = DstDataField->getType()->getPointeeType();
-        QualType SrcElemTy = SrcDataField->getType()->getPointeeType();
+      if (DstRD && SrcRD && DstRD->getIdentifier() == nullptr && SrcRD->getIdentifier() == nullptr) {
+        if (DstRD->lookup(&Context.Idents.get(C4_ARRAY_SIZE_FIELD)).isSingleResult() &&
+            SrcRD->lookup(&Context.Idents.get(C4_ARRAY_SIZE_FIELD)).isSingleResult()) {
 
-        if (Context.hasSameType(DstElemTy, SrcElemTy)) {
-          return false;
+          FieldDecl *DstDataField = *DstRD->field_begin();
+          FieldDecl *SrcDataField = *SrcRD->field_begin();
+
+          QualType DstElemTy = DstDataField->getType()->getPointeeType();
+          QualType SrcElemTy = SrcDataField->getType()->getPointeeType();
+
+          // If the underlying element types match (e.g., int vs int), force compatibility!
+          if (Context.hasSameType(DstElemTy, SrcElemTy)) {
+            return false; // Structurally compatible array references; pass safely!
+          }
+
+          // Otherwise, throw our clear custom element type mismatch error
+          Diag(Loc, diag::err_bounds_checked_array_type_mismatch)
+              << SrcElemTy << DstElemTy << SrcExpr->getSourceRange();
+
+          if (Complained) *Complained = true;
+          ConvTy = AssignConvertType::Compatible;
+          return true;
         }
-
-        // 1. Fire our clear, modern custom element type error
-        Diag(Loc, diag::err_bounds_checked_array_type_mismatch)
-            << SrcElemTy << DstElemTy << SrcExpr->getSourceRange();
-
-        // 2. CRITICAL DUPLICATE SUPPRESSION FIX:
-        // Set Complained to true AND overwrite the mutable parameter state reference.
-        // This tells Clang's downstream diagnostic loops that this type error has been
-        // completely finalized, stopping the default fallback anonymous struct error from printing!
-        if (Complained) *Complained = true;
-        ConvTy = AssignConvertType::Compatible;
-
-        return true;
       }
     }
   }
