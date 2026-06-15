@@ -322,9 +322,66 @@ void TypePrinter::printBefore(QualType T, raw_ostream &OS) {
 
 /// Prints the part of the type string before an identifier, e.g. for
 /// "int foo[10]" it prints "int ".
-void TypePrinter::printBefore(const Type *T,Qualifiers Quals, raw_ostream &OS) {
+void TypePrinter::printBefore(const Type *T, Qualifiers Quals, raw_ostream &OS) {
+  if (!T) return;
+
+  // === C4 LANGUAGE EXTENSION: UNIFIED [] TYPE PRETTY-PRINTING ===
+  const Type *CheckTy = T;
+  bool IsPointerArray = false;
+
+  // 1. Inspect if the type class is an explicit PointerType targeting our array struct
+  if (CheckTy->getTypeClass() == Type::Pointer) {
+    QualType Pointee = cast<PointerType>(CheckTy)->getPointeeType();
+    if (!Pointee.isNull()) {
+      const Type *PointeeTy = Pointee.getTypePtr();
+      if (PointeeTy->getTypeClass() == Type::Record) {
+        const RecordDecl *RD = cast<RecordType>(PointeeTy)->getDecl();
+        // STABILITY GUARD: Explicitly ensure the record is unnamed, completely defined, and holds your unique fields
+        if (RD && RD->getIdentifier() == nullptr && RD->isCompleteDefinition() && !RD->field_empty()) {
+          if (RD->lookup(&RD->getASTContext().Idents.get(C4_ARRAY_SIZE_FIELD)).isSingleResult()) {
+            CheckTy = PointeeTy;
+            IsPointerArray = true;
+          }
+        }
+      }
+    }
+  }
+
+  // 2. Format the custom slice array signatures cleanly
+  if (CheckTy->getTypeClass() == Type::Record) {
+    const RecordDecl *RD = cast<RecordType>(CheckTy)->getDecl();
+    if (RD && RD->getIdentifier() == nullptr && RD->isCompleteDefinition() && !RD->field_empty()) {
+      if (RD->lookup(&RD->getASTContext().Idents.get(C4_ARRAY_SIZE_FIELD)).isSingleResult()) {
+
+        // Print qualifiers (like const) before your array prefix natively
+        Quals.print(OS, Policy, /*appendSpaceIfNonEmpty=*/true);
+
+        // Print your custom language pointer sigil token if applicable
+        if (IsPointerArray) {
+          OS << "^";
+        }
+        OS << "[] ";
+
+        // SAFE FIELD EXTRACTION: Explicitly walk fields safely without assuming iterator validity
+        QualType ElementTy = RD->getASTContext().IntTy; // Default fallback
+        for (const FieldDecl *Field : RD->fields()) {
+          if (Field->getName() == C4_ARRAY_DATA_FIELD) {
+            ElementTy = Field->getType()->getPointeeType();
+            break;
+          }
+        }
+
+        print(ElementTy, OS, StringRef());
+        OS << " "; // add a space
+        return; // Force immediate exit to completely suppress the native C pointer '*' asterisk!
+      }
+    }
+  }
+  // =============================================================
+
   if (Policy.SuppressSpecifiers && T->isSpecifierType())
     return;
+
 
   SaveAndRestore PrevPHIsEmpty(HasEmptyPlaceHolder);
 

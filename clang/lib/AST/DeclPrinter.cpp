@@ -1019,7 +1019,41 @@ void DeclPrinter::VisitVarDecl(VarDecl *D) {
       else if (D->getInitStyle() == VarDecl::CInit) {
         Out << " = ";
       }
+
+      // === C4: DEEP INITIALIZER UNROLLING PRETTY-PRINTER ===
+      QualType Ty = D->getType();
+      if (Ty->isRecordType()) {
+        const RecordDecl *RD = Ty->getAsRecordDecl();
+        if (RD && RD->getIdentifier() == nullptr &&
+            RD->lookup(&RD->getASTContext().Idents.get(C4_ARRAY_SIZE_FIELD)).isSingleResult()) {
+
+          // Unwind our structural AST mutations to find the living user expressions list!
+          // InitListExpr (wrapper) -> data field (0) -> ArrayToPointerDecay -> CompoundLiteralExpr -> InitListExpr (original)
+          if (const auto *OuterILE = dyn_cast<InitListExpr>(Init)) {
+            if (OuterILE->getNumInits() > 0) {
+              const Expr *DataFieldExpr = OuterILE->getInit(0)->IgnoreImplicit();
+              if (const auto *CLE = dyn_cast<CompoundLiteralExpr>(DataFieldExpr)) {
+                if (const auto *OriginalILE = dyn_cast<InitListExpr>(CLE->getInitializer())) {
+
+                  // Print the original initialization bracket sequence natively!
+                  PrintingPolicy SubPolicy(Policy);
+                  SubPolicy.SuppressSpecifiers = false;
+                  OriginalILE->printPretty(Out, nullptr, SubPolicy, Indentation, "\n", &Context);
+
+                  if ((D->getInitStyle() == VarDecl::CallInit) && !isa<ParenListExpr>(Init))
+                    Out << ")";
+
+                  return; // Bypasses Clang's structural initialization printer entirely!
+                }
+              }
+            }
+          }
+        }
+      }
+      // =====================================================
+
       PrintingPolicy SubPolicy(Policy);
+
       SubPolicy.SuppressSpecifiers = false;
       Init->printPretty(Out, nullptr, SubPolicy, Indentation, "\n", &Context);
       if ((D->getInitStyle() == VarDecl::CallInit) && !isa<ParenListExpr>(Init))

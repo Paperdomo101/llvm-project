@@ -16,7 +16,7 @@ ptr (^[] int arrptr) {
     }
 }
 
-print([] int arr) {
+print ([] int arr) {
     putchar('[');
     for i := 0; i < #.arr; ++i {
         printf("%d", arr[i])
@@ -50,37 +50,11 @@ main () int {
     joe::print()
     ptr(&joe)
     joe::print()
-    i := 4;
-    joe[i] = 9;
+    printf("\033[033m[!] DELIBERATE RUNTIME ARRAY BREACH [!]\033[0m\n")
+    index := #.int;
+    joe[index] = 5;
 }
 
-
-// expected output:
-// ```
-// arr[0]: 24
-// arr[0]: 25
-// arr[1]: 5
-// arr[1]: 6
-// [24, 5]
-// arr[0]: 24
-// arr[0]: 25
-// arr[1]: 5
-// arr[1]: 6
-// [25, 6]
-// ```
-// got:
-// ```
-// arr[0]: 24
-// arr[0]: 24
-// arr[1]: 5
-// arr[1]: 6
-// [24, 5]
-// arr[0]: 24
-// arr[0]: 24
-// arr[1]: 5
-// arr[1]: 6
-// [24, 6]
-// ```
 
     // ^[] int joeptr;
     // #.joe::ptr(joeptr)
@@ -95,7 +69,3 @@ main () int {
 /// ADD size in []
 //  if [size] specified in param to function  foo ([10] int arr)
 //      Check that size of passed array matches
-
-// printf("deliberate array breach...\n")
-// index := #.int;
-// joe[index] = 5;
