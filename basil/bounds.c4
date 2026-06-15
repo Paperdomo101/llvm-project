@@ -25,6 +25,15 @@ print ([] int arr) {
     printf("]\n");
 }
 
+
+ref (&[] int arrref) {
+    for i := 0; i < #.arrref; ++i {
+        "&[%d] before: %d\n"::printf(i, arrref[i])
+        arrref[i] += 1;
+        "&[%d] after: %d\n"::printf(i, arrref[i])
+    }
+}
+
 main () int {
     a := 24;
     c := 24;
@@ -32,7 +41,13 @@ main () int {
 
     [] int joe = { a, b, c, 10 }
 
+
+    joe::ref()  // bounds.c4:47:6: error: expected expression
+                // 47 |     ^[] int joeptr = &joe;
+                //    |      ^
     ^[] int joeptr = &joe;
+    // joe::ref() ^ [] int joeptr = &joe; // this is how it sees it
+    // joe::ref(); ^[] int joeptr = &joe; // this is how it should see it
 
     printf("%d\n", joe[0] )
     printf("%d\n", joe.items[0] )

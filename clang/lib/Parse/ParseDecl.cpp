@@ -3601,9 +3601,25 @@ void Parser::ParseDeclarationSpecifiers(
       AttrsLastTime = true;
       continue;
 
+    // ==========================================================
+    // C4 LANGUAGE EXTENSION: PASS-BY-REFERENCE PREFIX DETECTOR (&type)
+    // ==========================================================
+    case tok::amp: {
+      // Ensure we are in a valid declaration or parameter declaration context
+      // where a reference modifier prefix is syntactically legal
+      SourceLocation AmpLoc = Tok.getLocation();
+      ConsumeToken(); // Consumes the '&' token safely
+
+      // Update your custom DeclSpec flag property
+      DS.SetIsC4Reference(true, AmpLoc);
+      continue; // Force the parser to immediately loop and parse the following base keyword (e.g., 'int')
+    }
+    // ==========================================================
+
     case tok::code_completion: {
       SemaCodeCompletion::ParserCompletionContext CCC =
           SemaCodeCompletion::PCC_Namespace;
+
       if (DS.hasTypeSpecifier()) {
         bool AllowNonIdentifiers
           = (getCurScope()->getFlags() & (Scope::ControlScope |

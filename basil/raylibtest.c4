@@ -81,7 +81,7 @@ main (int argc, char **argv) int {
         pos = (pos + vel::Vector2Scale(delta_time))
             ::Vector2Clamp( {0, 0}, {400 * scale, 200 * scale} )
 
-        BeginDrawing() ->} EndDrawing();
+        BeginDrawing() ->} EndDrawing()
 
         BLACK::ClearBackground()
 

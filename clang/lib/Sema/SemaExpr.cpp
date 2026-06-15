@@ -3010,7 +3010,47 @@ ExprResult Sema::ActOnIdExpression(Scope *S, CXXScopeSpec &SS,
     return BuildTemplateIdExpr(SS, TemplateKWLoc, R, ADL, TemplateArgs);
   }
 
-  return BuildDeclarationNameExpr(SS, R, ADL);
+  // === C4 LANGUAGE EXTENSION: AUTOMATIC VARIABLE DEREFERENCING (&type) ===
+  // Intercept the default declaration name expression creation loop
+  ExprResult Res = BuildDeclarationNameExpr(SS, R, ADL);
+
+  if (Res.isUsable() && !Res.isInvalid()) {
+    Expr *E = Res.get();
+    if (const auto *DRE = dyn_cast<DeclRefExpr>(E)) {
+      if (const auto *VD = dyn_cast<VarDecl>(DRE->getDecl())) {
+
+        if (isa<ParmVarDecl>(VD) && VD->getType()->isPointerType()) {
+          SourceLocation ParamStart = VD->getBeginLoc();
+          bool IsActiveC4Reference = false;
+
+          if (ParamStart.isValid() && !Context.getSourceManager().isInSystemHeader(ParamStart)) {
+            std::pair<FileID, unsigned> LocInfo = Context.getSourceManager().getDecomposedLoc(ParamStart);
+            bool Invalid = false;
+            StringRef Buf = Context.getSourceManager().getBufferData(LocInfo.first, &Invalid);
+
+            if (!Invalid && LocInfo.second < Buf.size()) {
+              unsigned StartPos = (LocInfo.second > 16) ? (LocInfo.second - 16) : 0;
+              StringRef TextWindow = Buf.substr(StartPos, LocInfo.second - StartPos + 1);
+              if (TextWindow.contains('&')) {
+                IsActiveC4Reference = true;
+              }
+            }
+          }
+
+          if (IsActiveC4Reference) {
+            ExprResult DerefExpr = CreateBuiltinUnaryOp(E->getBeginLoc(), UO_Deref, E);
+            if (!DerefExpr.isInvalid()) {
+              Res = DerefExpr; // 'ref' now acts precisely as '*ref' across all expression statements!
+            }
+          }
+        }
+      }
+    }
+  }
+
+
+  return Res;
+  // =======================================================================
 }
 
 ExprResult Sema::BuildQualifiedDeclarationNameExpr(
@@ -3603,8 +3643,35 @@ ExprResult Sema::BuildDeclarationNameExpr(
   // diagnostics).
   if (VD->isInvalidDecl() && E)
     return CreateRecoveryExpr(E->getBeginLoc(), E->getEndLoc(), {E});
-  return E;
+
+  // === C4 LANGUAGE EXTENSION: UNIVERSAL VARIABLE REFERENCE DEREFERENCING ===
+  ExprResult FinalExpr(E);
+  if (FinalExpr.isUsable() && !FinalExpr.isInvalid()) {
+    if (const auto *VDCheck = dyn_cast_or_null<VarDecl>(VD)) {
+      if (isa<ParmVarDecl>(VDCheck) && VDCheck->getType()->isPointerType()) {
+        QualType VarCheckTy = VDCheck->getType();
+        SourceLocation ParamStart = VDCheck->getBeginLoc();
+
+        if (ParamStart.isValid() && !Context.getSourceManager().isInSystemHeader(ParamStart)) {
+          // Verify if the local parameter symbol natively carries your explicit const qualifier marker
+          if (VarCheckTy.isLocalConstQualified() || VarCheckTy.isConstQualified() ||
+              VarCheckTy.getQualifiers().hasConst()) {
+
+            // Wrap the lookups inside an implicit Dereference (*) operator node!
+            ExprResult DerefExpr = CreateBuiltinUnaryOp(NameInfo.getLoc(), UO_Deref, E);
+            if (!DerefExpr.isInvalid()) {
+              FinalExpr = DerefExpr; // Transforms 'r1' into '*r1' universally!
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return FinalExpr;
 }
+
+
 
 static void ConvertUTF8ToWideString(unsigned CharByteWidth, StringRef Source,
                                     SmallString<32> &Target) {
@@ -5095,79 +5162,102 @@ ExprResult Sema::ActOnArraySubscriptExpr(Scope *S, Expr *base,
   }
 
   // === C4: BOUNDS-CHECKED ARRAY SUBSCRIPT OVERRIDE ===
-  if (base && !base->getType().isNull() && base->getType()->isRecordType()) {
-    RecordDecl *RD = base->getType()->getAsRecordDecl();
-    if (RD && RD->getIdentifier() == nullptr &&
-        RD->lookup(&Context.Idents.get(C4_ARRAY_SIZE_FIELD)).isSingleResult()) {
+  if (base && !base->getType().isNull()) {
+    Expr *UnwrappedBase = base->IgnoreImplicit();
+    QualType BaseTy = UnwrappedBase->getType();
+    bool NeedsArrowOperator = false;
 
-      Expr *Idx = ArgExprs.front();
+    // STAGE 1: Reference Pointer Unwrapping Tunnel
+    // If the base type is an explicit pointer (such as our reference parameter 'arrref')
+    // peel off the pointer layer to evaluate the underlying anonymous struct payload!
+    if (BaseTy->isPointerType()) {
+      BaseTy = BaseTy->getPointeeType();
+      NeedsArrowOperator = true;
+    }
 
-      // --- PART A: COMPILE-TIME FIXED CONSTANT BOUNDS CHECKS ---
-      Expr *BareIdx = Idx->IgnoreImplicit();
-      bool IsNegative = false;
+    if (!BaseTy.isNull() && BaseTy->isRecordType()) {
+      RecordDecl *RD = BaseTy->getAsRecordDecl();
 
-      if (auto *UO = dyn_cast<UnaryOperator>(BareIdx)) {
-        if (UO->getOpcode() == UO_Minus) {
-          IsNegative = true;
-          BareIdx = UO->getSubExpr()->IgnoreImplicit();
+      if (RD && RD->getIdentifier() == nullptr &&
+          RD->lookup(&Context.Idents.get(C4_ARRAY_SIZE_FIELD)).isSingleResult()) {
+
+        Expr *Idx = ArgExprs.front();
+
+        // --- PART A: COMPILE-TIME FIXED CONSTANT BOUNDS CHECKS ---
+        Expr *BareIdx = Idx->IgnoreImplicit();
+        bool IsNegative = false;
+
+        if (auto *UO = dyn_cast<UnaryOperator>(BareIdx)) {
+          if (UO->getOpcode() == UO_Minus) {
+            IsNegative = true;
+            BareIdx = UO->getSubExpr()->IgnoreImplicit();
+          }
         }
-      }
 
-      if (auto *ConstIdx = dyn_cast<IntegerLiteral>(BareIdx)) {
-        int64_t IndexValue = ConstIdx->getValue().getSExtValue();
-        if (IsNegative) IndexValue = -IndexValue;
+        if (auto *ConstIdx = dyn_cast<IntegerLiteral>(BareIdx)) {
+          int64_t IndexValue = ConstIdx->getValue().getSExtValue();
+          if (IsNegative) IndexValue = -IndexValue;
 
-        size_t ArrayCapacity = 0;
-        bool HasKnownCapacity = false; // Track if we can safely calculate size at compile-time
+          size_t ArrayCapacity = 0;
+          bool HasKnownCapacity = false;
 
-        if (auto *DRE = dyn_cast<DeclRefExpr>(base->IgnoreImplicit())) {
-          if (auto *VD = dyn_cast_or_null<VarDecl>(DRE->getDecl())) {
+          // Look past internal reference dereference operators if present
+          const Expr *LookupBase = UnwrappedBase;
+          while (auto *UO = dyn_cast<UnaryOperator>(LookupBase)) {
+            if (UO->getOpcode() == UO_Deref) {
+              LookupBase = UO->getSubExpr()->IgnoreImplicit();
+            } else {
+              break;
+            }
+          }
 
-            // CRITICAL PARAMETER FIX:
-            // Only fire compile-time bounds checks if a real structural init-list is present!
-            if (auto *StructInit = dyn_cast_or_null<InitListExpr>(VD->getInit())) {
-              if (StructInit->getNumInits() == 2) {
-                if (auto *SizeLit = dyn_cast<IntegerLiteral>(StructInit->getInit(1)->IgnoreImplicit())) {
-                  ArrayCapacity = SizeLit->getValue().getZExtValue();
-                  HasKnownCapacity = true;
+          if (auto *DRE = dyn_cast<DeclRefExpr>(LookupBase)) {
+            if (auto *VD = dyn_cast_or_null<VarDecl>(DRE->getDecl())) {
+              if (auto *StructInit = dyn_cast_or_null<InitListExpr>(VD->getInit())) {
+                if (StructInit->getNumInits() == 2) {
+                  if (auto *SizeLit = dyn_cast<IntegerLiteral>(StructInit->getInit(1)->IgnoreImplicit())) {
+                    ArrayCapacity = SizeLit->getValue().getZExtValue();
+                    HasKnownCapacity = true;
+                  }
                 }
               }
             }
           }
+
+          if (HasKnownCapacity && (IndexValue >= (int64_t)ArrayCapacity || IndexValue < 0)) {
+            int64_t MaxValidIndex = (int64_t)ArrayCapacity - 1;
+            Diag(Idx->getExprLoc(), diag::err_array_index_out_of_bounds)
+              << IndexValue << MaxValidIndex << (int64_t)ArrayCapacity << UnwrappedBase->getSourceRange();
+            return ExprError();
+          }
         }
 
-        // Only enforce compile-time error gates if we extracted a real capacity block size.
-        // This completely prevents function parameters from throwing false-positive size-0 errors!
-        if (HasKnownCapacity && (IndexValue >= (int64_t)ArrayCapacity || IndexValue < 0)) {
-          int64_t MaxValidIndex = (int64_t)ArrayCapacity - 1;
-          Diag(Idx->getExprLoc(), diag::err_array_index_out_of_bounds)
-            << IndexValue << MaxValidIndex << (int64_t)ArrayCapacity << base->getSourceRange();
-          return ExprError();
-        }
+        // --- PART B: TRANSPARENT AST IN-PLACE POINTER REWRITE ---
+        DeclarationName DataName(&Context.Idents.get(C4_ARRAY_DATA_FIELD));
+        LookupResult R(*this, DataName, lbLoc, LookupMemberName);
+        LookupQualifiedName(R, RD);
+
+        // FIX: If the base is a reference pointer, we must explicitly instruct
+        // BuildMemberReferenceExpr to evaluate fields against the underlying struct
+        // type context ('BaseTy') rather than using the raw pointer expression type!
+        QualType LookupBaseType = NeedsArrowOperator ? BaseTy : UnwrappedBase->getType();
+
+        ExprResult DataMemberRef = BuildMemberReferenceExpr(
+            UnwrappedBase, LookupBaseType, lbLoc,
+            /*IsArrow=*/NeedsArrowOperator, CXXScopeSpec(),
+            SourceLocation(), /*FirstQualifierInScope=*/nullptr, R,
+            /*TemplateArgs=*/nullptr, S);
+
+        if (DataMemberRef.isInvalid() || !DataMemberRef.isUsable()) return ExprError();
+
+        // Overwrite the local 'base' pointer register inline with your pointer field.
+        base = DataMemberRef.get();
       }
-
-      // --- PART B: TRANSPARENT AST IN-PLACE POINTER REWRITE ---
-      DeclarationName DataName(&Context.Idents.get(C4_ARRAY_DATA_FIELD));
-      LookupResult R(*this, DataName, lbLoc, LookupMemberName);
-      LookupQualifiedName(R, RD);
-
-      ExprResult DataMemberRef = BuildMemberReferenceExpr(
-          base, base->getType(), lbLoc, /*IsArrow=*/false, CXXScopeSpec(),
-          SourceLocation(), /*FirstQualifierInScope=*/nullptr, R,
-          /*TemplateArgs=*/nullptr, S);
-
-      if (DataMemberRef.isInvalid()) return ExprError();
-
-      // CRITICAL FORCED FIX: Instead of recursing and overrunning the stack frames,
-      // update the local 'base' pointer directly in place to be your pointer field ('bob.__data').
-      base = DataMemberRef.get();
-
-      // Do NOT return here. By letting execution fall through naturally, standard Clang
-      // will proceed down the rest of this exact function, treating 'base' as a standard
-      // 'int *' pointer, running its native arithmetic perfectly without any crashes!
     }
   }
+
   // ===================================================
+
 
 
   CheckInvalidBuiltinCountedByRef(base,
@@ -6296,7 +6386,63 @@ Sema::ConvertArgumentsForCall(CallExpr *Call, Expr *Fn,
                                    AllArgs, CallType);
   if (Invalid)
     return true;
+
+
   unsigned TotalNumArgs = AllArgs.size();
+
+  // =======================================================================
+  // C4 LANGUAGE EXTENSION: AUTOMATIC CALL-SITE ADDRESS-OF INJECTION (&int)
+  // =======================================================================
+  for (unsigned i = 0; i < TotalNumArgs; ++i) {
+    if (!FDecl || i >= FDecl->getNumParams()) continue;
+
+    ParmVarDecl *Param = FDecl->getParamDecl(i);
+    if (Param) {
+      // ROBUST COMPILER ENTRY GATE:
+      // Check if the parameter's start location points to a valid user-space block,
+      // and look up the underlying pointer type status directly.
+      QualType ParamTy = Param->getType();
+
+      if (ParamTy->isPointerType()) {
+        SourceLocation ParamStart = Param->getBeginLoc();
+        bool IsTargetC4Reference = false;
+
+        if (ParamStart.isValid() && !Context.getSourceManager().isInSystemHeader(ParamStart)) {
+          // Robust text-range fallback scan: Verify if an ampersand exists near the parameter definition
+          std::pair<FileID, unsigned> LocInfo = Context.getSourceManager().getDecomposedLoc(ParamStart);
+          bool Invalid = false;
+          StringRef Buf = Context.getSourceManager().getBufferData(LocInfo.first, &Invalid);
+
+          if (!Invalid && LocInfo.second < Buf.size()) {
+            unsigned StartPos = (LocInfo.second > 16) ? (LocInfo.second - 16) : 0;
+            StringRef TextWindow = Buf.substr(StartPos, LocInfo.second - StartPos + 1);
+            if (TextWindow.contains('&')) {
+              IsTargetC4Reference = true;
+            }
+          }
+        }
+
+        // If this parameter is an explicit pass-by-reference variable wrapper
+        if (IsTargetC4Reference) {
+          Expr *Arg = AllArgs[i];
+
+          // If the caller passed an un-aliased, bare glvalue scalar expression (like variable 'a')
+          if (Arg && Arg->isGLValue() && !Arg->getType()->isPointerType()) {
+
+            // Programmatically wrap the expression inside an implicit Address-Of (&) operator node
+            ExprResult InjectedAddress = CreateBuiltinUnaryOp(Arg->getBeginLoc(), UO_AddrOf, Arg);
+            if (!InjectedAddress.isInvalid()) {
+              AllArgs[i] = InjectedAddress.get(); // Commits the address node into the final CallExpr array!
+            }
+          }
+        }
+      }
+    }
+  }
+  // =======================================================================
+
+
+
   for (unsigned i = 0; i < TotalNumArgs; ++i)
     Call->setArg(i, AllArgs[i]);
 
@@ -6322,9 +6468,41 @@ bool Sema::GatherArgumentsForCall(SourceLocation CallLoc, FunctionDecl *FDecl,
     if (ArgIx < Args.size()) {
       Arg = Args[ArgIx++];
 
+      // ============================================================================
+      // C4 LANGUAGE EXTENSION: PRE-INITIALIZATION CALL-SITE ADDRESS-OF INJECTION
+      // ============================================================================
+      if (Param && Param->getType()->isPointerType()) {
+        QualType ParamCheckTy = Param->getType();
+
+        // COMPILE-TIME REFERENCE DETECTOR GATES:
+        // A parameter is a reference variable if and only if it is a pointer, its
+        // start location is outside system headers, and it natively carries a
+        // const qualifier on the pointer layer itself! This isolates r1 from r2 perfectly.
+        bool IsTargetC4Reference = false;
+        SourceLocation ParamStart = Param->getBeginLoc();
+
+        if (ParamStart.isValid() && !Context.getSourceManager().isInSystemHeader(ParamStart)) {
+          if (ParamCheckTy.isLocalConstQualified() || ParamCheckTy.isConstQualified() ||
+              ParamCheckTy.getQualifiers().hasConst()) {
+            IsTargetC4Reference = true;
+          }
+        }
+
+        // 2. If it is a reference parameter, convert the incoming integer to an address pointer!
+        if (IsTargetC4Reference && Arg && Arg->isGLValue() && !Arg->getType()->isPointerType()) {
+          ExprResult InjectedAddress = CreateBuiltinUnaryOp(Arg->getBeginLoc(), UO_AddrOf, Arg);
+          if (!InjectedAddress.isInvalid()) {
+            Arg = InjectedAddress.get(); // Rewrites 'a' to '&a' cleanly before copy initialization!
+          }
+        }
+      }
+      // ============================================================================
+
+
       if (RequireCompleteType(Arg->getBeginLoc(), ProtoArgType,
                               diag::err_call_incomplete_argument, Arg))
         return true;
+
 
       // Strip the unbridged-cast placeholder expression off, if applicable.
       bool CFAudited = false;
@@ -9784,7 +9962,28 @@ AssignConvertType Sema::CheckAssignmentConstraints(QualType LHSType,
                                                    ExprResult &RHS,
                                                    CastKind &Kind,
                                                    bool ConvertRHS) {
+  // === C4 LANGUAGE EXTENSION: FIXED ENTRY-GATE CALL-SITE ADDRESS-OF INJECTION ===
+  // Place this at the absolute top of the function to catch the parameter assignment
+  // before Clang can abort due to type mismatch constraints!
+  if (LHSType->isPointerType() && !RHS.isInvalid() && RHS.isUsable()) {
+    Expr *Arg = RHS.get();
+
+    // If the caller passed an un-aliased, bare glvalue scalar expression (like variable 'a')
+    if (Arg && Arg->isGLValue() && !Arg->getType()->isPointerType()) {
+
+      // Programmatically wrap the expression inside an implicit Address-Of (&) operator node
+      ExprResult InjectedAddress = CreateBuiltinUnaryOp(Arg->getBeginLoc(), UO_AddrOf, Arg);
+      if (!InjectedAddress.isInvalid()) {
+        RHS = InjectedAddress; // Modifies the true ExprResult reference permanently!
+        Kind = CK_NoOp;
+        return AssignConvertType::Compatible; // Force a successful type conversion pass!
+      }
+    }
+  }
+  // ==============================================================================
+
   QualType RHSType = RHS.get()->getType();
+
   QualType OrigLHSType = LHSType;
 
   // Get canonical types.  We're not formatting these types, just comparing
@@ -16689,11 +16888,54 @@ ExprResult Sema::CreateBuiltinUnaryOp(SourceLocation OpLoc,
                                          Opc == UO_PreInc || Opc == UO_PreDec);
       CanOverflow = isOverflowingIntegerType(Context, resultType);
       break;
-    case UO_AddrOf:
+    case UO_AddrOf: {
+      // === C4: PROHIBIT ADDRESS-OF ON REFERENCE PARAMETERS ===
+      Expr *UnwrappedOperand = Input.get()->IgnoreImplicit();
+
+      // Look through any existing implicit dereference (*) nodes we previously injected
+      if (auto *UO = dyn_cast<UnaryOperator>(UnwrappedOperand)) {
+          if (UO->getOpcode() == UO_Deref) {
+              UnwrappedOperand = UO->getSubExpr()->IgnoreImplicit();
+          }
+      }
+
+      // Check if the underlying identifier reference targets a variable definition
+      if (const auto *DRE = dyn_cast<DeclRefExpr>(UnwrappedOperand)) {
+          if (const auto *VD = dyn_cast<VarDecl>(DRE->getDecl())) {
+
+              // If the variable is a parameter and matches our pass-by-reference text window setup
+              if (isa<ParmVarDecl>(VD) && VD->getType()->isPointerType()) {
+                  SourceLocation ParamStart = VD->getBeginLoc();
+                  bool IsProtectedC4Reference = false;
+
+                  if (ParamStart.isValid() && !Context.getSourceManager().isInSystemHeader(ParamStart)) {
+                      std::pair<FileID, unsigned> LocInfo = Context.getSourceManager().getDecomposedLoc(ParamStart);
+                      bool Invalid = false;
+                      StringRef Buf = Context.getSourceManager().getBufferData(LocInfo.first, &Invalid);
+
+                      if (!Invalid && LocInfo.second < Buf.size()) {
+                          unsigned StartPos = (LocInfo.second > 16) ? (LocInfo.second - 16) : 0;
+                          StringRef TextWindow = Buf.substr(StartPos, LocInfo.second - StartPos + 1);
+                          if (TextWindow.contains('&')) {
+                              IsProtectedC4Reference = true;
+                          }
+                      }
+                  }
+
+                  // Trigger a fatal compilation error if they explicitly try to type '&ref' in user code
+                  if (IsProtectedC4Reference && OpLoc.isValid() && !Context.getSourceManager().isInSystemHeader(OpLoc)) {
+                      Diag(OpLoc, diag::err_cannot_take_address_of_reference_param)
+                      << VD->getDeclName() << Input.get()->getSourceRange();
+                      return ExprError(); // Firmly halt compilation here!
+                  }
+              }
+          }
+      }
+      // ========================================================
       resultType = CheckAddressOfOperand(Input, OpLoc);
       CheckAddressOfNoDeref(InputExpr);
       RecordModifiableNonNullParam(*this, InputExpr);
-      break;
+    } break;
     case UO_Deref: {
       Input = DefaultFunctionArrayLvalueConversion(Input.get());
       if (Input.isInvalid())

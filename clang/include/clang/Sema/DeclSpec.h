@@ -434,6 +434,8 @@ private:
     SourceLocation BoundsCheckedArrayLoc;
     bool IsBoundsCheckedArrayPtr = false;
     SourceLocation BoundsCheckedArrayPtrLoc;
+    unsigned IsC4Reference : 1;
+    SourceLocation C4ReferenceLoc;
   // ------------------------------------
 
   WrittenBuiltinSpecs writtenBS;
@@ -473,6 +475,13 @@ public:
   }
   bool isBoundsCheckedArrayPtr() const { return IsBoundsCheckedArrayPtr; }
   SourceLocation getBoundsCheckedArrayPtrLoc() const { return BoundsCheckedArrayPtrLoc; }
+
+  void SetIsC4Reference(bool b, SourceLocation loc) {
+    IsC4Reference = b;
+    C4ReferenceLoc = loc;
+  }
+
+  bool isC4Reference() const { return IsC4Reference; } // Marked const for internal Clang pipeline safety
   // ---------------------------------------
 
   static bool isDeclRep(TST T) {
@@ -667,6 +676,12 @@ public:
     // --- Reset C4 Custom Fields ---
     IsBoundsCheckedArray = false;
     BoundsCheckedArrayLoc = SourceLocation();
+
+    IsBoundsCheckedArrayPtr = false;
+    BoundsCheckedArrayPtrLoc = SourceLocation();
+
+    IsC4Reference = false;
+    C4ReferenceLoc = SourceLocation();
   }
 
   // function-specifier

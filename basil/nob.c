@@ -131,12 +131,12 @@ CompilerTest custom_test_suite[] = {
         "tests/valid_array.c4",
     },
     {
-        "Compile-Time Bounds Check (Positive Overflow)",
+        "Bounds Check (Positive Overflow)",
         "tests/positive_overflow.c4",
         false, 1, {"is out of bounds for array of size 3"}
     },
     {
-        "Compile-Time Bounds Check (Negative Underflow)",
+        "Bounds Check (Negative Underflow)",
         "tests/negative_underflow.c4",
         false, 1, {"is out of bounds for array of size 3"}
     },
@@ -146,7 +146,7 @@ CompilerTest custom_test_suite[] = {
         false, 1, {"size intrinsic operator can only be applied"}
     },
     {
-        "Type Inference (compile time)",
+        "Type Inference",
         "tests/type_inference_errors.c4",
         false, 3, {
             "assignment count mismatch: expression yields 3 values, but 2 variables are provided",
@@ -154,9 +154,18 @@ CompilerTest custom_test_suite[] = {
             "assignment count mismatch: expression yields 1 values, but 2 variables are provided",
         }
     },
+    {
+        "Reference Abuse",
+        "tests/reference_abuse.c4",
+        false, 1, { "cannot take the address of pass-by-reference parameter" }
+    },
     /// --------------
     ///  RUNTIME
     /// --------------
+    {
+        "Semicolon Omission Lookahead",
+        "tests/semicolons.c4", true
+    },
     {
         "Runtime Bounds Check",
         "tests/bounds_check_runtime.c4", true
@@ -177,10 +186,17 @@ CompilerTest custom_test_suite[] = {
         "Type Inference (runtime)",
         "tests/type_inference_runtime.c4", true,
     },
+    {
+        "Refrences",
+        "tests/reference.c4", true
+    },
 };
 
 bool run_compiler_tests(const char *compiler_path) {
-    nob_log(INFO, "=== Running Automated Compiler Feature Test Suite ===");
+    printf( "\033[2m==================================================================\033[0m\n" );
+    printf( "\033[36m(cyan)\033[0;2m compile-time | \033[0;33m(gold)\033[0;2m runtime\033[0m\n" );
+    printf( ">>> running c4 test suite...\n" );
+
     int passed = 0;
     int total = sizeof(custom_test_suite) / sizeof(custom_test_suite[0]);
 
@@ -191,7 +207,7 @@ bool run_compiler_tests(const char *compiler_path) {
         CompilerTest test = custom_test_suite[i];
 
         if (!file_exists(test.file_path)) {
-            printf("\033[31m[FAIL]\033[0;2m %s (Missing test file: %s)\033[0m\n", test.test_name, test.file_path);
+            printf("\033[31m[FAIL]\033[36m %s \033[0;2m(Missing test file: %s)\033[0m\n", test.test_name, test.file_path);
             continue;
         }
 
@@ -214,7 +230,7 @@ bool run_compiler_tests(const char *compiler_path) {
         // --- STAGE A: RUNTIME TESTS VERIFICATION ---
         if (test.is_runtime_test) {
             if (!file_exists(temp_bin)) {
-                printf("\033[31m[FAIL]\033[0;2m %s (Compilation failed to produce a binary! Compiler Output):\n%s\033[0m\n",
+                printf("\033[31m[FAIL]\033[33m %s \033[0;2m(Compilation failed to produce a binary! Compiler Output):\n%s\033[0m\n",
                        test.test_name, compiler_log_buffer);
                 continue;
             }
@@ -230,10 +246,10 @@ bool run_compiler_tests(const char *compiler_path) {
 
             // CRITICAL CONTRACT CHECK: A runtime test passes IF and ONLY IF it exits with exactly 0
             if (runtime_exit_code == 0) {
-                printf("\033[32m[PASS]\033[0;2m %s (Program executed and passed assertions smoothly)\033[0m\n", test.test_name);
+                printf("\033[32m[PASS]\033[33m %s \033[0;2m(Program executed and passed assertions smoothly)\033[0m\n", test.test_name);
                 passed++;
             } else {
-                printf("\033[31m[FAIL]\033[0;2m %s (Program failed! Terminated with non-zero exit code: %d. Output):\n%s\033[0m\n",
+                printf("\033[31m[FAIL]\033[33m %s \033[0;2m(Program failed! Terminated with non-zero exit code: %d. Output):\n%s\033[0m\n",
                        test.test_name, runtime_exit_code, run_log_buf);
             }
             continue;
@@ -250,7 +266,7 @@ bool run_compiler_tests(const char *compiler_path) {
 
 
         if (total_errors_seen != test.expected_error_count) {
-            printf("\033[31m[FAIL]\033[0;2m %s (Mismatched error count! Compiler reported %d errors instead of the expected %d):\n%s\033[0m\n",
+            printf("\033[31m[FAIL]\033[37m %s \033[0;2m(Mismatched error count! Compiler reported %d errors instead of the expected %d):\n%s\033[0m\n",
                    test.test_name, total_errors_seen, test.expected_error_count, compiler_log_buffer);
             continue;
         }
@@ -261,7 +277,7 @@ bool run_compiler_tests(const char *compiler_path) {
             if (!expected_msg) continue;
 
             if (strstr(compiler_log_buffer, expected_msg) == NULL) {
-                printf("\033[31m[FAIL]\033[0;2m %s (Missing required diagnostic target phrase! Did not see: '%s')\n",
+                printf("\033[31m[FAIL]\033[37m %s \033[0;2m(Missing required diagnostic target phrase! Did not see: '%s')\n",
                        test.test_name, expected_msg);
                 all_expected_errors_found = false;
                 break;
@@ -270,19 +286,20 @@ bool run_compiler_tests(const char *compiler_path) {
 
         if (all_expected_errors_found) {
             if (test.expected_error_count == 0) {
-                printf("\033[32m[PASS]\033[0;2m %s\033[0m\n", test.test_name);
+                printf("\033[32m[PASS]\033[36m %s\033[0m\n", test.test_name);
             } else {
-                printf("\033[32m[PASS]\033[0;2m %s (Compiler successfully caught all %d custom violations uniquely)\033[0m\n",
+                printf("\033[32m[PASS]\033[36m %s \033[0;2m(Compiler successfully caught all %d custom violations uniquely)\033[0m\n",
                        test.test_name, test.expected_error_count);
             }
             passed++;
         } else {
-            printf("\033[31m[FAIL]\033[0;2m %s (Error verification mismatched. Raw logs):\n%s\033[0m\n",
+            printf("\033[31m[FAIL]\033[36m %s \033[0;2m(Error verification mismatched. Raw logs):\n%s\033[0m\n",
                    test.test_name, compiler_log_buffer);
         }
     }
 
-    nob_log(INFO, "Test Results: \033[33m%d\033[0m / %d Compiler Verification Suites Passed.", passed, total);
+    printf( ">>> results:%s %d\033[0m / %d tests passed.\n", passed == total ? "\033[32m" : "\033[31m", passed, total);
+    printf( "\033[2m==================================================================\033[0m\n" );
     return passed == total;
 }
 

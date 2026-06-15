@@ -3,27 +3,14 @@
 # ===|===|=== TODO ===|===|===
 # ____________________________
 
-    ## Bounds-checked arrays
-    ```
-    [] int bob = { 10, 20, 30 } // bounds-checked arrays are declared on the left side
-    "%d\n"::printf(#.bob) // prints '3'  `#.` provides access to the intrinsic `size` variable
-    bob[4] = 20; // ERROR: 4 is out of bounds for array 'bob', which is of size '3'
-    ```
+
 
     ## capacity operator ##.
     ```
     ##.int // returns INT_MAX
     ```
 
-    [size]
-
-    ## references
-    ```
-    pass_by_ref(&int bob) { ... }
-
-    a := 5;
-    pass_by_ref(a)
-    ```
+    ## [size] Bounds-checked arrays
 
     ## Require / Satisfy
 
@@ -87,6 +74,25 @@
 
 # ===|===|=== DONE ===|===|===
 # ____________________________
+
+
+
+    ## references
+    ```
+    pass_by_ref(&int bob) {
+        bob = 40; // modifies 'a', pointer cannot be changed at all
+    }
+
+    a := 5;
+    pass_by_ref(a) // passes a as a const pointer automatically
+    ```
+
+    ## Bounds-checked arrays
+    ```
+    [] int bob = { 10, 20, 30 } // bounds-checked arrays are declared on the left side
+    "%d\n"::printf(#.bob) // prints '3'  `#.` provides access to the intrinsic `size` variable
+    bob[4] = 20; // ERROR: 4 is out of bounds for array 'bob', which is of size '3'
+    ```
 
 
     ## Struct arithmetic

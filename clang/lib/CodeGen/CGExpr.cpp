@@ -4977,27 +4977,34 @@ void CodeGenFunction::EmitCountedByBoundsChecking(
 
 LValue CodeGenFunction::EmitArraySubscriptExpr(const ArraySubscriptExpr *E,
                                                bool Accessed) {
-  // --- C4: ARRAY OVERLOAD BOUNDS CHECKING TRAPS ---
+  // --- C4: UNIVERSAL RUNTIME BOUNDS-CHECKING TRAPS ---
   const Expr *BaseExpr = E->getBase()->IgnoreImplicit();
 
-  // FIX: If the base expression is a pointer dereference (*arrptr), unwrap it
-  // to isolate the parent structure layout context beneath!
-  if (auto *UO = dyn_cast<UnaryOperator>(BaseExpr)) {
-    if (UO->getOpcode() == UO_Deref) {
-      BaseExpr = UO->getSubExpr()->IgnoreImplicit();
-    }
-  }
-
+  // STAGE 1: Unroll the member expression selector (.items) first!
+  // This peels off the field layer to expose the underlying parameter variable block.
   if (const auto *ME = dyn_cast<MemberExpr>(BaseExpr)) {
     BaseExpr = ME->getBase()->IgnoreImplicit();
   }
 
-  // BaseExpr is now successfully mapped back to the core record object!
+  // STAGE 2: Peel away any implicit pass-by-reference pointer dereference operators (*).
+  // A while/loop handles multiple indirection layers safely if they are nested!
+  while (const auto *UO = dyn_cast<UnaryOperator>(BaseExpr)) {
+    if (UO->getOpcode() == UO_Deref) {
+      BaseExpr = UO->getSubExpr()->IgnoreImplicit();
+    } else {
+      break;
+    }
+  }
 
+  // STAGE 3: Final fallback check. If the unrolled variable itself was a pointer array (^[]),
+  // peel off one final MemberExpr layer if applicable to isolate the true parent record context.
+  if (const auto *ME = dyn_cast<MemberExpr>(BaseExpr)) {
+    BaseExpr = ME->getBase()->IgnoreImplicit();
+  }
 
   QualType BaseTy = BaseExpr->getType();
 
-  // If the base object represents our custom 2-field array metadata structure layout
+ // If the isolated base object represents our custom array metadata structure layout
   if (BaseTy->isRecordType()) {
     const RecordDecl *RD = BaseTy->getAsRecordDecl();
     if (RD && RD->getIdentifier() == nullptr &&
@@ -5006,8 +5013,16 @@ LValue CodeGenFunction::EmitArraySubscriptExpr(const ArraySubscriptExpr *E,
       // 1. Emit CodeGen tracking instructions to fetch the runtime Index value
       llvm::Value *IndexVal = EmitScalarExpr(E->getIdx());
 
-      // 2. Load the implicit '__size' component from the parent structure instance
+      // 2. Load the implicit 'count' component from the parent structure instance
       LValue BaseLV = EmitLValue(BaseExpr);
+
+      // If the base expression itself evaluates to a reference pointer under the hood,
+      // emit a native pointer load to fetch the stack memory frame address safely!
+      if (BaseExpr->getType()->isPointerType()) {
+        Address PtrAddr = EmitPointerWithAlignment(BaseExpr);
+        BaseLV = MakeAddrLValue(PtrAddr, BaseExpr->getType()->getPointeeType());
+      }
+
       FieldDecl *SizeField = nullptr;
       for (FieldDecl *Field : RD->fields()) {
         if (Field->getName() == C4_ARRAY_SIZE_FIELD) SizeField = Field;
@@ -5021,8 +5036,7 @@ LValue CodeGenFunction::EmitArraySubscriptExpr(const ArraySubscriptExpr *E,
         IndexVal = Builder.CreateIntCast(IndexVal, SizeVal->getType(), /*isSigned=*/true);
       }
 
-      // 4. Perform the dynamic unsigned logical comparison evaluation:
-      // Index >= Size catches positive overflows AND negative underflows (like -1) instantly!
+      // 4. Perform the dynamic unsigned greater-or-equal logical comparison evaluation
       llvm::Value *IsOutOfBounds = Builder.CreateICmpUGE(IndexVal, SizeVal, "is_out_of_bounds");
 
       llvm::BasicBlock *SafeAccessBB = createBasicBlock("safe_array_access");

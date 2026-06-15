@@ -16026,100 +16026,95 @@ Decl *Sema::ActOnParamDeclarator(Scope *S, Declarator &D,
   QualType parmDeclType = TInfo->getType();
 
 
-  // === C4: BOUNDS-CHECKED ARRAY PARAMETER POINTER TYPE TRANSFORMATION ===
-  if (D.getDeclSpec().isBoundsCheckedArrayPtr()) {
-    QualType ElementTy = parmDeclType;
+  // ======================================================================
+  // C4 LANGUAGE EXTENSION: FIXED UNIFIED PARAMETER TYPE TRANSFORMATION
+  // ======================================================================
+  SourceLocation C4ParamLoc = D.getBeginLoc();
+  bool ValidC4Context = C4ParamLoc.isValid() && !Context.getSourceManager().isInSystemHeader(C4ParamLoc);
 
-    // 1. Synthesize an anonymous structure record layout for the underlying array
-    RecordDecl *AnonRecord = RecordDecl::Create(Context, TagDecl::TagKind::Struct,
-                                                CurContext, D.getBeginLoc(),
-                                                D.getIdentifierLoc(),
-                                                /*Id=*/nullptr);
-    AnonRecord->startDefinition();
+  if (ValidC4Context) {
+    // 1. HARDENED REFERENCE PARSING GATEWAY WITH MULTI-VARIABLE GROUPING ISOLATION
+    bool IsExplicitC4Ref = false;
+    if (D.getDeclSpec().isC4Reference()) {
+      std::pair<FileID, unsigned> LocInfo = Context.getSourceManager().getDecomposedLoc(C4ParamLoc);
+      bool Invalid = false;
+      StringRef Buf = Context.getSourceManager().getBufferData(LocInfo.first, &Invalid);
 
-    // Field 0: __data pointer payload
-    QualType DataPtrTy = Context.getPointerType(ElementTy);
-    FieldDecl *DataField = FieldDecl::Create(Context, AnonRecord, D.getBeginLoc(),
-                                             D.getIdentifierLoc(),
-                                             &Context.Idents.get(C4_ARRAY_DATA_FIELD),
-                                             DataPtrTy, /*TInfo=*/nullptr,
-                                             /*BitWidth=*/nullptr, /*Mutable=*/false,
-                                             ICIS_NoInit);
-    DataField->setAccess(AS_public);
-    AnonRecord->addDecl(DataField);
+      if (!Invalid && LocInfo.second < Buf.size()) {
+        // Look directly at the starting character token position of the parameter declaration list
+        if (Buf[LocInfo.second] == '&') {
+          // GROUPING PROTECTION: A grouped parameter like 'r2' in '(&int r1, r2)' sharing the same
+          // DeclSpec list context shares the same getBeginLoc() as 'r1'. To isolate them, we verify
+          // if the current declarator represents the very first variable in the group list sequence!
+          if (D.isFirstDeclarator()) {
+            IsExplicitC4Ref = true;
+          }
+        }
+      }
+    }
 
-    // Field 1: __size metadata parameter
-    QualType SizeTy = Context.getSizeType(); // size_t
-    FieldDecl *SizeField = FieldDecl::Create(Context, AnonRecord, D.getBeginLoc(),
-                                             D.getIdentifierLoc(),
-                                             &Context.Idents.get(C4_ARRAY_SIZE_FIELD),
-                                             SizeTy, /*TInfo=*/nullptr,
-                                             /*BitWidth=*/nullptr, /*Mutable=*/false,
-                                             ICIS_NoInit);
-    SizeField->setAccess(AS_public);
-    AnonRecord->addDecl(SizeField);
+    // 2. CASE A: POINTER-ARRAY EXPRESSIONS ONLY (^[] int)
+    if (D.getDeclSpec().isBoundsCheckedArrayPtr()) {
+      QualType ElementTy = parmDeclType;
+      RecordDecl *AnonRecord = RecordDecl::Create(Context, TagDecl::TagKind::Struct, CurContext, D.getBeginLoc(), D.getIdentifierLoc(), nullptr);
+      AnonRecord->startDefinition();
 
-    AnonRecord->completeDefinition();
+      QualType DataPtrTy = Context.getPointerType(ElementTy);
+      FieldDecl *DataField = FieldDecl::Create(Context, AnonRecord, D.getBeginLoc(), D.getIdentifierLoc(), &Context.Idents.get(C4_ARRAY_DATA_FIELD), DataPtrTy, nullptr, nullptr, false, ICIS_NoInit);
+      DataField->setAccess(AS_public); AnonRecord->addDecl(DataField);
 
-    // 2. CRITICAL CHANGE: Extract the base structure type representation...
-    QualType RecordTy = Context.getTypeDeclType(cast<TypeDecl>(AnonRecord));
+      QualType SizeTy = Context.getSizeType();
+      FieldDecl *SizeField = FieldDecl::Create(Context, AnonRecord, D.getBeginLoc(), D.getIdentifierLoc(), &Context.Idents.get(C4_ARRAY_SIZE_FIELD), SizeTy, nullptr, nullptr, false, ICIS_NoInit);
+      SizeField->setAccess(AS_public); AnonRecord->addDecl(SizeField);
+      AnonRecord->completeDefinition();
 
-    // ...and forcefully wrap it inside a PointerType context!
-    parmDeclType = Context.getPointerType(RecordTy);
+      QualType RecordTy = Context.getTypeDeclType(cast<TypeDecl>(AnonRecord));
+      parmDeclType = Context.getPointerType(RecordTy);
+      TInfo = Context.getTrivialTypeSourceInfo(parmDeclType, D.getIdentifierLoc());
+    }
 
-    // Update TInfo so the function prototype tracks the true pointer-to-struct signature
-    TInfo = Context.getTrivialTypeSourceInfo(parmDeclType, D.getIdentifierLoc());
+    // 3. CASE B: VALUE ARRAYS OR REFERENCE ARRAYS ([] int or &[] int)
+    else if (D.getDeclSpec().isBoundsCheckedArray() && D.getDeclSpec().getTypeSpecType() != DeclSpec::TST_error) {
+      QualType ElementTy = parmDeclType;
+      RecordDecl *AnonRecord = RecordDecl::Create(Context, TagDecl::TagKind::Struct, CurContext, D.getBeginLoc(), D.getIdentifierLoc(), nullptr);
+      AnonRecord->startDefinition();
+
+      QualType DataPtrTy = Context.getPointerType(ElementTy);
+      FieldDecl *DataField = FieldDecl::Create(Context, AnonRecord, D.getBeginLoc(), D.getIdentifierLoc(), &Context.Idents.get(C4_ARRAY_DATA_FIELD), DataPtrTy, nullptr, nullptr, false, ICIS_NoInit);
+      DataField->setAccess(AS_public); AnonRecord->addDecl(DataField);
+
+      QualType SizeTy = Context.getSizeType();
+      FieldDecl *SizeField = FieldDecl::Create(Context, AnonRecord, D.getBeginLoc(), D.getIdentifierLoc(), &Context.Idents.get(C4_ARRAY_SIZE_FIELD), SizeTy, nullptr, nullptr, false, ICIS_NoInit);
+      SizeField->setAccess(AS_public); AnonRecord->addDecl(SizeField);
+      AnonRecord->completeDefinition();
+
+      QualType TargetRecordTy = Context.getTypeDeclType(cast<TypeDecl>(AnonRecord));
+
+      if (IsExplicitC4Ref) {
+        TargetRecordTy = Context.getPointerType(TargetRecordTy);
+        TargetRecordTy.addConst();
+      }
+
+      parmDeclType = TargetRecordTy;
+      TInfo = Context.getTrivialTypeSourceInfo(parmDeclType, D.getIdentifierLoc());
+
+      if (IsExplicitC4Ref) {
+        D.AddTypeInfo(DeclaratorChunk::getPointer(/*TypeQuals=*/DeclSpec::TQ_const, D.getBeginLoc(), SourceLocation(), SourceLocation(), SourceLocation(), SourceLocation(), SourceLocation()), D.getEndLoc());
+      }
+    }
+
+    // 4. CASE C: BASIC SCALAR PASS-BY-REFERENCE VARIABLES ONLY (&int)
+    else if (IsExplicitC4Ref) {
+      QualType PtrTy = Context.getPointerType(parmDeclType);
+      PtrTy.addConst();
+      parmDeclType = PtrTy;
+      TInfo = Context.getTrivialTypeSourceInfo(parmDeclType, D.getIdentifierLoc());
+
+      D.AddTypeInfo(DeclaratorChunk::getPointer(/*TypeQuals=*/DeclSpec::TQ_const, D.getBeginLoc(), SourceLocation(), SourceLocation(), SourceLocation(), SourceLocation(), SourceLocation()), D.getEndLoc());
+    }
   }
   // ======================================================================
 
-
-
-  // === C4: HARDENED ARRAY TYPE TRANSFORMATION ENTRY GUARD ===
-  // Explicitly ensure this transformation ONLY fires on real instances of your array syntax,
-  // completely preventing standard scalar variables like 'a := 24' from bleeding layout states!
-  if (D.getDeclSpec().isBoundsCheckedArray() &&
-      D.getDeclSpec().getTypeSpecType() != DeclSpec::TST_error) { // Verify it's an explicit array specification
-    QualType ElementTy = parmDeclType;
-
-    // 1. Synthesize an anonymous structure record layout for the parameter
-    RecordDecl *AnonRecord = RecordDecl::Create(Context, TagDecl::TagKind::Struct,
-                                                CurContext, D.getBeginLoc(),
-                                                D.getIdentifierLoc(),
-                                                /*Id=*/nullptr);
-    AnonRecord->startDefinition();
-
-    // Field 0: __data pointer payload
-    QualType DataPtrTy = Context.getPointerType(ElementTy);
-    FieldDecl *DataField = FieldDecl::Create(Context, AnonRecord, D.getBeginLoc(),
-                                             D.getIdentifierLoc(),
-                                             &Context.Idents.get(C4_ARRAY_DATA_FIELD),
-                                             DataPtrTy, /*TInfo=*/nullptr,
-                                             /*BitWidth=*/nullptr, /*Mutable=*/false,
-                                             ICIS_NoInit);
-    DataField->setAccess(AS_public);
-    AnonRecord->addDecl(DataField);
-
-    // Field 1: __size metadata parameter
-    QualType SizeTy = Context.getSizeType(); // size_t
-    FieldDecl *SizeField = FieldDecl::Create(Context, AnonRecord, D.getBeginLoc(),
-                                             D.getIdentifierLoc(),
-                                             &Context.Idents.get(C4_ARRAY_SIZE_FIELD),
-                                             SizeTy, /*TInfo=*/nullptr,
-                                             /*BitWidth=*/nullptr, /*Mutable=*/false,
-                                             ICIS_NoInit);
-    SizeField->setAccess(AS_public);
-    AnonRecord->addDecl(SizeField);
-
-    AnonRecord->completeDefinition();
-
-    // 2. Override the parameter type using an explicit pointer upcast
-    // to bypass the ambiguous deleted-function inheritance trap
-    parmDeclType = Context.getTypeDeclType(cast<TypeDecl>(AnonRecord));
-
-    // Explicitly update TInfo so the function signature tracks the true struct type
-    TInfo = Context.getTrivialTypeSourceInfo(parmDeclType, D.getIdentifierLoc());
-  }
-  // ==============================================================
 
 
   // Check for redeclaration of parameters, e.g. int foo(int x, int x);
