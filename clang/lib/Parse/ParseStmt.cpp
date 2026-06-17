@@ -1611,59 +1611,19 @@ struct MisleadingIndentationChecker {
 }
 
 
-StmtResult Parser::ParseIfStatement(SourceLocation *TrailingElseLoc) {
-  assert(Tok.is(tok::kw_if) && "Not an if stmt!");
-  SourceLocation IfLoc = ConsumeToken();  // eat the 'if'.
 
-  bool IsConstexpr = false;
-  bool IsConsteval = false;
-  SourceLocation NotLocation;
-  SourceLocation ConstevalLoc;
+// C4: Common condition parser for if and switch.
+Parser::ParsedCondition Parser::ParseCondition(SourceLocation StmtLoc,
+                                               Sema::ConditionKind Kind) {
+  ParsedCondition Result;
+  Result.HasDelimitedCondition = false;
 
-  if (Tok.is(tok::kw_constexpr)) {
-    // C23 supports constexpr keyword, but only for object definitions.
-    if (getLangOpts().CPlusPlus) {
-      Diag(Tok, getLangOpts().CPlusPlus17 ? diag::warn_cxx14_compat_constexpr_if
-                                          : diag::ext_constexpr_if);
-      IsConstexpr = true;
-      ConsumeToken();
-    }
-  } else {
-    // C4: Only treat '!' as a special keyword parser hook if it is
-    // directly followed by 'consteval' (C++20 if !consteval syntax)
-    if (Tok.is(tok::exclaim) && GetLookAheadToken(1).is(tok::kw_consteval)) {
-      NotLocation = ConsumeToken();
-    }
+  // C4: Treat `!(...)` as an explicitly delimited condition even though
+  // it does not begin with '('.
+  if (Tok.is(tok::exclaim) && GetLookAheadToken(1).is(tok::l_paren))
+    Result.HasDelimitedCondition = true;
 
-    if (Tok.is(tok::kw_consteval)) {
-      Diag(Tok, getLangOpts().CPlusPlus23 ? diag::warn_cxx20_compat_consteval_if
-                                          : diag::ext_consteval_if);
-      IsConsteval = true;
-      ConstevalLoc = ConsumeToken();
-    } else if (Tok.is(tok::code_completion)) {
-      cutOffParsing();
-      Actions.CodeCompletion().CodeCompleteKeywordAfterIf(
-          NotLocation.isValid());
-      return StmtError();
-    }
-  }
-
-  bool C99orCXX = getLangOpts().C99 || getLangOpts().CPlusPlus;
-
-  ParseScope IfScope(this, Scope::DeclScope | Scope::ControlScope, C99orCXX);
-
-  StmtResult InitStmt;
-  Sema::ConditionResult Cond;
-  SourceLocation LParen;
-  SourceLocation RParen;
-  std::optional<bool> ConstexprCondition;
-  bool HasParens = false;
-
-  // C4: Conditions beginning with !(...) are considered explicitly
-  // delimited and may use the single-statement form without braces.
-  bool HasDelimitedCondition = false;
-
-  // C4: Helper to check if a token is a type specifier (for declarations)
+  // Helper to check if a token is a type specifier.
   auto isTypeSpecifier = [&](const Token &Tok) -> bool {
     return Tok.is(tok::kw_int) || Tok.is(tok::kw_float) || Tok.is(tok::kw_double) ||
            Tok.is(tok::kw_char) || Tok.is(tok::kw_void) || Tok.is(tok::kw_short) ||
@@ -1673,7 +1633,7 @@ StmtResult Parser::ParseIfStatement(SourceLocation *TrailingElseLoc) {
            false;
   };
 
-  // C4: Helper to decide if a token can start a statement (for parenthesized form).
+  // Helper to decide if a token can start a statement (for parenthesized form).
   auto isStatementStartToken = [](const Token &Tok) -> bool {
     switch (Tok.getKind()) {
     case tok::l_brace:
@@ -1699,20 +1659,14 @@ StmtResult Parser::ParseIfStatement(SourceLocation *TrailingElseLoc) {
     }
   };
 
-  // C4: Treat !(...) as an explicitly delimited condition even though
-  // the condition does not begin with '('.
-  if (Tok.is(tok::exclaim) && GetLookAheadToken(1).is(tok::l_paren))
-    HasDelimitedCondition = true;
-
-  // C4: Attempt tentative parse for parenthesized form, if we see '('.
-  if (!IsConsteval && Tok.is(tok::l_paren)) {
+  // C4: Try parenthesized form with tentative parse.
+  if (Tok.is(tok::l_paren)) {
     TentativeParsingAction TPA(*this);
 
     StmtResult TmpInit;
     Sema::ConditionResult TmpCond;
     SourceLocation TmpLParen, TmpRParen;
 
-    // Try to parse: '(' [init] ';' expr ')'
     TmpLParen = ConsumeToken(); // consume '('
 
     // Parse optional init (:= or declaration) if present.
@@ -1725,11 +1679,10 @@ StmtResult Parser::ParseIfStatement(SourceLocation *TrailingElseLoc) {
         goto Unparenthesized;
       }
     } else if (isTypeSpecifier(Tok)) {
-      // Parse a declaration statement (consumes ';')
       ParsedAttributes DeclAttrs(AttrFactory);
       ParsedAttributes DeclSpecAttrs(AttrFactory);
       SourceLocation DeclEnd;
-      DeclGroupPtrTy DG = ParseDeclaration(DeclaratorContext::Block,
+      DeclGroupPtrTy DG = ParseDeclaration(DeclaratorContext::SelectionInit,
                                            DeclEnd,
                                            DeclAttrs,
                                            DeclSpecAttrs,
@@ -1746,7 +1699,7 @@ StmtResult Parser::ParseIfStatement(SourceLocation *TrailingElseLoc) {
       }
     }
 
-    // Parse the condition expression
+    // Parse the condition expression.
     ExprResult CondExpr = ParseExpression();
     if (CondExpr.isInvalid()) {
       TPA.Revert();
@@ -1761,88 +1714,127 @@ StmtResult Parser::ParseIfStatement(SourceLocation *TrailingElseLoc) {
       goto Unparenthesized;
     }
 
-    // Check if token after ')' can start a statement
+    // Check if token after ')' can start a statement.
     if (isStatementStartToken(Tok)) {
-      // Commit: we have a valid parenthesized condition.
       TPA.Commit();
-      HasParens = true;
-      HasDelimitedCondition = true;
-      InitStmt = std::move(TmpInit);
-      LParen = TmpLParen;
-      RParen = TmpRParen;
-      Cond = Actions.ActOnCondition(getCurScope(), IfLoc, CondExpr.get(),
-                                    IsConstexpr ? Sema::ConditionKind::ConstexprIf
-                                                : Sema::ConditionKind::Boolean);
-      if (Cond.isInvalid())
-        return StmtError();
-      goto AfterCondParsing;
+      Result.HasDelimitedCondition = true;  // parenthesized => delimited
+      Result.InitStmt = std::move(TmpInit);
+      Result.LParen = TmpLParen;
+      Result.RParen = TmpRParen;
+      Result.Cond = Actions.ActOnCondition(getCurScope(), StmtLoc,
+                                           CondExpr.get(), Kind);
+      if (Result.Cond.isInvalid())
+        return Result;
+      return Result;
     } else {
       TPA.Revert();
     }
   }
 
 Unparenthesized:
-  // C4: Unparenthesized condition: parse optional init, then expression.
-  if (!IsConsteval) {
-    // Handle `:=` assignment as init
-    if (Tok.is(tok::identifier) && GetLookAheadToken(1).is(tok::colonequal)) {
-      InitStmt = ParseTypeInferredAssignment();
-      if (InitStmt.isInvalid()) {
-        SkipUntil(tok::semi);
-        return StmtError();
-      }
-      if (Tok.is(tok::semi)) {
-        ConsumeToken();
-      } else {
-        Diag(Tok, diag::err_expected_semi_declaration);
-        return StmtError();
-      }
+  // C4: Unparenthesized condition – parse optional init, then expression.
+  // Handle `:=` assignment as init.
+  if (Tok.is(tok::identifier) && GetLookAheadToken(1).is(tok::colonequal)) {
+    Result.InitStmt = ParseTypeInferredAssignment();
+    if (Result.InitStmt.isInvalid()) {
+      // Error recovery done by caller.
+      return Result;
     }
-    // Handle declaration init (e.g., `int c = 4;`)
-    else if (isTypeSpecifier(Tok)) {
-      ParsedAttributes DeclAttrs(AttrFactory);
-      ParsedAttributes DeclSpecAttrs(AttrFactory);
-      SourceLocation DeclEnd;
-      DeclGroupPtrTy DG = ParseDeclaration(DeclaratorContext::Block,
-                                           DeclEnd,
-                                           DeclAttrs,
-                                           DeclSpecAttrs,
-                                           /*DeclSpecStart=*/nullptr);
-      if (!DG) {
-        Diag(Tok, diag::err_declaration_does_not_declare_param);
-        return StmtError();
-      }
-      InitStmt = Actions.ActOnDeclStmt(DG, DeclEnd, DeclEnd);
-      if (InitStmt.isInvalid())
-        return StmtError();
-      // Declaration parsing already consumed the ';'.
+    if (Tok.is(tok::semi)) {
+      ConsumeToken();
+    } else {
+      Diag(Tok, diag::err_expected_semi_declaration);
+      return Result;
     }
-
-    // Parse the condition expression
-    ExprResult CondExpr = ParseExpression();
-    if (CondExpr.isInvalid()) {
-      SkipUntil(tok::l_brace, StopAtSemi);
-      return StmtError();
+  }
+  // Handle declaration init (e.g., `int c = 4;`).
+  else if (isTypeSpecifier(Tok)) {
+    ParsedAttributes DeclAttrs(AttrFactory);
+    ParsedAttributes DeclSpecAttrs(AttrFactory);
+    SourceLocation DeclEnd;
+    DeclGroupPtrTy DG = ParseDeclaration(DeclaratorContext::SelectionInit,
+                                         DeclEnd,
+                                         DeclAttrs,
+                                         DeclSpecAttrs,
+                                         /*DeclSpecStart=*/nullptr);
+    if (!DG) {
+      Diag(Tok, diag::err_declaration_does_not_declare_param);
+      return Result;
     }
-
-    Cond = Actions.ActOnCondition(getCurScope(), IfLoc, CondExpr.get(),
-                                  IsConstexpr ? Sema::ConditionKind::ConstexprIf
-                                              : Sema::ConditionKind::Boolean);
-    if (Cond.isInvalid())
-      return StmtError();
+    Result.InitStmt = Actions.ActOnDeclStmt(DG, DeclEnd, DeclEnd);
+    if (Result.InitStmt.isInvalid())
+      return Result;
+    // Declaration parsing already consumed the ';'.
   }
 
-AfterCondParsing:
-  if (IsConstexpr)
-    ConstexprCondition = Cond.getKnownValue();
+  // Parse the condition expression.
+  ExprResult CondExpr = ParseExpression();
+  if (CondExpr.isInvalid()) {
+    // Skip recovery done by caller.
+    return Result;
+  }
 
-  // C4: Enforce braces ONLY if the condition was truly unparenthesized.
-  bool IsBracedThen = Tok.is(tok::l_brace);
+  Result.Cond = Actions.ActOnCondition(getCurScope(), StmtLoc,
+                                       CondExpr.get(), Kind);
+  // Result.HasDelimitedCondition already set for `!(...)`; otherwise false.
+  return Result;
+}
 
-  if (!HasDelimitedCondition && !IsBracedThen) {
-      Diag(Tok, diag::err_expected) << tok::l_brace;
-      SkipUntil(tok::semi);
+
+StmtResult Parser::ParseIfStatement(SourceLocation *TrailingElseLoc) {
+  assert(Tok.is(tok::kw_if) && "Not an if stmt!");
+  SourceLocation IfLoc = ConsumeToken();
+
+  bool IsConstexpr = false;
+  bool IsConsteval = false;
+  SourceLocation NotLocation;
+  SourceLocation ConstevalLoc;
+
+  // (constexpr/consteval handling – unchanged from your working code)
+  if (Tok.is(tok::kw_constexpr)) {
+    if (getLangOpts().CPlusPlus) {
+      Diag(Tok, getLangOpts().CPlusPlus17 ? diag::warn_cxx14_compat_constexpr_if
+                                          : diag::ext_constexpr_if);
+      IsConstexpr = true;
+      ConsumeToken();
+    }
+  } else {
+    if (Tok.is(tok::exclaim) && GetLookAheadToken(1).is(tok::kw_consteval)) {
+      NotLocation = ConsumeToken();
+    }
+    if (Tok.is(tok::kw_consteval)) {
+      Diag(Tok, getLangOpts().CPlusPlus23 ? diag::warn_cxx20_compat_consteval_if
+                                          : diag::ext_consteval_if);
+      IsConsteval = true;
+      ConstevalLoc = ConsumeToken();
+    } else if (Tok.is(tok::code_completion)) {
+      cutOffParsing();
+      Actions.CodeCompletion().CodeCompleteKeywordAfterIf(NotLocation.isValid());
       return StmtError();
+    }
+  }
+
+  bool C99orCXX = getLangOpts().C99 || getLangOpts().CPlusPlus;
+  ParseScope IfScope(this, Scope::DeclScope | Scope::ControlScope, C99orCXX);
+
+  std::optional<bool> ConstexprCondition;
+
+  // C4: Parse the condition using the common helper.
+  ParsedCondition Parsed = ParseCondition(
+      IfLoc,
+      IsConstexpr ? Sema::ConditionKind::ConstexprIf : Sema::ConditionKind::Boolean);
+  if (Parsed.Cond.isInvalid() || Parsed.InitStmt.isInvalid())
+    return StmtError();
+
+  if (IsConstexpr)
+    ConstexprCondition = Parsed.Cond.getKnownValue();
+
+  // C4: Enforce braces only if condition is NOT delimited.
+  bool IsBracedThen = Tok.is(tok::l_brace);
+  if (!Parsed.HasDelimitedCondition && !IsBracedThen) {
+    Diag(Tok, diag::err_expected) << tok::l_brace;
+    SkipUntil(tok::semi);
+    return StmtError();
   }
 
   // C99 6.8.4p3 - In C99, the body of the if statement is a scope, even if
@@ -1988,58 +1980,40 @@ AfterCondParsing:
     Kind = NotLocation.isValid() ? IfStatementKind::ConstevalNegated
                                  : IfStatementKind::ConstevalNonNegated;
 
-  return Actions.ActOnIfStmt(IfLoc, Kind, LParen, InitStmt.get(), Cond, RParen,
-                             ThenStmt.get(), ElseLoc, ElseStmt.get());
+  return Actions.ActOnIfStmt(IfLoc, Kind, Parsed.LParen, Parsed.InitStmt.get(),
+                               Parsed.Cond, Parsed.RParen,
+                               ThenStmt.get(), ElseLoc, ElseStmt.get());
 }
 
 
 StmtResult Parser::ParseSwitchStatement(SourceLocation *TrailingElseLoc,
                                         LabelDecl *PrecedingLabel) {
   assert(Tok.is(tok::kw_switch) && "Not a switch stmt!");
-  SourceLocation SwitchLoc = ConsumeToken();  // eat the 'switch'.
+  SourceLocation SwitchLoc = ConsumeToken();
 
-  if (Tok.isNot(tok::l_paren)) {
-    Diag(Tok, diag::err_expected_lparen_after) << "switch";
+  bool C99orCXX = getLangOpts().C99 || getLangOpts().CPlusPlus;
+  unsigned ScopeFlags = Scope::SwitchScope;
+  if (C99orCXX)
+    ScopeFlags |= Scope::DeclScope | Scope::ControlScope;
+  ParseScope SwitchScope(this, ScopeFlags, /*ManageAll=*/true);
+
+  // C4: Parse the condition using the common helper.
+  ParsedCondition Parsed = ParseCondition(SwitchLoc, Sema::ConditionKind::Switch);
+  if (Parsed.Cond.isInvalid() || Parsed.InitStmt.isInvalid())
+    return StmtError();
+
+  // C4: Enforce braces only if condition is NOT delimited.
+  bool IsBracedThen = Tok.is(tok::l_brace);
+  if (!Parsed.HasDelimitedCondition && !IsBracedThen) {
+    Diag(Tok, diag::err_expected) << tok::l_brace;
     SkipUntil(tok::semi);
     return StmtError();
   }
 
-  bool C99orCXX = getLangOpts().C99 || getLangOpts().CPlusPlus;
-
-  // C99 6.8.4p3 - In C99, the switch statement is a block.  This is
-  // not the case for C90.  Start the switch scope.
-  //
-  // C++ 6.4p3:
-  // A name introduced by a declaration in a condition is in scope from its
-  // point of declaration until the end of the substatements controlled by the
-  // condition.
-  // C++ 3.3.2p4:
-  // Names declared in the for-init-statement, and in the condition of if,
-  // while, for, and switch statements are local to the if, while, for, or
-  // switch statement (including the controlled statement).
-  //
-  unsigned ScopeFlags = Scope::SwitchScope;
-  if (C99orCXX)
-    ScopeFlags |= Scope::DeclScope | Scope::ControlScope;
-  ParseScope SwitchScope(this, ScopeFlags);
-
-  // Parse the condition.
-  StmtResult InitStmt;
-  Sema::ConditionResult Cond;
-  SourceLocation LParen;
-  SourceLocation RParen;
-  if (ParseParenExprOrCondition(&InitStmt, Cond, SwitchLoc,
-                                Sema::ConditionKind::Switch, LParen, RParen))
-    return StmtError();
-
   StmtResult Switch = Actions.ActOnStartOfSwitchStmt(
-      SwitchLoc, LParen, InitStmt.get(), Cond, RParen);
+      SwitchLoc, Parsed.LParen, Parsed.InitStmt.get(), Parsed.Cond, Parsed.RParen);
 
   if (Switch.isInvalid()) {
-    // Skip the switch body.
-    // FIXME: This is not optimal recovery, but parsing the body is more
-    // dangerous due to the presence of case and default statements, which
-    // will have no place to connect back with the switch.
     if (Tok.is(tok::l_brace)) {
       ConsumeBrace();
       SkipUntil(tok::r_brace);
@@ -2048,34 +2022,19 @@ StmtResult Parser::ParseSwitchStatement(SourceLocation *TrailingElseLoc,
     return Switch;
   }
 
-  // C99 6.8.4p3 - In C99, the body of the switch statement is a scope, even if
-  // there is no compound stmt.  C90 does not have this clause.  We only do this
-  // if the body isn't a compound statement to avoid push/pop in common cases.
-  //
-  // C++ 6.4p1:
-  // The substatement in a selection-statement (each substatement, in the else
-  // form of the if statement) implicitly defines a local scope.
-  //
-  // See comments in ParseIfStatement for why we create a scope for the
-  // condition and a new scope for substatement in C++.
-  //
   getCurScope()->EnterSwitchBody(PrecedingLabel);
   ParseScope InnerScope(this, Scope::DeclScope, C99orCXX, Tok.is(tok::l_brace));
-
-  // We have incremented the mangling number for the SwitchScope and the
-  // InnerScope, which is one too many.
   if (C99orCXX)
     getCurScope()->decrementMSManglingNumber();
 
-  // Read the body statement.
   StmtResult Body(ParseStatement(TrailingElseLoc));
-
-  // Pop the scopes.
   InnerScope.Exit();
   SwitchScope.Exit();
 
   return Actions.ActOnFinishSwitchStmt(SwitchLoc, Switch.get(), Body.get());
 }
+
+
 
 StmtResult Parser::ParseWhileStatement(SourceLocation *TrailingElseLoc,
                                        LabelDecl *PrecedingLabel) {

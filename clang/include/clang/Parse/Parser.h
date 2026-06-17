@@ -7496,6 +7496,19 @@ public:
                                  SourceLocation &LParenLoc,
                                  SourceLocation &RParenLoc);
 
+
+  // C4: Helper for parsing conditions (parenthesized or unparenthesized).
+  struct ParsedCondition {
+    StmtResult InitStmt;
+    Sema::ConditionResult Cond;
+    SourceLocation LParen;
+    SourceLocation RParen;
+    bool HasDelimitedCondition = false; // true if condition is wrapped in '(' ')' or effectively delimited.
+  };
+
+  ParsedCondition ParseCondition(SourceLocation StmtLoc,
+                                 Sema::ConditionKind Kind);
+
   /// ParseIfStatement
   /// \verbatim
   ///       if-statement: [C99 6.8.4.1]

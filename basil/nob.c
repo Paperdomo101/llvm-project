@@ -135,6 +135,18 @@ CompilerTest custom_test_suite[] = {
         }
     },
     {
+        "Switch Statement",
+        "tests/switch_statement.c4",
+        false, 6, {
+            "expected '{'",
+            "'break' statement not in loop or switch statement",
+            "expected '{'",
+            "'break' statement not in loop or switch statement",
+            "expected '{'",
+            "'break' statement not in loop or switch statement",
+        }
+    },
+    {
         "Valid Array & Cross-Boundary Parameters",
         "tests/valid_array.c4",
     },
