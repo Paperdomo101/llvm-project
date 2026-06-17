@@ -2598,6 +2598,9 @@ public:
   ExprResult ActOnTypeSizeIntrinsic(ParsedType Ty, SourceLocation OpLoc);
   ExprResult ActOnArraySizeIntrinsic(Expr *SubExpr, SourceLocation HashLoc, SourceLocation PeriodLoc);
 
+  ExprResult ActOnCapacityOfExpr(SourceLocation OpLoc, TypeSourceInfo *TInfo);
+
+
   ExprResult CheckStructArithmeticOperands(ExprResult &LHS, ExprResult &RHS,
                                                SourceLocation OpLoc,
                                                BinaryOperatorKind Opc,
@@ -2609,6 +2612,9 @@ public:
                                                        BinaryOperatorKind Opc,
                                                        QualType StructTy,
                                                        const RecordDecl *RD);
+
+
+
   // END C4
 
   // Checks that reinterpret casts don't have undefined behavior.

@@ -273,7 +273,8 @@ def err_bounds_checked_array_type_mismatch : Error<
 def err_cannot_take_address_of_reference_param : Error<
   "cannot take the address of pass-by-reference parameter %0; "
   "doing so violates language safety guarantees">;
-
+def err_capacity_of_invalid_type : Error<
+  "'##.' cannot be applied to type %0">;
 
 
 // C99 Designated Initializers

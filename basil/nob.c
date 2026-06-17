@@ -147,6 +147,10 @@ CompilerTest custom_test_suite[] = {
         }
     },
     {
+        "Enumerations",
+        "tests/enums.c4",
+    },
+    {
         "Valid Array & Cross-Boundary Parameters",
         "tests/valid_array.c4",
     },
@@ -178,6 +182,18 @@ CompilerTest custom_test_suite[] = {
         "Reference Abuse",
         "tests/reference_abuse.c4",
         false, 1, { "cannot take the address of pass-by-reference parameter" }
+    },
+    {
+        "##. Capacity-of",
+        "tests/capacity_of.c4",
+        false, 6, {
+            "expected a type",
+            "expected a type",
+            "'##.' cannot be applied to type 'struct DummyStruct'",
+            "'##.' cannot be applied to type 'union DummyUnion'",
+            "'##.' cannot be applied to type 'int[10]'",
+            "expected a type",
+        }
     },
     /// --------------
     ///  RUNTIME

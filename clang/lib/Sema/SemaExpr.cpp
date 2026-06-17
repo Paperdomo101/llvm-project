@@ -15804,27 +15804,45 @@ static bool needsConversionOfHalfVec(bool OpRequiresConversion, ASTContext &Ctx,
 ExprResult Sema::ActOnTypeSizeIntrinsic(ParsedType Ty, SourceLocation OpLoc) {
   if (!Ty) return ExprError();
 
-  // 1. Resolve the front-end ParsedType wrapper into Clang's internal QualType context
   TypeSourceInfo *TInfo = nullptr;
   QualType TargetTy = GetTypeFromParser(Ty, &TInfo);
   if (TargetTy.isNull()) return ExprError();
 
-  // 2. Reject incomplete or void types that carry no hardware storage layout constraints
+  // Fix: Intercept Enumeration Types early to calculate their element count
+  if (TargetTy->isEnumeralType()) {
+    if (RequireCompleteType(OpLoc, TargetTy, diag::err_typecheck_decl_incomplete_type)) {
+      return ExprError();
+    }
+
+    const EnumType *ET = TargetTy->getAs<EnumType>();
+    EnumDecl *ED = ET->getDecl();
+
+    uint64_t ElementCount = 0;
+    // Walk through and count the declared enumerators
+    for (auto *ECD : ED->enumerators()) {
+      (void)ECD; // Suppress unused warning
+      ElementCount++;
+    }
+
+    llvm::APInt CountVal(Context.getTypeSize(Context.getSizeType()), ElementCount);
+    return IntegerLiteral::Create(Context, CountVal, Context.getSizeType(), OpLoc);
+  }
+
+  // Reject incomplete or void types that carry no hardware storage layout constraints
   if (TargetTy->isIncompleteType() || TargetTy->isVoidType()) {
     Diag(OpLoc, diag::err_sizeof_alignof_incomplete_or_sizeless_type)
         << 0 << TargetTy << SourceRange(OpLoc);
     return ExprError();
   }
 
-  // 3. Query the target platform metadata layout engine to pull the exact byte size capacity
+  // Query the target platform metadata layout engine to pull the exact byte size capacity
   CharUnits TypeSizeInBytes = Context.getTypeSizeInChars(TargetTy);
   uint64_t ByteQuantity = TypeSizeInBytes.getQuantity();
 
-  // 4. Construct and return an implicit Unsigned Long IntegerLiteral AST node context.
-  // This allows the value (like 4 or 8) to act as a pure compile-time constant!
   llvm::APInt SizeVal(Context.getTypeSize(Context.getSizeType()), ByteQuantity);
   return IntegerLiteral::Create(Context, SizeVal, Context.getSizeType(), OpLoc);
 }
+
 
 
 ExprResult Sema::ActOnArraySizeIntrinsic(Expr *SubExpr, SourceLocation HashDotLoc, SourceLocation EndLoc) {
@@ -15895,6 +15913,97 @@ ExprResult Sema::ActOnArraySizeIntrinsic(Expr *SubExpr, SourceLocation HashDotLo
                                   SourceLocation(), /*FirstQualifierInScope=*/nullptr,
                                   R, /*TemplateArgs=*/nullptr, /*S=*/getCurScope());
 }
+
+
+ExprResult Sema::ActOnCapacityOfExpr(SourceLocation OpLoc, TypeSourceInfo *TInfo) {
+  if (!TInfo) return ExprError();
+
+  QualType Ty = TInfo->getType();
+  ASTContext &Context = this->Context;
+  QualType SizeTy = Context.getSizeType();
+  uint64_t SizeTWidth = Context.getTypeSize(SizeTy);
+
+  // ==========================================
+  // PATH 1: REAL FLOATING-POINT TYPES
+  // ==========================================
+  if (Ty->isRealFloatingType()) {
+    const llvm::fltSemantics &Semantics = Context.getFloatTypeSemantics(Ty);
+    llvm::APFloat MaxFloat = llvm::APFloat::getLargest(Semantics, /*Negative=*/false);
+    return FloatingLiteral::Create(Context, MaxFloat, /*isExact=*/false, Ty, OpLoc);
+  }
+
+  // ==========================================
+  // PATH 2: ENUMERATION TYPES (##.enum Upgraded Behavior)
+  // ==========================================
+  if (Ty->isEnumeralType()) {
+    // Ensure the type is fully defined to resolve its underlying storage representation
+    if (RequireCompleteType(OpLoc, Ty, diag::err_typecheck_decl_incomplete_type)) {
+      return ExprError();
+    }
+
+    const EnumType *ET = Ty->getAs<EnumType>();
+    EnumDecl *ED = ET->getDecl();
+
+    // Fix: Extract the implicit or explicit underlying integer type container (usually 'int')
+    Ty = ED->getIntegerType();
+
+    // Fallthrough naturally to PATH 4 below, which will calculate the max value
+    // based on this extracted integer type's bit-width and signedness!
+  }
+
+  // ==========================================
+  // PATH 2.5: POINTER TYPES (##.any* Custom Feature)
+  // ==========================================
+  if (Ty->isPointerType() || Ty->isReferenceType()) {
+    // Query the target architecture's pointer size in bits (e.g., 32 or 64 bits)
+    uint64_t PointerWidth = Context.getTypeSize(Ty);
+
+    // For pointers, the maximum capacity is an unsigned value with all bits set to 1
+    llvm::APInt MaxPointerAddress = llvm::APInt::getMaxValue(PointerWidth);
+
+    // Normalize the bit-width to match the target platform's size_t
+    if (MaxPointerAddress.getBitWidth() != SizeTWidth) {
+      MaxPointerAddress = MaxPointerAddress.zextOrTrunc(SizeTWidth);
+    }
+
+    return IntegerLiteral::Create(Context, MaxPointerAddress, SizeTy, OpLoc);
+  }
+
+  // ==========================================
+  // PATH 3: BOOLEAN TYPE OVERRIDE
+  // ==========================================
+  if (Ty->isBooleanType()) {
+    // A boolean capacity ceiling is strictly 1 (true)
+    llvm::APInt MaxValue(SizeTWidth, 1);
+    return IntegerLiteral::Create(Context, MaxValue, SizeTy, OpLoc);
+  }
+
+  // ==========================================
+  // PATH 4: STANDARD INTEGER AND CHARACTER TYPES
+  // ==========================================
+  if (!Ty->isIntegerType()) {
+    Diag(OpLoc, diag::err_capacity_of_invalid_type) << Ty;
+    return ExprError();
+  }
+
+  uint64_t BitWidth = Context.getTypeSize(Ty);
+  bool IsUnsigned = Ty->isUnsignedIntegerType();
+
+  llvm::APInt MaxValue;
+  if (IsUnsigned) {
+    MaxValue = llvm::APInt::getMaxValue(BitWidth);
+  } else {
+    MaxValue = llvm::APInt::getSignedMaxValue(BitWidth);
+  }
+
+  if (MaxValue.getBitWidth() != SizeTWidth) {
+    MaxValue = MaxValue.zextOrTrunc(SizeTWidth);
+  }
+
+  return IntegerLiteral::Create(Context, MaxValue, SizeTy, OpLoc);
+}
+// ============ end C4 =============
+
 
 
 

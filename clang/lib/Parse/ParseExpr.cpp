@@ -939,6 +939,7 @@ Parser::ParseCastExpression(CastParseKind ParseKind, bool isAddressOfOperand,
   // to handle the postfix expression suffixes.  Cases that cannot be followed
   // by postfix exprs should set AllowSuffix to false.
   switch (SavedKind) {
+
   // === C4 LANGUAGE EXTENSION: UNIVERSAL SIZE OPERATOR (#.) ===
   case tok::hashdot: {
     SourceLocation SizeOpLoc = ConsumeToken(); // Consumes your '#.' punctuator token
@@ -964,6 +965,68 @@ Parser::ParseCastExpression(CastParseKind ParseKind, bool isAddressOfOperand,
     }
 
     return Actions.ActOnArraySizeIntrinsic(SubExpr.get(), SizeOpLoc, SizeOpLoc);
+  }
+  // ==========================================================
+  // === C4 LANGUAGE EXTENSION: CAPACITY OF OPERATOR (##.) ===
+  case tok::hashhash: {
+    // We must catch BOTH tok::period (e.g. ##.int) AND tok::numeric_constant starting with a dot (e.g. ##.3)
+    bool IsNumericConstant = GetLookAheadToken(1).is(tok::numeric_constant);
+    bool IsStandardPeriod = GetLookAheadToken(1).is(tok::period);
+
+    if (IsStandardPeriod || IsNumericConstant) {
+      SourceLocation OperatorLoc = Tok.getLocation();
+
+      // CRASH FIX 1: If it's a numeric constant like '.3', we cannot blindly call
+      // ConsumeCapacityOfOperator() because there is no isolated period token to consume.
+      if (IsNumericConstant) {
+        ConsumeToken(); // Eat the '##'
+        // Now Tok is pointing directly at the numeric constant (e.g., '.3')
+        Diag(Tok, diag::err_expected_type) << Tok.getLocation();
+        ConsumeAnyToken(); // Safely eat the malformed numeric literal to recover stream alignment
+        return ExprError(); // Force immediate halt to prevent CodeGen crashes
+      }
+
+      // Safe path: it is a standard period token
+      ConsumeToken(); // Eat the '##'
+      ConsumeToken(); // Eat the '.'
+
+      // Expect a parenthesised or naked type id, matching sizeof behavior
+      bool isParenthesized = Tok.is(tok::l_paren);
+      BalancedDelimiterTracker T(*this, tok::l_paren);
+      if (isParenthesized) {
+        T.consumeOpen();
+      }
+
+      // CRASH FIX 2: Explicitly stop execution and return ExprError() if this isn't a type.
+      // Failing to return an explicit ExprError() allows garbage memory to leak to CodeGen.
+      if (!isTypeSpecifierQualifier(Tok)) {
+        Diag(Tok, diag::err_expected_type);
+        if (isParenthesized) T.skipToEnd();
+        return ExprError();
+      }
+
+      TypeResult Ty = ParseTypeName();
+      if (Ty.isInvalid()) return ExprError();
+
+      if (isParenthesized) {
+        T.consumeClose();
+      }
+
+      // Extract the raw QualType from the parsed result
+      TypeSourceInfo *TInfo = nullptr;
+      QualType QT = Actions.GetTypeFromParser(Ty.get(), &TInfo);
+
+      if (!TInfo && !QT.isNull()) {
+        TInfo = Actions.getASTContext().getTrivialTypeSourceInfo(QT, OperatorLoc);
+      }
+
+      if (!TInfo) return ExprError();
+
+      // Forward safely to Sema using the correct pointer type layout
+      return Actions.ActOnCapacityOfExpr(OperatorLoc, TInfo);
+    }
+    // Fallthrough to standard handler if it isn't followed by your operator symbols
+    [[fallthrough]];
   }
   // ==========================================================
 

@@ -3,23 +3,82 @@
 # ===|===|=== TODO ===|===|===
 # ____________________________
 
-    ## variable in if statement
-    ```
-    if err := file::read( filename ), err {
 
+
+// Defined at root scope, automatically typedefs `Entity_States`
+// with no type specified, this implicitly an enum of unsigned int, like vanilla C
+Fruit : {
+    apple,
+    orange,
+    banana,
+}
+
+// `#` is like iota from go in this context, so this is 1 << 0, 1 << 1 and so on
+Entity_States : unsigned char {
+    idle = 1 << #,
+    hurt = 1 << #,
+    walk = 1 << #,
+    dead = 1 << #,
+}
+
+// The killer feature is you can define these enums of non-integer types (they do not automatically increment if so)
+
+typedef struct { unsigned char r, g, b, a; } Color;
+
+Colors : Color {
+    RED   = {255, 0, 0, 255},
+    GREEN = {0, 255, 0, 255},
+    BLUE  = {0, 0, 255, 255},
+}
+
+// Here's the real advantage of these new enums
+DrawPixel (int x, int y, Colors color) {...}
+DrawPixel(0, 0, Colors.RED)
+// can also be written
+DrawPixel(0, 0, .RED)
+
+
+
+
+    ## type-of operator ?.
+    ```
+    bobtype := ?.bob
+    ```
+
+
+    ## capacity-of operator ##.
+    ```
+    ##.int // INT_MAX
+    ```
+
+    ## string-of operator $.
+    ```
+    bob := 5;
+    $.bob // "5"
+    ```
+
+    ## symbol-of operator $$.
+    ```
+    $$.bob // "bob"
+    ```
+
+
+    ## ##. association
+    ```
+    struct {
+        @:##. size_t capacity;
     }
     ```
 
-	## omit () around switch
-
-    ## capacity operator ##.
+    ## #. association
     ```
-    ##.int // returns INT_MAX
+    struct {
+        @:#. size_t count;
+    }
     ```
 
     ## [size] Bounds-checked arrays
 
-    ## Require / Satisfy
 
     ## strip
 
@@ -28,6 +87,12 @@
     ## multiple returns
 
     ## .ENUM
+
+
+    ## ^ pointers
+
+    ## @. pointer dereferencing
+
 
     ## multi-line strings
     /"
@@ -73,16 +138,25 @@
     ```
 
 
-    ## ^ pointers
+    ## Require / Satisfy
 
-    ## @. pointer dereferencing
 
+    ## reflect operator ??.
 
 
 # ===|===|=== DONE ===|===|===
 # ____________________________
 
 
+
+    ## variable in if statement
+    ```
+    if err := file::read( filename ); err {
+
+    }
+    ```
+
+	## omit () around switch
 
     ## references
     ```

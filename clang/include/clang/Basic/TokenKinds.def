@@ -257,6 +257,12 @@ PUNCTUATOR(hashat,              "#@")
 // C4
 PUNCTUATOR(atdot,               "@.")
 PUNCTUATOR(hashdot,             "#.")
+PUNCTUATOR(cashdot,             "$.")
+PUNCTUATOR(questiondot,         "?.")
+// PUNCTUATOR(hashhashdot,         "##.") // would be but breaks PREPROCESSOR: #define GLUE(a, b) a##.b
+PUNCTUATOR(cashcashdot,         "$$.")
+PUNCTUATOR(questionquestiondot, "??.")
+
 
 // C++ Support
 PUNCTUATOR(periodstar,          ".*")
