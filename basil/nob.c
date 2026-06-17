@@ -127,6 +127,14 @@ CompilerTest custom_test_suite[] = {
         }
     },
     {
+        "If Statement",
+        "tests/if_statement.c4",
+        false, 2, {
+            "call to undeclared function 'test'",
+            "expected '{'"
+        }
+    },
+    {
         "Valid Array & Cross-Boundary Parameters",
         "tests/valid_array.c4",
     },
@@ -165,6 +173,10 @@ CompilerTest custom_test_suite[] = {
     {
         "Semicolon Omission Lookahead",
         "tests/semicolons.c4", true
+    },
+    {
+        "If Statement",
+        "tests/if_statement_runtime.c4", true,
     },
     {
         "Runtime Bounds Check",

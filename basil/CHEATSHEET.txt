@@ -3,6 +3,9 @@
 
 - CMAKE -
 
+== lin ==
+cmake -G Ninja ../llvm -DCMAKE_BUILD_TYPE=Release -DLLVM_ENABLE_PROJECTS="clang;clang-tools-extra"
+
 == mac ==
 cmake -G Ninja ../llvm -DDEFAULT_SYSROOT="$(xcrun --show-sdk-path)" -DCMAKE_BUILD_TYPE=Release -DLLVM_ENABLE_PROJECTS="clang;clang-tools-extra"
 

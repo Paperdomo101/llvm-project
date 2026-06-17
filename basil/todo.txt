@@ -3,7 +3,14 @@
 # ===|===|=== TODO ===|===|===
 # ____________________________
 
+    ## variable in if statement
+    ```
+    if err := file::read( filename ), err {
 
+    }
+    ```
+
+	## omit () around switch
 
     ## capacity operator ##.
     ```

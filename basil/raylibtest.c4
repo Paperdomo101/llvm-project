@@ -30,9 +30,9 @@ main (int argc, char **argv) int {
 
     "%d\n"::printf( -2::add(4) );
 
-    if !(a == 10)
+    if !(a == 10) {
         "wow!\n"::printf()
-    else {
+    } else {
         "oof!\n"::printf()
     }
 
