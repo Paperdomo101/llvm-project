@@ -915,6 +915,31 @@ Parser::ParseCastExpression(CastParseKind ParseKind, bool isAddressOfOperand,
                             bool &NotCastExpr,
                             TypoCorrectionTypeBehavior CorrectionBehavior,
                             bool isVectorLiteral, bool *NotPrimaryExpression) {
+
+    // =========================================================================
+    // C4: IMPLICIT DOT SYNTAX (.red)
+    // =========================================================================
+    // Catch loose dots at the absolute entry gate of expression evaluation
+    if (Tok.is(tok::period) && GetLookAheadToken(1).is(tok::identifier)) {
+        SourceLocation DotLoc = ConsumeToken(); // Eat '.'
+
+        // FIX 1: Do NOT call ConsumeToken() on the identifier here!
+        // We leave Tok sitting cleanly on the identifier token (e.g. 'red')
+        // so that Clang's source buffer remains perfectly aligned for deduction.
+
+        // FIX 2: Use UnknownAnyTy instead of DependentTy to bypass strict placeholder locks
+        auto *OVE = new (Actions.getASTContext()) OpaqueValueExpr(
+            DotLoc, Actions.getASTContext().UnknownAnyTy, VK_PRValue, OK_Ordinary);
+
+        // Explicitly advance the parser stream past the identifier *after* building the node
+        ConsumeToken(); // Now safely advance past the identifier to finish the expression gate
+
+        return ExprResult(OVE);
+
+    }
+    // =========================================================================
+
+
   ExprResult Res;
   tok::TokenKind SavedKind = Tok.getKind();
 
@@ -1028,7 +1053,25 @@ Parser::ParseCastExpression(CastParseKind ParseKind, bool isAddressOfOperand,
     // Fallthrough to standard handler if it isn't followed by your operator symbols
     [[fallthrough]];
   }
+
   // ==========================================================
+
+  // C4: Handle the iota '#' symbol inside expression math
+  case tok::hash: {
+    SourceLocation HashLoc = ConsumeToken(); // Eat '#'
+
+    // 1. Fetch the active iota counter from the parser state
+    // We can access or query your active enum counter. If not inside an enum, default to 0.
+    unsigned CurrentIotaValue = this->GetActiveC4EnumHashCounter();
+
+    // 2. Increment the counter ONLY because it was referenced!
+    this->IncrementC4EnumHashCounter();
+
+    // 3. Create a standard integer literal expression containing the value
+    llvm::APInt HashVal(32, CurrentIotaValue);
+    return IntegerLiteral::Create(Actions.getASTContext(), HashVal,
+                                  Actions.getASTContext().IntTy, HashLoc);
+  }
 
 
   case tok::l_paren: {

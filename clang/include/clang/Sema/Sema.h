@@ -865,6 +865,18 @@ void inferNoReturnAttr(Sema &S, Decl *D);
 #endif
 /// Sema - This implements semantic analysis and AST building for C.
 /// \nosubgrouping
+
+//===----------------------------------------------------------------------===//
+// C4: Struct container to track parsed elements inside a C4 Enum declaration block
+// Defined here so it is fully visible to both Parser and Sema systems.
+//===----------------------------------------------------------------------===//
+struct C4EnumElement {
+  clang::IdentifierInfo *Name;
+  clang::SourceLocation Loc;
+  clang::ExprResult InitExpr;
+};
+
+
 class Sema final : public SemaBase {
 #ifdef __GNUC__
 #pragma GCC diagnostic pop
@@ -2613,6 +2625,29 @@ public:
                                                        QualType StructTy,
                                                        const RecordDecl *RD);
 
+  // C4: Public interface called by the parser to compile global custom C4 enums
+  OpaquePtr<DeclGroupRef> ActOnC4EnumDeclaration(
+      SourceLocation EnumLoc,
+      IdentifierInfo *EnumName,
+      ParsedType UnderlyingType,
+      llvm::ArrayRef<C4EnumElement> Elements);
+
+  // C4: Helper to register members during declaration
+  void RegisterC4EnumMember(const IdentifierInfo *EnumII, const IdentifierInfo *MemberII, VarDecl *VD) {
+    C4EnumMemberMap[{EnumII, MemberII}] = VD;
+  }
+
+  // C4: Helper to resolve members during dot notation parsing
+  VarDecl *LookupC4EnumMember(const IdentifierInfo *EnumII, const IdentifierInfo *MemberII) {
+    auto It = C4EnumMemberMap.find({EnumII, MemberII});
+    return It != C4EnumMemberMap.end() ? It->second : nullptr;
+  }
+
+  // C4: Builds the initial placeholder node
+  ExprResult ActOnImplicitEnumDotExpr(SourceLocation DotLoc, IdentifierInfo *MemberName, SourceLocation MemberLoc);
+
+  // C4: Resolves a placeholder '.RED' into 'Colors.RED' based on the expected type context
+  ExprResult ResolveImplicitDot(Expr *E, QualType ExpectedType);
 
 
   // END C4
@@ -4836,6 +4871,10 @@ public:
   llvm::SmallSetVector<Decl *, 4> DeclsToCheckForDeferredDiags;
 
 private:
+  // C4: Maps an Enum Name + Member Name to the generated VarDecl pointer.
+  // Example: ["Fruit", "apple"] -> VarDecl(Fruit_apple)
+  llvm::DenseMap<std::pair<const IdentifierInfo *, const IdentifierInfo *>, VarDecl *> C4EnumMemberMap;
+
   /// Map of current shadowing declarations to shadowed declarations. Warn if
   /// it looks like the user is trying to modify the shadowing declaration.
   llvm::DenseMap<const NamedDecl *, const NamedDecl *> ShadowingDecls;

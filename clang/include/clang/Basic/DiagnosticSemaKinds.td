@@ -275,6 +275,11 @@ def err_cannot_take_address_of_reference_param : Error<
   "doing so violates language safety guarantees">;
 def err_capacity_of_invalid_type : Error<
   "'##.' cannot be applied to type %0">;
+def err_typecheck_call_implicit_dot_variadic : Error<
+  "cannot contextually deduce implicit member '.%0' when passed to variadic argument list">;
+def err_implicit_dot_no_member : Error<
+  "no member named %0 in implicit enum %1">;
+
 
 
 // C99 Designated Initializers

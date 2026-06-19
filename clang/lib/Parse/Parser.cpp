@@ -296,6 +296,93 @@ bool Parser::TryConsumeOptionalSemi() {
 }
 
 
+// C4: Parser implementation for custom C4 enums returning a DeclGroupPtrTy
+OpaquePtr<DeclGroupRef> Parser::ParseC4EnumDeclaration() {
+  assert(isC4EnumDeclaration() && "Not a valid C4 Enum!");
+
+  SourceLocation EnumLoc = Tok.getLocation();
+  IdentifierInfo *EnumName = Tok.getIdentifierInfo();
+  ConsumeToken(); // Eat enum identifier
+
+  assert(Tok.is(tok::colon) && "Expected ':' for C4 Enum!");
+  ConsumeToken(); // Eat ':'
+
+  ParsedType UnderlyingType;
+  if (Tok.isNot(tok::l_brace)) {
+    TypeResult TR = ParseTypeName();
+    // Fix: Fall back gracefully returning an empty DeclGroup if type parsing fails
+    if (TR.isInvalid()) return DeclGroupPtrTy();
+    UnderlyingType = TR.get();
+  } else {
+    clang::QualType UnsignedIntQT = Actions.getASTContext().UnsignedIntTy;
+    UnderlyingType = Actions.CreateParsedType(UnsignedIntQT,
+                       Actions.getASTContext().getTrivialTypeSourceInfo(UnsignedIntQT, EnumLoc));
+  }
+
+  BalancedDelimiterTracker T(*this, tok::l_brace);
+  // Fix: Return DeclGroupPtrTy() on bracket entry failure
+  if (T.consumeOpen()) {
+    Diag(Tok, diag::err_expected_after) << "C4 Enum definition";
+    return DeclGroupPtrTy();
+  }
+
+  SmallVector<C4EnumElement, 8> Elements;
+
+  // Initialize your parser class tracking variable at block entry
+  this->ActiveC4EnumHashCounter = 0;
+
+  while (Tok.isNot(tok::r_brace) && Tok.isNot(tok::eof)) {
+    if (Tok.isNot(tok::identifier)) {
+      Diag(Tok, diag::err_expected);
+      T.skipToEnd();
+      return DeclGroupPtrTy();
+    }
+
+    IdentifierInfo *ElemName = Tok.getIdentifierInfo();
+    SourceLocation ElemLoc = ConsumeToken();
+
+    ExprResult InitExpr;
+    if (Tok.is(tok::equal)) {
+      ConsumeToken(); // Eat '='
+
+      // Fix: Call ParseAssignmentExpression directly!
+      // Because we hooked tok::hash into the primary expression parser,
+      // expressions like '1 << #' or '# * 2' will parse perfectly.
+      InitExpr = ParseAssignmentExpression();
+      if (InitExpr.isInvalid()) {
+        T.skipToEnd();
+        return DeclGroupPtrTy();
+      }
+    } else {
+      // If there is no explicit '=', we read the current iota value,
+      // create the default literal, and manually increment it.
+      llvm::APInt DefaultVal(32, this->ActiveC4EnumHashCounter);
+      InitExpr = IntegerLiteral::Create(Actions.getASTContext(), DefaultVal,
+                                        Actions.getASTContext().IntTy, ElemLoc);
+      this->ActiveC4EnumHashCounter++;
+    }
+
+    Elements.push_back({ElemName, ElemLoc, InitExpr});
+
+    // Fix: Remove unconditional HashCounter++ from here!
+    if (Tok.is(tok::comma)) {
+      ConsumeToken();
+    }
+  }
+
+
+  T.consumeClose();
+  return Actions.ActOnC4EnumDeclaration(EnumLoc, EnumName, UnderlyingType, Elements);
+}
+
+unsigned Parser::GetActiveC4EnumHashCounter() {
+    return this->ActiveC4EnumHashCounter;
+}
+void Parser::IncrementC4EnumHashCounter() {
+    this->ActiveC4EnumHashCounter++;
+}
+
+
 
 /////----------------- END C4 CODE -----------------/////
 
@@ -865,6 +952,32 @@ Parser::ParseExternalDeclaration(ParsedAttributes &Attrs,
     cutOffParsing();
     return nullptr;
   }
+
+  // C4: Intercept top-level C4 enum declarations and type uses
+  if (isC4EnumDeclaration()) {
+    return ParseC4EnumDeclaration();
+  }
+
+  // FIX: Intercept global type uses (like function parameter specifiers)
+  if (isC4EnumTypeToken(Tok) && !GetLookAheadToken(1).is(tok::period)) {
+    IdentifierInfo *II = Tok.getIdentifierInfo();
+    SourceLocation Loc = Tok.getLocation();
+
+    VarDecl *VD = Actions.LookupC4EnumMember(II, nullptr);
+    RecordDecl *RD = VD->getType()->getAs<RecordType>()->getDecl();
+    QualType BackingScalarTy = !RD->field_empty() ? RD->field_begin()->getType() : Actions.getASTContext().UnsignedIntTy;
+    if (BackingScalarTy.isNull()) BackingScalarTy = Actions.getASTContext().UnsignedIntTy;
+
+    ParsedType PT = Actions.CreateParsedType(BackingScalarTy,
+                      Actions.getASTContext().getTrivialTypeSourceInfo(BackingScalarTy, Loc));
+
+    Tok.setKind(tok::annot_typename);
+    Tok.setAnnotationValue(PT.getAsOpaquePtr());
+    Tok.setLocation(Loc);
+    Tok.setAnnotationEndLoc(Loc);
+  }
+
+
 
   Decl *SingleDecl = nullptr;
   switch (Tok.getKind()) {

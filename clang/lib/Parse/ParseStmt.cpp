@@ -161,6 +161,41 @@ StmtResult Parser::ParseStatementOrDeclaration(StmtVector &Stmts,
 
   ParenBraceBracketBalancer BalancerRAIIObj(*this);
 
+  // C4: Intercept block-scoped C4 enum declarations and type uses
+  if (isC4EnumDeclaration()) {
+    DeclGroupPtrTy DG = ParseC4EnumDeclaration();
+    if (!DG) return StmtError();
+    return Actions.ActOnDeclStmt(DG, Tok.getLocation(), Tok.getLocation());
+  }
+
+  // FIX: If the token is a C4 Enum identifier and NOT followed by a dot '.',
+  // dynamically convert it into an annotated typename token on the fly!
+  if (isC4EnumTypeToken(Tok) && !GetLookAheadToken(1).is(tok::period)) {
+    IdentifierInfo *II = Tok.getIdentifierInfo();
+    SourceLocation Loc = Tok.getLocation();
+
+    // Query Sema to fetch the underlying scalar/struct backing type
+    VarDecl *VD = Actions.LookupC4EnumMember(II, nullptr);
+    RecordDecl *RD = VD->getType()->getAs<RecordType>()->getDecl();
+    QualType BackingScalarTy = !RD->field_empty() ? RD->field_begin()->getType() : Actions.getASTContext().UnsignedIntTy;
+    if (BackingScalarTy.isNull()) BackingScalarTy = Actions.getASTContext().UnsignedIntTy;
+
+    // Convert the underlying QualType into a front-end ParsedType handle wrapper
+    ParsedType PT = Actions.CreateParsedType(BackingScalarTy,
+                      Actions.getASTContext().getTrivialTypeSourceInfo(BackingScalarTy, Loc));
+
+    // Rewrite the current Tok token inside the stream into a valid annotated typename token
+    Tok.setKind(tok::annot_typename);
+    Tok.setAnnotationValue(PT.getAsOpaquePtr());
+    Tok.setLocation(Loc);
+    Tok.setAnnotationEndLoc(Loc);
+
+    // Now continue standard Clang processing! It will parse 'Tok' natively as a type specifier.
+  }
+
+
+
+
   // Look ahead to see if this statement starts an inferred assignment.
   // We check if it's an identifier followed immediately by ':=' OR a comma ','
   if (Tok.is(tok::identifier) &&

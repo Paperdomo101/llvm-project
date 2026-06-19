@@ -16002,6 +16002,102 @@ ExprResult Sema::ActOnCapacityOfExpr(SourceLocation OpLoc, TypeSourceInfo *TInfo
 
   return IntegerLiteral::Create(Context, MaxValue, SizeTy, OpLoc);
 }
+
+
+
+ExprResult Sema::ActOnImplicitEnumDotExpr(SourceLocation DotLoc, IdentifierInfo *MemberName, SourceLocation MemberLoc) {
+  ASTContext &Ctx = Context;
+  DeclarationNameInfo NameInfo(MemberName, MemberLoc);
+
+  // Fix: Supply arguments matching your exact 12-parameter structural contract.
+  // We pass 'false' for HasUnresolvedUsing, and use 'Context.OverloadTy' for the BaseType.
+  return UnresolvedMemberExpr::Create(
+      Ctx,
+      /*HasUnresolvedUsing=*/false,
+      /*Base=*/nullptr,
+      /*BaseType=*/Ctx.OverloadTy,
+      /*IsArrow=*/false,
+      /*OperatorLoc=*/DotLoc,
+      /*QualifierLoc=*/NestedNameSpecifierLoc(),
+      /*TemplateKWLoc=*/SourceLocation(),
+      /*MemberNameInfo=*/NameInfo,
+      /*TemplateArgs=*/nullptr,
+      /*Begin=*/UnresolvedSetIterator(),
+      /*End=*/UnresolvedSetIterator());
+}
+
+/// C4:
+
+
+/// Resolve an implicit dot expression (.member) to a MemberExpr
+/// using the expected type as the enum type.
+ExprResult Sema::ResolveImplicitDot(Expr *E, QualType ExpectedType) {
+  auto *UME = dyn_cast<UnresolvedMemberExpr>(E);
+  if (!UME || UME->getBase() || !UME->isImplicitAccess())
+    return E; // Not our implicit dot
+
+  IdentifierInfo *Member = UME->getMemberName().getAsIdentifierInfo();
+  if (!Member)
+    return E;
+
+  // The expected type must be a custom enum (which is a RecordType)
+  const RecordType *RT = ExpectedType->getAs<RecordType>();
+  if (!RT) {
+    // Not a custom enum; cannot resolve
+    return E;
+  }
+
+  RecordDecl *RD = RT->getDecl();
+  if (!RD)
+    return E;
+
+  // Look up the global container variable for this enum
+  VarDecl *EnumVar = LookupC4EnumMember(RD->getIdentifier(), /*Scope=*/nullptr);
+  if (!EnumVar) {
+    // Not a known custom enum; leave as is
+    return E;
+  }
+
+  // Find the field with the given member name
+  for (FieldDecl *FD : RD->fields()) {
+    if (FD->getIdentifier() == Member) {
+      // Build base reference to the enum container variable
+      ExprResult Base = BuildDeclRefExpr(EnumVar, EnumVar->getType(),
+                                         VK_LValue, UME->getOperatorLoc());
+      if (Base.isInvalid())
+        return ExprError();
+
+      // Build MemberExpr using the field
+      // BuildMemberExpr(Expr *Base, bool IsArrow, SourceLocation OpLoc,
+      //                 NestedNameSpecifierLoc NNS, SourceLocation TemplateKWLoc,
+      //                 ValueDecl *Member, DeclAccessPair FoundDecl,
+      //                 bool HadMultipleCandidates, const DeclarationNameInfo &MemberNameInfo,
+      //                 QualType Ty, ExprValueKind VK, ExprObjectKind OK,
+      //                 const TemplateArgumentListInfo *TemplateArgs)
+      DeclarationNameInfo MemberNameInfo(FD->getDeclName(), UME->getMemberLoc());
+      return BuildMemberExpr(Base.get(), /*IsArrow=*/false,
+                             UME->getOperatorLoc(),
+                             /*NNS=*/NestedNameSpecifierLoc(),
+                             /*TemplateKWLoc=*/SourceLocation(),
+                             FD,
+                             DeclAccessPair::make(FD, FD->getAccess()),
+                             /*HadMultipleCandidates=*/false,
+                             MemberNameInfo,
+                             FD->getType(),
+                             VK_PRValue,
+                             OK_Ordinary,
+                             /*TemplateArgs=*/nullptr);
+    }
+  }
+
+  Diag(UME->getMemberLoc(), diag::err_implicit_dot_no_member)
+      << Member << RD->getDeclName();
+  return ExprError();
+}
+
+
+
+
 // ============ end C4 =============
 
 

@@ -281,6 +281,40 @@ ParsedType Sema::getTypeName(const IdentifierInfo &II, SourceLocation NameLoc,
                              bool IsClassTemplateDeductionContext,
                              ImplicitTypenameContext AllowImplicitTypename,
                              IdentifierInfo **CorrectedII) {
+
+  // =========================================================================
+  // C4: FEATURE 7: CONTEXTUAL TYPE REWRITE FOR CUSTOM C4 ENUMS
+  // =========================================================================
+  // If the identifier matches a registered C4 Enum, check the lookahead.
+  if (VarDecl *EnumContainerVD = LookupC4EnumMember(&II, nullptr)) {
+      const Token &NextTok = PP.LookAhead(0); // Peek at the token following 'Fruit'
+
+      if (!NextTok.is(tok::period)) {
+          // Fix: Instead of reading the type of the first field, extract the true
+          // underlying storage type directly from the first field's field definition template.
+          RecordDecl *RD = EnumContainerVD->getType()->getAs<RecordType>()->getDecl();
+
+          QualType BackingScalarTy;
+          if (!RD->field_empty()) {
+              BackingScalarTy = RD->field_begin()->getType();
+          }
+
+          // Fallback safeguard: if the type is still being evaluated or null,
+          // default cleanly to unsigned int to guarantee compiling success!
+          if (BackingScalarTy.isNull()) {
+              BackingScalarTy = Context.UnsignedIntTy;
+          }
+
+          // Return the clean scalar type handle wrapper to the parser seamlessly
+          return CreateParsedType(BackingScalarTy,
+              Context.getTrivialTypeSourceInfo(BackingScalarTy, NameLoc));
+      }
+  }
+  // =========================================================================
+
+
+  // ... (Clang's native, unmodified getTypeName code continues below verbatim) ...
+
   bool IsImplicitTypename = !isClassName && !IsCtorOrDtorName;
   // FIXME: Consider allowing this outside C++1z mode as an extension.
   bool AllowDeducedTemplate = IsClassTemplateDeductionContext &&
@@ -7091,6 +7125,104 @@ StmtResult Sema::ActOnMultiTypeInferredAssignment(Scope *S,
   DeclGroupRef DG = DeclGroupRef::Create(Context, DeclsInGroup.data(), DeclsInGroup.size());
   return ActOnDeclStmt(DeclGroupPtrTy::make(DG), Locs.front(), InitExpr->getEndLoc());
 }
+
+
+OpaquePtr<DeclGroupRef> Sema::ActOnC4EnumDeclaration(
+    SourceLocation EnumLoc,
+    IdentifierInfo *EnumName,
+    ParsedType UnderlyingType,
+    llvm::ArrayRef<C4EnumElement> Elements) {
+
+  if (!UnderlyingType.getAsOpaquePtr()) return DeclGroupPtrTy();
+
+  TypeSourceInfo *TInfo = nullptr;
+  QualType TargetUnderlyingTy = GetTypeFromParser(UnderlyingType, &TInfo);
+  if (TargetUnderlyingTy.isNull()) return DeclGroupPtrTy();
+
+  ASTContext &Ctx = Context;
+  DeclContext *DC = CurContext;
+  Scope *S = getCurScope();
+  bool IsLocalScope = S && (S->getFnParent() != nullptr || S->isBlockScope());
+
+  SmallVector<Decl *, 8> DeclsInGroup;
+
+  // 1. Create a named struct in C's isolated tag namespace: struct Fruit
+  RecordDecl *RD = RecordDecl::Create(Ctx, TagTypeKind::Struct, DC,
+                                      EnumLoc, EnumLoc, EnumName);
+  RD->startDefinition();
+
+  // 2. Populate fields with your underlying scalar type
+  for (const auto &Elem : Elements) {
+    FieldDecl *FD = FieldDecl::Create(Ctx, RD, Elem.Loc, Elem.Loc, Elem.Name,
+                                      TargetUnderlyingTy, /*TInfo=*/nullptr,
+                                      /*BitWidth=*/nullptr, /*Mutable=*/false,
+                                      ICIS_NoInit);
+    FD->setAccess(AS_public);
+    RD->addDecl(FD);
+  }
+  RD->completeDefinition();
+  DC->addDecl(RD);
+  DeclsInGroup.push_back(RD);
+
+  QualType AnonStructTy = Ctx.getCanonicalTagType(RD);
+  QualType ConstAnonStructTy = Ctx.getConstType(AnonStructTy);
+
+  // 3. Create the single, completely unambiguous primary VarDecl variable 'Fruit'
+  VarDecl *EnumContainerVD = VarDecl::Create(Ctx, DC, EnumLoc, EnumLoc, EnumName,
+                                             ConstAnonStructTy, /*TInfo=*/nullptr,
+                                             SC_Static);
+
+  // 4. Construct and perform semantic initialization list mapping
+  SmallVector<Expr *, 8> InitExprs;
+  for (const auto &Elem : Elements) {
+    if (Elem.InitExpr.isUsable()) {
+      InitExprs.push_back(Elem.InitExpr.get());
+    }
+  }
+
+  InitListExpr *ILE = new (Ctx) InitListExpr(Ctx, EnumLoc, InitExprs, EnumLoc, /*IsExplicit=*/false);
+  ILE->setType(ConstAnonStructTy);
+
+  Expr *InitExprPtr = ILE;
+  MultiExprArg BindArgs(InitExprPtr);
+
+  InitializationKind Kind = InitializationKind::CreateCopy(EnumLoc, EnumLoc);
+  InitializedEntity Entity = InitializedEntity::InitializeVariable(EnumContainerVD);
+
+  InitializationSequence InitSeq(*this, Entity, Kind, BindArgs,
+                         /*TopLevelOfInitList=*/false,
+                         /*TreatUnavailableAsInvalid=*/true);
+
+  ExprResult Result = InitSeq.Perform(*this, Entity, Kind, BindArgs);
+
+  if (!Result.isInvalid()) {
+    EnumContainerVD->setInit(Result.get());
+  } else {
+    EnumContainerVD->setInit(ILE);
+  }
+
+  EnumContainerVD->setAccess(AS_public);
+  DC->addDecl(EnumContainerVD);
+  DeclsInGroup.push_back(EnumContainerVD);
+
+  if (IsLocalScope) {
+    PushOnScopeChains(EnumContainerVD, S);
+  } else {
+    IdResolver.AddDecl(EnumContainerVD);
+  }
+
+  // 5. CRITICAL FIX: We do NOT create a TypedefDecl with the name 'Fruit'.
+  // This completely eliminates name ambiguity and token cache pollution!
+
+  // Cache container layout for downstream implicit dot (.banana) context lookups
+  RegisterC4EnumMember(EnumName, nullptr, EnumContainerVD);
+
+  return BuildDeclaratorGroup(DeclsInGroup);
+}
+
+
+
+
 
 
 // end C4
@@ -14236,6 +14368,18 @@ void Sema::AddInitializerToDecl(Decl *RealDecl, Expr *Init, bool DirectInit) {
     Diag(Init->getExprLoc(), diag::err_wasm_table_art) << 0;
     VDecl->setInvalidDecl();
     return;
+  }
+
+  // After building the initializer expression ExprResult Init
+  if (!Init->getType().isNull()) {
+    QualType VarTy = VDecl->getType();
+    if (!VarTy.isNull()) {
+      ExprResult Resolved = ResolveImplicitDot(Init->getExprStmt(), VarTy);
+      if (Resolved.isInvalid())
+        VDecl->setInvalidDecl();
+      else
+        Init = Resolved.get();
+    }
   }
 
   // C++11 [decl.spec.auto]p6. Deduce the type which 'auto' stands in for.
