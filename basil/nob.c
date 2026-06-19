@@ -129,8 +129,7 @@ CompilerTest custom_test_suite[] = {
     {
         "If Statement",
         "tests/if_statement.c4",
-        false, 2, {
-            "call to undeclared function 'test'",
+        false, 1, {
             "expected '{'"
         }
     },

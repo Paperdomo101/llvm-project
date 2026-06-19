@@ -1,0 +1,55 @@
+#include <stdio.h>
+
+ExitCode : int {
+    SUCCESS,
+    FAILURE,
+}
+
+typedef struct { unsigned char r, g, b, a; } Color;
+
+Palette : Color {
+    red = {255, 0, 0, 255},
+    blue = {0, 0, 255, 255},
+}
+
+print_color (Palette c) Color {
+    printf( "#%02x%02x%02x%02x\n", c.{r,g,b,a} )
+    return c;
+}
+
+
+me : { a = #, b, c }
+
+Fruit : {
+    apple  = 1 << #,
+    orange = 2,
+    banana = 1 << #,
+}
+
+print_fruit (Fruit fruit) {
+
+    printf("%d\n", fruit)
+}
+
+main () ExitCode {
+
+    int Fruit = 10;
+    printf("%d\n", Fruit)
+    // Fruit = Fruit.apple;
+
+    f := Fruit.apple;
+    a := f;
+    Fruit b = Fruit.banana;
+
+    print_fruit( 5 )
+
+    print_color( .red )
+
+    print_color( Palette.blue )    // resolves to Palette.blue
+
+    Palette p = Palette.red;       // assignment resolves
+
+    if (0) return ExitCode.FAILURE;
+
+    return ExitCode.SUCCESS;
+}
