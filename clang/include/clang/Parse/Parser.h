@@ -7509,28 +7509,6 @@ public:
   ParsedCondition ParseCondition(SourceLocation StmtLoc,
                                  Sema::ConditionKind Kind);
 
-  // C4: Detect custom enum definitions at global scope.
-
-  // Must be strictly followed by a colon. An open brace here is ignored.
-  bool isC4EnumDeclaration() {
-    return Tok.is(tok::identifier) && GetLookAheadToken(1).is(tok::colon);
-  }
-
-  // C4: Returns true if the token identifier represents a registered C4 Enum
-  bool isC4EnumTypeToken(const Token &T) {
-    if (!T.is(tok::identifier)) return false;
-    // Query Sema's LookupC4EnumMember tracking map
-    return Actions.LookupC4EnumMember(T.getIdentifierInfo(), nullptr) != nullptr;
-  }
-
-
-  OpaquePtr<DeclGroupRef> ParseC4EnumDeclaration();
-
-  unsigned ActiveC4EnumHashCounter;
-  unsigned GetActiveC4EnumHashCounter();
-  void IncrementC4EnumHashCounter();
-
-
   /// ParseIfStatement
   /// \verbatim
   ///       if-statement: [C99 6.8.4.1]

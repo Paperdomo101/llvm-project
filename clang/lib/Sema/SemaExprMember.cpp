@@ -1720,33 +1720,6 @@ ExprResult Sema::ActOnMemberAccessExpr(Scope *S, Expr *Base,
                                        tok::TokenKind OpKind, CXXScopeSpec &SS,
                                        SourceLocation TemplateKWLoc,
                                        UnqualifiedId &Id, Decl *ObjCImpDecl) {
-  // =========================================================================
-  // C4: REBUILD MEMBER ACCESS BASE EXPRESSION FOR C4 ENUMS (Fruit.apple)
-  // =========================================================================
-  // Fix: Check for nullptr instead of calling the non-existent .isInvalid()
-  if (Base) {
-    IdentifierInfo *BaseII = nullptr;
-    if (auto *DRE = dyn_cast<DeclRefExpr>(Base)) {
-      BaseII = DRE->getDecl()->getIdentifier();
-    } else if (auto *TE = dyn_cast_or_null<TypedefType>(Base->getType().getTypePtrOrNull())) {
-      BaseII = TE->getDecl()->getIdentifier();
-    }
-
-    if (BaseII) {
-      // Query your Sema map to find the global static struct instance variable container
-      if (VarDecl *EnumContainerVD = LookupC4EnumMember(BaseII, nullptr)) {
-        // Force-rebuild the base expression as a clean, unambiguous variable reference!
-        ExprResult CleanBase = BuildDeclRefExpr(EnumContainerVD, EnumContainerVD->getType(),
-                                                VK_LValue, Base->getExprLoc());
-        if (!CleanBase.isInvalid()) {
-          Base = CleanBase.get();
-        }
-      }
-    }
-  }
-  // =========================================================================
-
-
   // Warn about the explicit constructor calls Microsoft extension.
   if (getLangOpts().MicrosoftExt &&
       Id.getKind() == UnqualifiedIdKind::IK_ConstructorName)
