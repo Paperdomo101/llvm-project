@@ -154,6 +154,10 @@ CompilerTest custom_test_suite[] = {
         "Postfix '->' after GNU statement-expression macro (cross-macro spelling-line false positive)",
         "tests/macro_arrow.c4",
     },
+    // {
+    //     "^ pointers",
+    //     "tests/caret_pointers.c4",
+    // },
     {
         "Enumerations",
         "tests/enums.c4",
@@ -184,6 +188,14 @@ CompilerTest custom_test_suite[] = {
             "assignment count mismatch: expression yields 3 values, but 2 variables are provided",
             "passing 'float' to parameter of incompatible type 'Vector2'",
             "assignment count mismatch: expression yields 1 values, but 2 variables are provided",
+        }
+    },
+    {
+        "Qualified Type Inference",
+        "tests/qualified_type_inference.c4",
+        false, 2, {
+            "cannot assign to variable 'a' with const-qualified type 'const int'",
+            "note: variable 'a' declared const here",
         }
     },
     {

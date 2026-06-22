@@ -40,7 +40,9 @@
 
     ## strip
 
-    ## symbol aliasing
+    ## procedure aliasing
+    
+
 
     ## multiple returns
 

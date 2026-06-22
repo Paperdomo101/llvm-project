@@ -55,100 +55,141 @@ StmtResult Parser::ParseStatement(SourceLocation *TrailingElseLoc,
 
 
 
-// C4
-StmtResult Parser::ParseTypeInferredAssignment() {
-  // We already know Tok is an identifier from our lookahead check
-  SmallVector<IdentifierInfo*, 4> Idents;
-  SmallVector<SourceLocation, 4> IdLocs;
 
-  // 1. Loop and harvest all LHS identifiers
-  while (Tok.is(tok::identifier)) {
-    Idents.push_back(Tok.getIdentifierInfo());
-    IdLocs.push_back(ConsumeToken()); // Consumes identifier
 
-    if (Tok.is(tok::comma)) {
-      ConsumeToken(); // Consumes ','
-      if (Tok.isNot(tok::identifier)) {
-        Diag(Tok.getLocation(), diag::err_expected_ident_after_comma);
-        SkipUntil(tok::semi, StopAtSemi);
-        return StmtError();
-      }
-    } else {
-      break; // No more commas, break out of loop
+bool Parser::ParseLHSVar(LHSVarInfo &Out, bool SuppressDiags) {
+  Out = LHSVarInfo();
+
+  // Optional 'const'
+  if (Tok.is(tok::kw_const)) {
+    Out.IsConst = true;
+    ConsumeToken();
+  }
+
+  // Optional '[]' before identifier (C4)
+  if (Tok.is(tok::l_square) && NextToken().is(tok::r_square)) {
+    Out.Kind = ArrayKind::C4;
+    ConsumeBracket(); // '['
+    ConsumeBracket(); // ']'
+  }
+
+  // Expect an identifier
+  if (Tok.isNot(tok::identifier)) {
+    if (!SuppressDiags && !Tok.is(tok::eof))
+      Diag(Tok.getLocation(), diag::err_expected_identifier_after_qualifier);
+    return false;
+  }
+  Out.Ident = Tok.getIdentifierInfo();
+  Out.IdentLoc = ConsumeToken();
+
+  // Optional '[]' after identifier (C) – only if not already set
+  if (Out.Kind == ArrayKind::None) {
+    if (Tok.is(tok::l_square) && NextToken().is(tok::r_square)) {
+      Out.Kind = ArrayKind::C;
+      ConsumeBracket();
+      ConsumeBracket();
     }
   }
 
-  // 2. Now ensure the very next token is your custom ':=' operator
+  return true;
+}
+
+// C4
+
+bool Parser::isTypeInferredAssignment() {
+  TentativeParsingAction TPA(*this);
+
+  while (true) {
+    LHSVarInfo Var;
+    if (!ParseLHSVar(Var, /*SuppressDiags=*/true)) {
+      TPA.Revert();
+      return false;
+    }
+    if (Tok.is(tok::comma)) {
+      ConsumeToken();
+      continue;
+    }
+    bool result = Tok.is(tok::colonequal);
+    TPA.Revert();
+    return result;
+  }
+}
+
+StmtResult Parser::ParseTypeInferredAssignment() {
+  SmallVector<LHSVarInfo, 4> LHSVars;
+
+  while (true) {
+    LHSVarInfo Var;
+    if (!ParseLHSVar(Var, /*SuppressDiags=*/false)) {
+      SkipUntil(tok::semi, StopAtSemi);
+      return StmtError();
+    }
+    LHSVars.push_back(Var);
+
+    if (Tok.is(tok::comma)) {
+      ConsumeToken();
+      if (Tok.is(tok::eof)) {
+        Diag(Tok.getLocation(), diag::err_expected_expression);
+        return StmtError();
+      }
+      continue;
+    } else {
+      break;
+    }
+  }
+
+
+  // Now we must see ':='
   if (Tok.isNot(tok::colonequal)) {
     Diag(Tok.getLocation(), diag::err_expected_colon_equal);
     SkipUntil(tok::semi, StopAtSemi);
     return StmtError();
   }
-  SourceLocation ColonEqualLoc = ConsumeToken(); // Consumes ':='
+  SourceLocation ColonEqualLoc = ConsumeToken();
 
-  // 3. Parse the right hand side expression
+  // Parse RHS expression
   ExprResult InitExpr = ParseAssignmentExpression();
-
-  // CRITICAL PROTECTION GUARD: Stop null pointer dereferences immediately
-  // if the expression failed to parse or is empty.
   if (InitExpr.isInvalid() || !InitExpr.isUsable() || !InitExpr.get()) {
     SkipUntil(tok::semi, StopAtSemi);
     return StmtError();
   }
 
-  // 4. Implement Rule C Safety Logic
+  // ---- Destructuring / swizzle count logic (unchanged) ----
   size_t SwizzleCount = 1;
-
-  // Only count inner sub-elements if the user is explicitly trying to unpack
-  // into multiple variables (e.g., a, b := ...).
-  if (Idents.size() > 1) {
+  if (LHSVars.size() > 1) {
     Expr *E = InitExpr.get()->IgnoreImplicit();
-
-    // Unwrap explicit C casts or Compound Literals so we can see the multi-element structure
-    if (auto *CE = dyn_cast<CastExpr>(E)) {
+    if (auto *CE = dyn_cast<CastExpr>(E))
       E = CE->getSubExpr()->IgnoreImplicit();
-    } else if (auto *CLE = dyn_cast<CompoundLiteralExpr>(E)) {
+    else if (auto *CLE = dyn_cast<CompoundLiteralExpr>(E))
       E = CLE->getInitializer()->IgnoreImplicit();
-    }
 
-    if (auto *ILE = dyn_cast<InitListExpr>(E)) {
-        SwizzleCount = ILE->getNumInits();
-    }
-    else if (auto *PLE = dyn_cast<ParenListExpr>(E)) {
-        SwizzleCount = PLE->getNumExprs();
-    }
-    else {
-        SwizzleCount = 1;
-    }
-  } else {
-    // If there is exactly 1 variable (e.g., v3 := ... or c := ...),
-    // it always expects exactly 1 unified expression value.
-    SwizzleCount = 1;
+    if (auto *ILE = dyn_cast<InitListExpr>(E))
+      SwizzleCount = ILE->getNumInits();
+    else if (auto *PLE = dyn_cast<ParenListExpr>(E))
+      SwizzleCount = PLE->getNumExprs();
+    else
+      SwizzleCount = 1;
   }
 
-  // If the number of variables does not match the number of components, reject it!
-  if (Idents.size() != SwizzleCount) {
+  if (LHSVars.size() != SwizzleCount) {
     Diag(ColonEqualLoc, diag::err_swizzle_variable_count_mismatch)
-      << (int)SwizzleCount << (int)Idents.size()
-      << SourceRange(IdLocs.front(), InitExpr.get()->getEndLoc());
-
+      << (int)SwizzleCount << (int)LHSVars.size()
+      << SourceRange(LHSVars.front().IdentLoc, InitExpr.get()->getEndLoc());
     SkipUntil(tok::semi, StopAtSemi);
     return StmtError();
   }
 
-
-  // 5. Build the variables
-  if (Idents.size() == 1) {
-    // Prevent passing expressions with broken or null type fields to Sema
+  // ---- Call Sema actions ----
+  if (LHSVars.size() == 1) {
     if (InitExpr.get()->getType().isNull()) {
       SkipUntil(tok::semi, StopAtSemi);
       return StmtError();
     }
-    return Actions.ActOnTypeInferredAssignment(getCurScope(), Idents[0], IdLocs[0], InitExpr.get());
+    // Your updated ActOnTypeInferredAssignment expects LHSVarInfo
+    return Actions.ActOnTypeInferredAssignment(getCurScope(), LHSVars[0], InitExpr.get());
+  } else {
+    return Actions.ActOnMultiTypeInferredAssignment(getCurScope(), LHSVars, InitExpr.get());
   }
-
-  // Route multi-variable destructuring to our new Sema action
-  return Actions.ActOnMultiTypeInferredAssignment(getCurScope(), Idents, IdLocs, InitExpr.get());
 }
 
 
@@ -163,20 +204,18 @@ StmtResult Parser::ParseStatementOrDeclaration(StmtVector &Stmts,
 
   // Look ahead to see if this statement starts an inferred assignment.
   // We check if it's an identifier followed immediately by ':=' OR a comma ','
-  if (Tok.is(tok::identifier) &&
-     (GetLookAheadToken(1).is(tok::colonequal) || GetLookAheadToken(1).is(tok::comma))) {
 
+  if (Tok.is(tok::kw_const) || Tok.is(tok::l_square) || Tok.is(tok::identifier)) {
+      if (isTypeInferredAssignment()) {
         StmtResult AssignmentRes = ParseTypeInferredAssignment();
-
         if (AssignmentRes.isUsable()) {
           Stmts.push_back(AssignmentRes.get());
           return StmtResult(); // Return empty to prevent duplicate injection
         }
-
-        // CRITICAL FIX: Forcefully consume the line up to the semicolon on error.
-        // This guarantees that standard C fallthrough never triggers a crash.
+        // On error, consume up to semicolon and propagate error
         SkipUntil(tok::semi, StopAtSemi);
-        return AssignmentRes; // Return the error state immediately
+        return AssignmentRes;
+      }
     }
 
 

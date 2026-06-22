@@ -1,0 +1,157 @@
+
+main () int {
+
+    const a := 5;
+    a = 10; // error: a is const
+
+    [] c := {4, 6, 7} // infer a C4 bounds-checked array
+
+    c[] := {4, 6, 7} // infer a C array
+
+    b := {2, 4, 5} // if no type cast and all types are the same, infer a C4 array
+
+}
+
+
+/|| EVENTUALLY...
+
+// ============================================================================
+// Type‑Inferred Assignment Test Suite
+// ============================================================================
+
+// Helper struct for struct‑cast tests.
+struct Vector2 {
+    float x, y;
+};
+
+main () int {
+
+    // ------------------------------------------------------------------------
+    // 1. CONST
+    // ------------------------------------------------------------------------
+    const a := 5;               // a is const int
+    // a = 10;                  // ERROR: cannot assign to const variable
+
+    const b := {1, 2, 3};       // b is const C4 array (bounds‑checked)
+    // b[0] = 42;               // ERROR: b is const; element assignment may also be disallowed
+
+    // ------------------------------------------------------------------------
+    // 2. EXPLICIT ARRAY QUALIFIERS
+    // ------------------------------------------------------------------------
+    [] c := {4, 6, 7};          // C4 array (bounds‑checked) of int[3]
+    c := {1, 2};                // ERROR: cannot reassign (if c is not const? Actually c is not const, but maybe we allow? Check your semantics.)
+                                // But if we allow reassignment, it must be compatible type.
+
+    d[] := {4, 6, 7};           // C array (raw, unchecked) of int[3]
+
+    // Qualifier + const
+    const [] e := {1, 2, 3};    // const C4 array
+    // e[0] = 5;                // ERROR: const
+
+    const f[] := {1, 2, 3};     // const C array
+    // f[0] = 5;                // ERROR: const
+
+    // ------------------------------------------------------------------------
+    // 3. DEFAULT INFERENCE (no qualifier)
+    // ------------------------------------------------------------------------
+    g := {1, 2, 3};             // default: C4 array (since it's an array literal)
+    h := {1, 2, 3.0};           // ERROR: mixed types – cannot infer element type
+
+    // ------------------------------------------------------------------------
+    // 4. STRING LITERALS
+    // ------------------------------------------------------------------------
+    s := "hello";               // default: C4 array of char, size = 5 (excluding null)
+    s2 := "hello\n";            // C4 char[6] (including newline, excluding null)
+
+    // Explicit qualifiers with strings
+    [] str_c4 := "world";       // C4 array of char, size = 5
+    str_c[] := "world";         // C array of char[6] (includes null terminator)
+
+    // String with cast
+    s3 := (char[])"hello";      // explicit cast -> C array char[6] (no default C4)
+    s4 := (const char[])"hi";   // C array of const char[3]
+
+    // Wide strings (if supported)
+    // ws := L"wide";            // C4 array of wchar_t, size = 4
+
+    // ------------------------------------------------------------------------
+    // 5. COMPOUND LITERALS (explicit casts)
+    // ------------------------------------------------------------------------
+    pos := (Vector2){0, 0};     // struct, not array – type is Vector2
+    pos.x = 10;                 // OK, member access
+
+    arr := (int[]){1, 2, 3};    // explicit cast -> C array int[3] (not C4)
+    // arr is a C array, not bounds‑checked.
+
+    // Compound literal with qualifier forcing C4
+    [] arr_c4 := (int[]){4, 5, 6};   // C4 array, despite cast (LHS overrides)
+    arr_c4[] := (int[]){7, 8, 9};    // C array, LHS forces C
+
+    // Compound literal with const
+    const c_arr := (int[]){1, 2};     // const C array int[2]
+
+    // ------------------------------------------------------------------------
+    // 6. MULTI‑VARIABLE DESTRUCTURING (swizzle / tuple unpack)
+    // ------------------------------------------------------------------------
+    x, y := {10, 20};           // x = 10, y = 20 (both int)
+    // x, y, z := {1, 2};       // ERROR: count mismatch (3 vars vs 2 inits)
+
+    a, b := "hello", "world";   // a and b are C4 arrays of char (size 5 each)
+    // but careful: the RHS is a comma expression? Actually our parser expects
+    // a single expression, but if we support multi‑value RHS with comma, then it works.
+
+    // With qualifiers on individual variables
+    [] p, q[] := {1, 2}, {3, 4};   // p is C4 int[1], q is C int[1] (depending on syntax)
+    // Not sure if we support per‑variable qualifiers in destructuring; adjust as needed.
+
+    // Destructuring with compound literals
+    m, n := (int){5}, (int){6};     // m=5, n=6 (both int)
+    // But compound literal of scalar may not be needed.
+
+    // ------------------------------------------------------------------------
+    // 7. EDGE CASES AND ERRORS
+    // ------------------------------------------------------------------------
+    // Empty initializer list
+    // empty := {};              // ERROR: cannot infer element type from empty list
+
+    // Array qualifier on non‑array
+    // [] bad := 42;             // ERROR: array qualifier on non‑array type
+
+    // C qualifier on non‑array
+    // bad[] := 42;              // ERROR: array qualifier on non‑array type
+
+    // Mismatched LHS/RHS types after inference
+    // float_arr := {1, 2, 3};   // default C4 int[3]; if we later assign float? Not here.
+
+    // Using the variables to verify types (compile‑time checks)
+    // For example, sizeof should work:
+    // int sz = sizeof(c);       // should give size of C4 struct (includes data pointer + size)
+    // int sz2 = sizeof(d);      // should give 3 * sizeof(int) for C array
+
+    // Member access on C4 arrays? Not directly; you need to access .data or .size.
+    // If you have such fields, you can test them.
+    // int first = c.data[0];    // if C4 struct has __data field
+    // int len = c.__size;       // should be 3
+
+    // For C arrays, normal subscript works.
+    // d[1] = 42;
+
+    // Const with destructuring?
+    // const u, v := {1, 2};     // u and v are const int
+
+    // Nested arrays?
+    // matrix := {{1,2},{3,4}};  // default C4 array of C4 arrays? Or flat? Should define.
+
+    // ------------------------------------------------------------------------
+    // 8. STRING LITERAL WITH CAST AND QUALIFIER
+    // ------------------------------------------------------------------------
+    // Already covered above.
+
+    // ------------------------------------------------------------------------
+    // 9. MIXED WITH OTHER DECLARATIONS
+    // ------------------------------------------------------------------------
+    int normal_var = 10;        // traditional declaration works alongside.
+
+    return 0;
+}
+||/

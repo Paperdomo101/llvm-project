@@ -25,6 +25,7 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Frontend/OpenMP/OMPContext.h"
 #include "llvm/Support/SaveAndRestore.h"
+#include <clang/C4/C4Features.h>
 #include <optional>
 #include <stack>
 
@@ -6047,10 +6048,13 @@ private:
 
   enum class ParsedStmtContext;
 
-  StmtResult ParseTypeInferredAssignment();
 
   StmtResult ParseObjCAtStatement(SourceLocation atLoc,
                                   ParsedStmtContext StmtCtx);
+
+  // C4
+  bool isTypeInferredAssignment();
+  StmtResult ParseTypeInferredAssignment();
 
   /// \verbatim
   ///  objc-try-catch-statement:
@@ -7496,6 +7500,9 @@ public:
                                  SourceLocation &LParenLoc,
                                  SourceLocation &RParenLoc);
 
+
+  // C4: LHS of `:=` assignment
+  bool ParseLHSVar(LHSVarInfo &Out, bool SuppressDiags);
 
   // C4: Helper for parsing conditions (parenthesized or unparenthesized).
   struct ParsedCondition {

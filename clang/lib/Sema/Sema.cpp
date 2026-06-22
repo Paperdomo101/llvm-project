@@ -152,6 +152,156 @@ IdentifierInfo *Sema::InventAbbreviatedTemplateParameterTypeName(
 
 
 /// C4
+
+QualType Sema::getArrayTypeForInitList(InitListExpr *ILE) {
+  unsigned NumInits = ILE->getNumInits();
+  if (NumInits == 0)
+    return QualType(); // error: empty initializer not allowed here
+
+  // Determine the common element type (all must be same for now).
+  QualType FirstType = ILE->getInit(0)->getType();
+  for (unsigned i = 1; i < NumInits; ++i) {
+    QualType T = ILE->getInit(i)->getType();
+    // Simple check: exact same type. You can extend with usual conversions.
+    if (!Context.hasSameType(FirstType, T))
+      return QualType(); // error: type mismatch
+  }
+
+  // Create a constant array type with size = NumInits.
+  llvm::APInt Size(Context.getTypeSize(Context.getSizeType()), NumInits);
+  return Context.getConstantArrayType(FirstType, Size, nullptr,
+                                      ArraySizeModifier::Normal, 0);
+}
+
+/// Checks if a type is a C4 bounds‑checked array (struct with the attribute).
+bool Sema::isC4ArrayType(QualType T) const {
+  if (auto *RT = T->getAs<RecordType>()) {
+    RecordDecl *RD = RT->getDecl();
+    if (RD->hasAttr<C4BoundsCheckedArrayAttr>())
+      return true;
+  }
+  return false;
+}
+
+
+Expr* Sema::BuildC4ArrayFromStringLiteral(StringLiteral *SL, QualType C4Type) {
+  if (!isC4ArrayType(C4Type)) return nullptr;
+
+  RecordDecl *RD = C4Type->getAs<RecordType>()->getDecl();
+  FieldDecl *DataField = nullptr, *SizeField = nullptr;
+  for (auto *Field : RD->fields()) {
+    if (Field->getName() == C4_ARRAY_DATA_FIELD)
+      DataField = Field;
+    else if (Field->getName() == C4_ARRAY_SIZE_FIELD)
+      SizeField = Field;
+  }
+  if (!DataField || !SizeField) return nullptr;
+
+  // 1. Build __data pointer: array-to-pointer decay of the string literal.
+  QualType ElementTy = Context.getAsArrayType(SL->getType())->getElementType();
+  QualType PtrTy = Context.getPointerType(ElementTy);
+  Expr *DataExpr = ImplicitCastExpr::Create(
+      Context,
+      PtrTy,
+      CK_ArrayToPointerDecay,
+      SL,
+      /*BasePath=*/nullptr,
+      VK_PRValue,
+      FPOptionsOverride()
+  );
+
+  // 2. Build __size constant: length excluding null terminator.
+  uint64_t Len = SL->getLength();
+  QualType SizeTy = Context.getSizeType();
+  Expr *SizeExpr = IntegerLiteral::Create(
+      Context,
+      llvm::APInt(Context.getTypeSize(SizeTy), Len),
+      SizeTy,
+      SL->getBeginLoc()
+  );
+
+  // 3. Create InitListExpr for the two fields (in order of declaration).
+  SmallVector<Expr*, 2> FieldInits = {DataExpr, SizeExpr};
+  SourceLocation Loc = SL->getBeginLoc();
+  // Correct constructor: (ASTContext&, SourceLocation, ArrayRef<Expr*>, SourceLocation, bool)
+  InitListExpr *ILE = new (Context) InitListExpr(Context, Loc, FieldInits, Loc, /*Synthetic=*/false);
+  ILE->setType(C4Type);
+
+  // 4. Wrap in a CompoundLiteralExpr to give it the proper type.
+  TypeSourceInfo *TSI = Context.getTrivialTypeSourceInfo(C4Type);
+  return new (Context) CompoundLiteralExpr(Loc, TSI, C4Type, VK_LValue, ILE, /*IsFileScope=*/false);
+}
+
+
+
+/// For a string literal, returns the element type (char, wchar_t, etc.)
+/// and the number of characters excluding the null terminator.
+std::pair<QualType, uint64_t> Sema::getStringLiteralInfo(StringLiteral *SL) {
+  QualType Ty = SL->getType();
+  const ArrayType *AT = Context.getAsArrayType(Ty);
+  if (!AT) {
+    // Should never happen for a string literal, but handle gracefully.
+    return {QualType(), 0};
+  }
+  QualType CharType = AT->getElementType();
+  uint64_t Len = SL->getLength(); // number of characters excluding null terminator
+  return {CharType, Len};
+}
+
+/// Extracts the element type from a C4 array struct.
+/// Returns null QualType if T is not a C4 array.
+QualType Sema::getElementTypeFromC4Array(QualType T) const {
+  if (!isC4ArrayType(T)) return QualType();
+  auto *RT = T->getAs<RecordType>();
+  RecordDecl *RD = RT->getDecl();
+  // Find the __data field; its type is a pointer to the element type.
+  for (auto *Field : RD->fields()) {
+    if (Field->getName() == C4_ARRAY_DATA_FIELD) {
+      QualType PtrTy = Field->getType();
+      if (auto *PT = PtrTy->getAs<PointerType>())
+        return PT->getPointeeType();
+    }
+  }
+  return QualType();
+}
+
+/// Applies an array qualifier to a type.
+/// - For C4: converts an array type to a C4 struct; if already C4, leaves unchanged.
+/// - For C: converts a C4 struct back to a plain array type (if possible); leaves array as is.
+/// - Otherwise errors.
+QualType Sema::ApplyArrayQualifier(QualType Type, ArrayKind Kind) {
+  if (Kind == ArrayKind::None)
+    return Type;
+
+  if (Kind == ArrayKind::C4) {
+    // Already C4? Keep it.
+    if (isC4ArrayType(Type))
+      return Type;
+    // Must be an array type.
+    if (!Type->isArrayType()) {
+      return QualType(); // error
+    }
+    const ArrayType *AT = Context.getAsArrayType(Type);
+    QualType ElementTy = AT->getElementType();
+    // Use your cache to get the C4 struct type.
+    return GetOrCreateC4ArrayType(ElementTy);
+  } else { // ArrayKind::C
+    // Already a plain array? Keep it.
+    if (Type->isArrayType())
+      return Type;
+    // If it's a C4 struct, try to convert back to a plain array.
+    if (isC4ArrayType(Type)) {
+      // Extract element type and size (we need the size).
+      // This is tricky; you might not have the size info at this point.
+      // For simplicity, we error here – explicit C array cannot be assigned from C4.
+      // Alternatively, you could extract the size from the initializer later.
+      return QualType(); // error: cannot convert C4 to C automatically
+    }
+    // Neither array nor C4 → error
+    return QualType();
+  }
+}
+
 QualType Sema::GetOrCreateC4ArrayType(QualType ElementTy) {
   QualType CanonElTy = Context.getCanonicalType(ElementTy);
   auto It = C4ArrayTypeCache.find(CanonElTy);

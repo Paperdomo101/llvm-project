@@ -9,10 +9,10 @@ add (int a, b) int {
     return a + b;
 }
 
-Vector2 *Vector2_add (Vector2 *a, b)
+&Vector2 Vector2_add (&Vector2 a, Vector2 b)
 {
-    a->x += b.x;
-    a->y += b.y;
+    a.x += b.x;
+    a.y += b.y;
     return a;
 }
 
@@ -36,8 +36,8 @@ main (int argc, char **argv) int {
         "oof!\n"::printf()
     }
 
-    pos := (Vector2){0, 0};
-    &pos::Vector2_add( {40, 50} ); // <-- type inferred
+    pos := (Vector2){0, 0}
+    pos::Vector2_add( {40, 50} ); // <-- type inferred
 
     struct Point { int x; int y; } p = { 2, 3 };
 
@@ -100,7 +100,7 @@ main (int argc, char **argv) int {
         )
 
         "This is so fucking cool holy"::DrawText( pos.{x, y}, scale * 10, RED )
-
+        b.items::DrawText(20, 20, 40, PINK)
 
         DrawLineEx( pos, pos + vel, scale, YELLOW )
 

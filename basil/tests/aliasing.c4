@@ -1,0 +1,26 @@
+
+
+typedef struct {
+    size_t count, capacity;
+    int *items;
+} IntStack;
+
+typedef struct {
+    size_t count, capacity;
+    float *items;
+} FloatStack;
+
+IntStackPush / push (&IntStack stack, int value) {...}
+
+FloatStackPush / push (&FloatStack stack, float value) {...}
+
+main () int {
+    IntStack stack = {}
+
+    IntStackPush(stack, 5) // explicit
+    push(stack, 5)         // alias
+    stack::push(5)         // pairs nicely with the method-esque invokation
+
+    FloatStack stackf = {}
+    stackf::push(3.513)    // no conflict with intstack
+}

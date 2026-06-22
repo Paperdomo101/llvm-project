@@ -277,7 +277,24 @@ def err_cannot_take_address_of_reference_param : Error<
   "doing so violates language safety guarantees">;
 def err_capacity_of_invalid_type : Error<
   "'##.' cannot be applied to type %0">;
-
+// C4 type inference
+def err_array_qualifier_on_non_array : Error<
+  "array qualifier '[]' cannot be applied to non-array type">;
+def err_cannot_infer_type : Error<
+  "cannot infer type from expression of class %0">;
+def err_swizzle_requires_initlist : Error<
+  "multi-variable assignment requires an initializer list or parenthesized list on the RHS">;
+def err_invalid_expression : Error<"invalid initializer expression">;
+def err_cannot_create_c4_array : Error<
+  "failed to create a C4 bounds‑checked array type">;
+def err_c4_to_c_conversion : Error<
+  "cannot implicitly convert C4 array to raw C array; use explicit cast">;
+def err_expected_identifier_after_qualifier : Error<
+  "expected identifier after array qualifier">;
+def err_typecheck_missing_array_element_type : Error<
+  "cannot infer element type for array initializer">;
+def err_cannot_convert_string_to_c4 : Error<
+  "cannot convert string literal to bounds‑checked array">;
 
 // C99 Designated Initializers
 def ext_designated_init : Extension<

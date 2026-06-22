@@ -6981,117 +6981,219 @@ Sema::CheckTypedefForVariablyModifiedType(Scope *S, TypedefNameDecl *NewTD) {
   }
 }
 
-//// C4 FEATURE ////
-StmtResult Sema::ActOnTypeInferredAssignment(
-    Scope *S,
-    IdentifierInfo *Name,
-    SourceLocation NameLoc,
-    Expr *InitExpr) {
+//// C4 FEATURES ////
 
+/// Returns true if the expression is an array literal (e.g., {1,2,3} or (int[]){1,2,3})
+static bool isArrayLiteral(Expr *E) {
+  E = E->IgnoreParenCasts();
+  if (isa<InitListExpr>(E))
+    return true;
+  if (isa<StringLiteral>(E))
+    return true;
+  if (auto *CLE = dyn_cast<CompoundLiteralExpr>(E))
+    return isArrayLiteral(CLE->getInitializer()); // recurse
+  return false;
+}
+
+StmtResult Sema::ActOnTypeInferredAssignment(Scope *S, LHSVarInfo Var, Expr *InitExpr) {
   if (!InitExpr) {
-    llvm::errs() << "InitExpr is NULL\n";
+    Diag(Var.IdentLoc, diag::err_invalid_expression);
     return StmtError();
   }
 
-  // InitExpr->dump();
-  // llvm::errs() << InitExpr->getStmtClassName() << "\n";
-  // InitExpr->getType().dump();
-
-  // 1. Rule C Validation: Prevent multi-element swizzles/tuples from binding to a single variable
-  // If your custom swizzle uses an InitListExpr under the hood:
+  // Disallow multi‑element tuples
   Expr *E = InitExpr->IgnoreImplicit();
-
   if (auto *PLE = dyn_cast<ParenListExpr>(E)) {
-      if (PLE->getNumExprs() > 1) {
-          Diag(NameLoc, diag::err_swizzle_single_variable_tuple);
-          return StmtError();
-      }
-  }
-
-  // 2. Deduce the target type directly from the evaluated initializer expression
-  QualType InferredType = InitExpr->getType();
-
-  if (InferredType.isNull()) {
-      llvm::errs() << "Cannot infer type from expression class "
-                   << InitExpr->getStmtClassName()
-                   << "\n";
+    if (PLE->getNumExprs() > 1) {
+      Diag(Var.IdentLoc, diag::err_swizzle_single_variable_tuple);
       return StmtError();
+    }
   }
 
-  // 3. Resolve the active declaration context (where the variable is being defined)
-  DeclContext *DC = CurContext;
+  QualType InferredType;
+  bool HasCast = false;
 
-  // 4. Create the VarDecl directly using the AST Context
-  VarDecl *NewVD = VarDecl::Create(
-      Context, DC, NameLoc, NameLoc, Name, InferredType,
-      Context.getTrivialTypeSourceInfo(InferredType, NameLoc), SC_None);
+  // 1. Compound literal: use its type directly, and keep it as the initializer.
+  if (auto *CLE = dyn_cast<CompoundLiteralExpr>(E)) {
+    HasCast = true;
+    InferredType = CLE->getType();
+    if (InferredType.isNull()) {
+      Diag(Var.IdentLoc, diag::err_cannot_infer_type) << InitExpr->getStmtClassName();
+      return StmtError();
+    }
+    // Do NOT replace InitExpr; we will use the CompoundLiteralExpr itself.
+  }
+  // 2. Naked InitListExpr – synthesize an array type.
+  else if (auto *ILE = dyn_cast<InitListExpr>(E)) {
+    InferredType = getArrayTypeForInitList(ILE);
+    if (InferredType.isNull()) {
+      Diag(ILE->getExprLoc(), diag::err_typecheck_missing_array_element_type);
+      return StmtError();
+    }
+  }
+  // 3. StringLiteral – treat as array with length excluding null.
+  else if (auto *SL = dyn_cast<StringLiteral>(E)) {
+    auto [CharType, Len] = getStringLiteralInfo(SL);
+    llvm::APInt Size(Context.getTypeSize(Context.getSizeType()), Len);
+    InferredType = Context.getConstantArrayType(CharType, Size, nullptr,
+                                                ArraySizeModifier::Normal, 0);
+    // Keep the StringLiteral as the initializer.
+  }
+  // 4. All other expressions – use their type.
+  else {
+    InferredType = InitExpr->getType();
+    if (InferredType.isNull()) {
+      Diag(Var.IdentLoc, diag::err_cannot_infer_type) << InitExpr->getStmtClassName();
+      return StmtError();
+    }
+  }
 
-  // Mark the variable as a local block auto variable
+  // 5. Apply array qualifier (explicit or default).
+  QualType FinalType = InferredType;
+  if (Var.Kind != ArrayKind::None) {
+    QualType Applied = ApplyArrayQualifier(InferredType, Var.Kind);
+    if (Applied.isNull()) {
+      Diag(Var.IdentLoc, diag::err_array_qualifier_on_non_array);
+      return StmtError();
+    }
+    FinalType = Applied;
+  } else {
+    // No explicit qualifier: default to C4 ONLY if no cast and it's an array literal.
+    if (!HasCast && InferredType->isArrayType() && isArrayLiteral(InitExpr)) {
+      QualType Applied = ApplyArrayQualifier(InferredType, ArrayKind::C4);
+      if (Applied.isNull()) {
+        Diag(Var.IdentLoc, diag::err_cannot_create_c4_array);
+        return StmtError();
+      }
+      FinalType = Applied;
+    }
+    // Otherwise keep InferredType (e.g., struct from cast, or non‑array)
+  }
+
+  // 6. Apply const if requested.
+  if (Var.IsConst)
+    FinalType = Context.getConstType(FinalType);
+
+  // 7. Special conversion: if final type is C4 and initializer is a StringLiteral,
+  //    convert to a C4 struct initializer (as before). But only if the initializer
+  //    is still a StringLiteral (i.e., we didn't have a cast).
+  if (isC4ArrayType(FinalType)) {
+    Expr *Inner = InitExpr->IgnoreImplicit();
+    if (auto *SL = dyn_cast<StringLiteral>(Inner)) {
+      Expr *Converted = BuildC4ArrayFromStringLiteral(SL, FinalType);
+      if (!Converted) {
+        Diag(SL->getBeginLoc(), diag::err_cannot_convert_string_to_c4);
+        return StmtError();
+      }
+      InitExpr = Converted;
+    }
+  }
+
+  // 8. Create VarDecl.
+  VarDecl *NewVD = VarDecl::Create(Context, CurContext, Var.IdentLoc, Var.IdentLoc,
+                                   Var.Ident, FinalType,
+                                   Context.getTrivialTypeSourceInfo(FinalType, Var.IdentLoc),
+                                   SC_None);
   NewVD->setLocalExternDecl();
-
-  // 5. Register the variable into the active scope so future code can look it up
   PushOnScopeChains(NewVD, S);
-
-  // 6. Attach the initializer expression to our fresh variable declaration
   AddInitializerToDecl(NewVD, InitExpr, /*DirectInit=*/false);
-
-  // 7. Wrap the declaration in a standard C statement group wrapper
-  return ActOnDeclStmt(ConvertDeclToDeclGroup(NewVD), NameLoc, InitExpr->getEndLoc());
+  return ActOnDeclStmt(ConvertDeclToDeclGroup(NewVD), Var.IdentLoc, InitExpr->getEndLoc());
 }
 
+
 StmtResult Sema::ActOnMultiTypeInferredAssignment(Scope *S,
-                                                 ArrayRef<IdentifierInfo*> Idents,
-                                                 ArrayRef<SourceLocation> Locs,
+                                                 ArrayRef<LHSVarInfo> Vars,
                                                  Expr *InitExpr) {
-  if (!InitExpr) return StmtError();
+  if (!InitExpr) {
+    Diag(Vars.front().IdentLoc, diag::err_invalid_expression);
+    return StmtError();
+  }
 
-  size_t VarCount = Idents.size();
-  SmallVector<Decl*, 4> DeclsInGroup;
   Expr *E = InitExpr->IgnoreImplicit();
+  bool isInitList = isa<InitListExpr>(E);
+  bool isParenList = isa<ParenListExpr>(E);
+  if (!isInitList && !isParenList) {
+    Diag(Vars.front().IdentLoc, diag::err_swizzle_requires_initlist);
+    return StmtError();
+  }
 
-  // We loop over each variable the user provided (e.g., 'n', 'm', then 'o')
-  for (size_t i = 0; i < VarCount; ++i) {
+  unsigned NumComponents = isInitList ? cast<InitListExpr>(E)->getNumInits()
+                                      : cast<ParenListExpr>(E)->getNumExprs();
+  if (Vars.size() != NumComponents) {
+    Diag(Vars.front().IdentLoc, diag::err_swizzle_variable_count_mismatch)
+      << (int)NumComponents << (int)Vars.size();
+    return StmtError();
+  }
+
+  SmallVector<Decl*, 4> DeclsInGroup;
+  for (unsigned i = 0; i < Vars.size(); ++i) {
+    Expr *SubInitExpr = isInitList ? cast<InitListExpr>(E)->getInit(i)
+                                   : cast<ParenListExpr>(E)->getExpr(i);
+    if (!SubInitExpr) { /* error */ }
+
     QualType ElementType;
-    Expr *SubInitExpr = nullptr; // Track the unique sub-expression for this variable
+    bool HasCast = false;
 
-    // Extract the precise type AND the sub-expression for the current index
-    if (auto *ILE = dyn_cast<InitListExpr>(E)) {
-      ElementType = ILE->getInit(i)->getType();
-      SubInitExpr = ILE->getInit(i);
-    } else if (auto *PLE = dyn_cast<ParenListExpr>(E)) {
-      ElementType = PLE->getExpr(i)->getType();
-      SubInitExpr = PLE->getExpr(i);
+    // If this sub‑expr is a compound literal, use its type directly.
+    if (auto *CLE = dyn_cast<CompoundLiteralExpr>(SubInitExpr->IgnoreImplicit())) {
+      HasCast = true;
+      ElementType = CLE->getType();
+      // Keep SubInitExpr as the compound literal.
+    } else if (auto *SL = dyn_cast<StringLiteral>(SubInitExpr->IgnoreImplicit())) {
+      auto [CharType, Len] = getStringLiteralInfo(SL);
+      llvm::APInt Size(Context.getTypeSize(Context.getSizeType()), Len);
+      ElementType = Context.getConstantArrayType(CharType, Size, nullptr,
+                                                 ArraySizeModifier::Normal, 0);
+    } else if (auto *SubILE = dyn_cast<InitListExpr>(SubInitExpr->IgnoreImplicit())) {
+      ElementType = getArrayTypeForInitList(SubILE);
+      if (ElementType.isNull()) { /* error */ }
     } else {
-      ElementType = InitExpr->getType();
-      SubInitExpr = InitExpr; // Fallback
+      ElementType = SubInitExpr->getType();
+      if (ElementType.isNull()) { /* error */ }
     }
 
-    if (ElementType->isVoidType()) {
-      Diag(Locs[i], diag::err_typecheck_decl_incomplete_type) << ElementType;
-      return StmtError();
+    // Apply qualifiers, default C4, const, etc. using HasCast flag.
+    QualType FinalType = ElementType;
+    if (Vars[i].Kind != ArrayKind::None) {
+      QualType Applied = ApplyArrayQualifier(ElementType, Vars[i].Kind);
+      if (Applied.isNull()) { /* error */ }
+      FinalType = Applied;
+    } else {
+      if (!HasCast && ElementType->isArrayType() && isArrayLiteral(SubInitExpr)) {
+        QualType Applied = ApplyArrayQualifier(ElementType, ArrayKind::C4);
+        if (Applied.isNull()) { /* error */ }
+        FinalType = Applied;
+      }
     }
 
-    // Create the VarDecl using the unique identifier and its structural type
-    VarDecl *NewVD = VarDecl::Create(
-        Context, CurContext, Locs[i], Locs[i], Idents[i], ElementType,
-        Context.getTrivialTypeSourceInfo(ElementType, Locs[i]), SC_None);
+    if (Vars[i].IsConst)
+      FinalType = Context.getConstType(FinalType);
 
+    if (isC4ArrayType(FinalType)) {
+      Expr *SubE = SubInitExpr->IgnoreImplicit();
+      if (auto *SL = dyn_cast<StringLiteral>(SubE)) {
+        Expr *Converted = BuildC4ArrayFromStringLiteral(SL, FinalType);
+        if (!Converted) {
+          Diag(SL->getBeginLoc(), diag::err_cannot_convert_string_to_c4);
+          return StmtError();
+        }
+        SubInitExpr = Converted;
+      }
+    }
+
+    VarDecl *NewVD = VarDecl::Create(Context, CurContext, Vars[i].IdentLoc, Vars[i].IdentLoc,
+                                     Vars[i].Ident, FinalType,
+                                     Context.getTrivialTypeSourceInfo(FinalType, Vars[i].IdentLoc),
+                                     SC_None);
     NewVD->setLocalExternDecl();
     PushOnScopeChains(NewVD, S);
-
-    // CRITICAL FIX: Pass the specific indexed sub-expression (SubInitExpr)
-    // instead of the root multi-component InitExpr.
-    // This tells LLVM to generate code specifically for 'z' on index 0, 'y' on index 1, etc.
     AddInitializerToDecl(NewVD, SubInitExpr, /*DirectInit=*/false);
-
     DeclsInGroup.push_back(NewVD);
   }
 
-  // Wrap our collection of fresh variables into a standard C declaration statement
   DeclGroupRef DG = DeclGroupRef::Create(Context, DeclsInGroup.data(), DeclsInGroup.size());
-  return ActOnDeclStmt(DeclGroupPtrTy::make(DG), Locs.front(), InitExpr->getEndLoc());
+  return ActOnDeclStmt(DeclGroupPtrTy::make(DG), Vars.front().IdentLoc, InitExpr->getEndLoc());
 }
-
 
 // end C4
 

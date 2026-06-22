@@ -21,6 +21,10 @@
 /GRTAGS
 /GSYMS
 /GTAGS
+include/CMakeFiles
+include/llvm
+include/CMakeCache.txt
+*.cmake
 .gitusers
 autom4te.cache
 cscope.files

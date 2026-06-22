@@ -70,6 +70,7 @@
 #include "clang/Sema/SemaRISCV.h"
 #include "clang/Sema/TypoCorrection.h"
 #include "clang/Sema/Weak.h"
+#include "clang/C4/C4Features.h"
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/BitmaskEnum.h"
@@ -2596,6 +2597,20 @@ public:
 
   // C4
   llvm::DenseMap<QualType, QualType> C4ArrayTypeCache;
+
+
+  QualType getArrayTypeForInitList(InitListExpr *ILE);
+
+  bool isC4ArrayType(QualType T) const;
+
+  /// Build a CompoundLiteralExpr of the C4 array struct type from a StringLiteral.
+  /// The struct's __data points to the string, and __size is set to length (excluding null).
+  Expr* BuildC4ArrayFromStringLiteral(StringLiteral *SL, QualType C4Type);
+  std::pair<QualType, uint64_t> getStringLiteralInfo(StringLiteral *SL);
+
+  QualType getElementTypeFromC4Array(QualType T) const;
+  QualType ApplyArrayQualifier(QualType Type, ArrayKind Kind);
+
   QualType GetOrCreateC4ArrayType(QualType ElementTy);
 
   ExprResult ActOnTypeSizeIntrinsic(ParsedType Ty, SourceLocation OpLoc);
@@ -15839,12 +15854,8 @@ public:
 
 
   // C4
-  StmtResult ActOnTypeInferredAssignment(Scope *S, IdentifierInfo *Name,
-                                             SourceLocation NameLoc, Expr *InitExpr);
-  StmtResult ActOnMultiTypeInferredAssignment(Scope *S,
-                                                 ArrayRef<IdentifierInfo*> Idents,
-                                                 ArrayRef<SourceLocation> Locs,
-                                                 Expr *InitExpr);
+  StmtResult ActOnTypeInferredAssignment(Scope *S, LHSVarInfo Var, Expr *InitExpr);
+  StmtResult ActOnMultiTypeInferredAssignment(Scope *S, ArrayRef<LHSVarInfo> Vars, Expr *InitExpr);
 
   ///@}
 };
