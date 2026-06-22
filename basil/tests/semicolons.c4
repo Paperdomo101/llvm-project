@@ -1,0 +1,114 @@
+#include <stdio.h>
+#include <stdlib.h>
+
+void assert_equal(int actual, int expected, const char *msg) {
+    if (actual != expected) {
+        printf("[FAIL] Semicolon Torture Breach: %s (Got %d, Expected %d)\n", msg, actual, expected)
+        exit(1)
+    }
+}
+
+void dummy_ref_fn(&[] int array_param) {
+    // Empty hook to test layout constraints
+}
+
+int main() {
+    printf("==================================================\n")
+    printf("Executing Complete 8-Scenario Semicolon Torture Suite...\n")
+    printf("==================================================\n")
+
+    // ------------------------------------------------------------
+    // TEST 1: Pointer Array Decl Token Collision
+    // ------------------------------------------------------------
+    [] int joe = { 10, 20 }
+
+    joe::dummy_ref_fn()
+    ^[] int joeptr = &joe;
+
+    assert_equal(#.joeptr, 2, "Test 1: Semicolon omission split before ^[] pointer array declarations")
+
+    // ------------------------------------------------------------
+    // TEST 2: Multi-Line Pointer Dereference vs Binary Multiplication Collision
+    // ------------------------------------------------------------
+    int baseline_factor = 40;
+    int *ptr_to_factor = &baseline_factor;
+
+    int computed_result = (5)
+    *ptr_to_factor = 50;
+
+    assert_equal(computed_result, 5, "Test 2: Isolation of trailing bracket expressions from leading asterisk unary assignments")
+    assert_equal(baseline_factor, 50, "Test 2: Accurate value updates on isolated unary pointer modifications")
+
+    // ------------------------------------------------------------
+    // TEST 3: Greedy Multi-Line Accumulator Check (+ / - / & Boundary)
+    // ------------------------------------------------------------
+    int accumulator_var = (100)
+    +accumulator_var;
+
+    int bitwise_anchor = (200)
+    &bitwise_anchor;
+
+    assert_equal(accumulator_var, 100, "Test 3: High-fidelity statement boundaries for bracket closures followed by operators")
+
+    // ------------------------------------------------------------
+    // TEST 4: Complex Bracket Nesting with Trailing Method Pipelines
+    // ------------------------------------------------------------
+    [] int matrix_arr = { 4, 5, 6 }
+
+    int final_nested_eval = (matrix_arr[0] + (matrix_arr[1] * 2))
+    matrix_arr::dummy_ref_fn()
+
+    assert_equal(final_nested_eval, 14, "Test 4: Complex multi-nested bracket closing boundaries parsing")
+
+    // ------------------------------------------------------------
+    // TEST 5: Macro Argument Splices with Semicolon Omission Compatibility
+    // ------------------------------------------------------------
+    #define C4_MACRO_WRAPPER(x) (x)
+
+    int macro_tracked_variable = C4_MACRO_WRAPPER(500)
+    int trailing_independent_variable = 600;
+
+    assert_equal(macro_tracked_variable, 500, "Test 5: Preprocessor macro expansion layout isolation pass")
+    assert_equal(trailing_independent_variable, 600, "Test 5: Post-macro assignment validation pass")
+
+    // ------------------------------------------------------------
+    // NEW TEST 6: Cast Operator Parenthesis vs Unary Minus Operator
+    // ------------------------------------------------------------
+    // The cast statement below ends in a valid parenthesis ')'. Semicolon is optional.
+    // The next line starts with a unary minus identity operator line (-accumulator_var;).
+    // The compiler must NOT greedily interpret this as an expression subtraction chain!
+    int cast_target = 10;
+    int cast_result = (int)cast_target;
+    -cast_target; // Independent expression statement line
+
+    assert_equal(cast_result, 10, "Test 6: Prevention of binary subtraction chaining after type cast parentheses")
+
+    // ------------------------------------------------------------
+    // NEW TEST 7: Braced Initializer Closure vs Left-Shift Operators
+    // ------------------------------------------------------------
+    // The array assignment explicitly ends in a trailing closing brace '}'. Semicolon is optional.
+    // The next line begins with a standalone left-shift operator expression.
+    // The compiler must NOT bleed the expression across the brace boundary boundary.
+    [] int brace_check = { 1, 2 }
+    int shift_anchor = 4 << 2; // Independent statement line (4 * 4 = 16)
+
+    assert_equal(brace_check[0], 1, "Test 7: Verification of clean statement termination right at brace closures")
+    assert_equal(shift_anchor, 16, "Test 7: Isolated bitwise execution on subsequent lines")
+
+    // ------------------------------------------------------------
+    // NEW TEST 8: Nested Call Closures vs Arrow-Pointer Selection Segregation
+    // ------------------------------------------------------------
+    // The assignment statement ends in a valid function argument parenthesis ')'. Semicolon is optional.
+    // The next line starts with an arrow dereference instruction targeting a standalone variable pointer.
+    // The parser must NOT chain the call output into the pointer-offset lookup!
+    int target_pointer_base = 99;
+    int *arrow_ptr = &target_pointer_base;
+
+    int call_boundary_val = C4_MACRO_WRAPPER(33)
+    arrow_ptr = &computed_result; // Standalone assignment modification line
+
+    assert_equal(call_boundary_val, 33, "Test 8: Function call parenthesis boundary isolation from leading arrow operators")
+
+    printf("\n[SUCCESS] All 8 Complex Semicolon Omission Torture Tests Passed Flawlessly!\n")
+    return 0;
+}

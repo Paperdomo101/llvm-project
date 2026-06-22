@@ -7,7 +7,7 @@
 cmake -G Ninja ../llvm -DCMAKE_BUILD_TYPE=Release -DLLVM_ENABLE_PROJECTS="clang;clang-tools-extra"
 
 == mac ==
-cmake -G Ninja ../llvm -DDEFAULT_SYSROOT="$(xcrun --show-sdk-path)" -DCMAKE_BUILD_TYPE=Release -DLLVM_ENABLE_PROJECTS="clang;clang-tools-extra;lld" -DLLVM_TARGETS_TO_BUILD="WebAssembly;X86;AArch64" -DLLVM_ENABLE_ASSERTIONS=ON
+cmake -G Ninja ../llvm -DDEFAULT_SYSROOT="$(xcrun --show-sdk-path)" -DCMAKE_BUILD_TYPE=Release -DLLVM_ENABLE_PROJECTS="clang;clang-tools-extra;lld" -DLLVM_TARGETS_TO_BUILD="WebAssembly;X86;AArch64" -DLLVM_ENABLE_ASSERTIONS=ON  -DLLVM_ENABLE_RUNTIMES="compiler-rt"
 
 == core2duo mac ==
 cmake -G Ninja ../llvm \

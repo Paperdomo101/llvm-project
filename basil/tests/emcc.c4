@@ -1,0 +1,11 @@
+int main() {
+    a := (char(*)[4])0; // this is fine
+    b := (char*)0;      // also fine
+
+    // BUG: int[] becomes int
+    c := (int[]){1,2,3} // Excess elements in scalar initializer
+
+    // BUG: char[] becomes char
+    p := (char[]){ 'a', '\0' }; // Excess elements in scalar initializer
+
+}

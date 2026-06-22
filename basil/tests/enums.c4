@@ -1,0 +1,73 @@
+typedef unsigned long size_t;
+
+// =========================================================================
+// 1. FIXED TYPE ENUM DEFINITIONS (C23 / C++ Extensions)
+// =========================================================================
+
+// Small signed 8-bit container
+enum SmallSignedEnum : signed char {
+    A = 1,
+    B = 2
+};
+
+// Small unsigned 8-bit container
+enum SmallUnsignedEnum : unsigned char {
+    X = 10,
+    Y = 20,
+    Z = 30
+};
+
+// Explicit long long container (64-bit bounds checking target)
+enum HugeEnum : unsigned long long {
+    PEAK_VAL = 500000
+};
+
+enum flags : unsigned char {
+    FLAG_X = 1 << 0,
+    FLAG_Y = 1 << 1,
+    FLAG_Z = 1 << 2,
+    FLAG_W = 1 << 3,
+};
+
+
+// =========================================================================
+// 2. AUTOMATED COMPILE-TIME FEATURE VERIFICATION
+// =========================================================================
+
+void verify_fixed_underlying_enum_types(void) {
+    // --- Test Class A: Size & Type Evaluations (Must always yield size_t) ---
+    _Static_assert(_Generic(##.enum SmallSignedEnum, size_t: 1, default: 0),
+                   "Error: ##.enum must evaluate to size_t regardless of base type");
+    _Static_assert(_Generic(##.enum HugeEnum, size_t: 1, default: 0),
+                   "Error: ##.enum must evaluate to size_t regardless of base type");
+
+
+    // --- Test Class B: Value Capacity Limits (##.) ---
+    // Signed 8-bit capacity ceiling should reflect SCHAR_MAX (127) rather than INT_MAX
+    _Static_assert(##.enum SmallSignedEnum == 127,
+                   "Error: ##.enum failed to match its 'signed char' capacity bounds");
+
+    // Unsigned 8-bit capacity ceiling should reflect UCHAR_MAX (255)
+    _Static_assert(##.enum SmallUnsignedEnum == 255,
+                   "Error: ##.enum failed to match its 'unsigned char' capacity bounds");
+
+    // 64-bit unsigned long long capacity ceiling check (0xFFFFFFFFFFFFFFFF)
+    _Static_assert(##.enum HugeEnum == 18446744073709551615ULL,
+                   "Error: ##.enum failed to scale to an unsigned long long boundary");
+
+
+    // --- Test Class C: Structural Option Quantity Counts (#.) ---
+    // Ensure that mapping the base container type didn't corrupt your element quantity tracker
+    _Static_assert(#.enum SmallSignedEnum == 2,
+                   "Error: #.enum failed option tally on custom base container");
+
+    _Static_assert(#.enum SmallUnsignedEnum == 3,
+                   "Error: #.enum failed option tally on custom base container");
+
+    _Static_assert(#.enum HugeEnum == 1,
+                   "Error: #.enum failed option tally on custom base container");
+
+    _Static_assert(#.enum flags == 4,
+                   "Error: #.enum failed option tally on custom base container");
+
+}

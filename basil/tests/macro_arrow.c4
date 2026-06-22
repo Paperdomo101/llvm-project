@@ -1,0 +1,68 @@
+// Regression test: postfix '->' after a GNU statement-expression macro must
+// be parsed correctly when the macro's closing ')' has an earlier spelling
+// line number than the '->' in the outer macro.
+//
+// Background
+// ----------
+// The C4 "prevent newline bleeding" check in ParsePostfixExpressionSuffix
+// compared *spelling* line numbers. When __get_thread() is a multi-line
+// GNU statement-expression macro, its closing ')' has spelling line N (inside
+// the macro body). The '->' in THREAD_ID has spelling line M, where M > N
+// (THREAD_ID is defined later in the file). The comparison M > N fired the
+// early-exit heuristic, leaving '->tid' unparsed so that __get_thread() (a
+// pointer) ended up as the RHS of '==', producing:
+//
+//   "comparison between pointer and integer"   (twice - once per TPA pass)
+//   "expected ')'" at the '->' token
+//   "expected '{'" on the following line
+//
+// Fix: use *expansion* line numbers instead of spelling line numbers. All
+// tokens that expand from the same call site share the same expansion line,
+// so the cross-macro false positive disappears.
+//
+// The topology that triggers the bug
+// -----------------------------------
+//   #define __get_thread() ({    <-- multi-line; closing ')' at line N
+//       ...                      <--
+//       _t;                      <-- N
+//   })                           <--
+//
+//   #define THREAD_ID __get_thread()->tid  <-- '->' at line M, M > N
+//
+// When THREAD_ID expands, PrevLoc (')' from __get_thread) has spelling line N
+// and CurrentLoc ('->') has spelling line M. With the old spelling-line check,
+// M > N fires and '->tid' is never processed. With expansion lines, both
+// resolve to the same call-site line in this file and the check is skipped.
+
+typedef struct {
+    int tid;
+    int lock;
+} MockThread;
+
+// Multi-line macro: the closing '}' and ')' live on a DIFFERENT line than
+// the '->' in THREAD_ID below — this is the exact topology that breaks.
+#define __get_thread() ({                    \
+    MockThread *_t = (MockThread *)0x1000;   \
+    _t;                                      \
+})
+
+#define THREAD_ID    __get_thread()->tid
+#define MAYBE_WAITERS 0x40000000
+
+static int check(void) {
+    int l = 42;
+
+    // This mirrors the failing musl putc.h condition:
+    //   if (l < 0 || l && (l & ~MAYBE_WAITERS) == CURRENT_THREAD_ID)
+    //
+    // '->' in THREAD_ID must be parsed as a postfix member-access operator,
+    // producing an int comparison — not stopped early, leaving __get_thread()
+    // (a pointer) as the RHS and causing a pointer/integer type error.
+    if (l < 0 || l && (l & ~MAYBE_WAITERS) == THREAD_ID)
+        return 1;
+    return 0;
+}
+
+int main() {
+    return check();
+}

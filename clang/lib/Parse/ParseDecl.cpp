@@ -7629,6 +7629,12 @@ void Parser::ParseFunctionDeclarator(Declarator &D,
       ParsedTemplateInfo EmptyTemplateInfo;
 
       // 4. Parse the base type specifier (e.g., 'char')
+
+      // Trailing return types are parsed in a type-id-like context rather than
+      // a declaration context. DSC_normal causes anonymous tag definitions such as
+      //   f() struct { int x; }
+      // to be treated as incomplete declarations and emit
+      // "expected ';' after struct".
       ParseDeclarationSpecifiers(TargetDS, EmptyTemplateInfo, AS_none,
                                   DeclSpecContext::DSC_type_specifier);
 

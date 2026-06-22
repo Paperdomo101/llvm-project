@@ -1,0 +1,168 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdbool.h>
+
+// Helper structure to verify values without hard-crashing immediately
+void assert_equal(int actual, int expected, const char *msg) {
+    if (actual != expected) {
+        printf("[FAIL] Assertion broken: %s (Got %d, Expected %d)\n", msg, actual, expected);
+        exit(1);
+    }
+}
+
+// --- TEST FUNCTION A: Flat Array Receiver ---
+// Verifies value semantics deep-copy parameters prevent caller leakages
+void verify_param_passing([] int test_arr, size_t expected_size) {
+    assert_equal(#.test_arr, expected_size, "Function parameter array size check via intrinsic");
+    assert_equal(test_arr.count, expected_size, "Function parameter size check via polished public field");
+    assert_equal(test_arr[0], 100, "Function parameter element lookups [0]");
+    assert_equal(test_arr[1], 200, "Function parameter element lookups [1]");
+
+    // Testing value semantic isolation mutations (must copy-on-write under the hood)
+    test_arr[0] += 50;
+    test_arr[1] += 50;
+}
+
+// --- TEST FUNCTION B: Modifying elements over a reference pointer ---
+// Verifies array reference pointers override value-copy duplication mechanics
+void mutate_array(^[] int inline_arr) {
+    inline_arr.items[0] = 777;
+    inline_arr.items[1] = 888;
+}
+
+// --- TEST FUNCTION C: Reading and writing via unwrapped reference pointer brackets ---
+void modify_via_deref(^[] int arrptr) {
+    for (volatile int i = 0; i < #.*arrptr; ++i) {
+        (*arrptr)[i] += 10; // Explicitly verifies structural pointer unrolling
+    }
+}
+
+// --- NEW TEST FUNCTION D: Pass-by-Reference Array Parameter (&[] int) ---
+// Verifies direct brackets indexing mutates original array data elements
+void modify_array_ref(&[] int arrref) {
+    assert_equal(#.arrref, 2, "Pass-by-reference array intrinsic size check");
+    assert_equal(arrref.count, 2, "Pass-by-reference array field count check");
+
+    for (volatile int i = 0; i < #.arrref; ++i) {
+        arrref[i] += 5; // Verifies direct array indexing mutability works perfectly
+    }
+}
+
+// --- NEW TEST FUNCTION E: Multi-Variable Pass-by-Reference Grouping Mix ---
+// Verifies grouped declarations separate references from standard scalars cleanly
+void modify_grouped_refs(&[] int r1, int r2) {
+    r1[0] += 100;
+    r2 *= 2; // r2 acts purely as a standard value integer copy parameter
+}
+
+int main() {
+    printf("==================================================\n");
+    printf("Executing Deep Runtime Array Extension Verification...\n");
+    printf("==================================================\n");
+
+    // ------------------------------------------------------------
+    // SCENARIO 1: Dynamic Stack Initialization & Type Coercion Verification
+    // ------------------------------------------------------------
+    int runtime_val = 100;
+    float mixed_float = 200.5f; // Triggers your ImplicitCastExpr <FloatingToIntegral> channel!
+
+    [] int joe = { runtime_val, mixed_float };
+
+    assert_equal(#.joe, 2, "Local stack container intrinsic size allocation");
+    assert_equal(joe.count, 2, "Polished public field .count verification");
+    assert_equal(joe[0], 100, "Dynamic stack variable loading sequence index 0");
+    assert_equal(joe.items[0], 100, "Polished public array field element access .items[0]");
+    assert_equal(joe[1], 200, "Floating-to-integral runtime type coercion index 1");
+    printf("[PASS] Scenario 1: Dynamic stack initialization and type coercion completely verified.\n");
+
+    // ------------------------------------------------------------
+    // SCENARIO 2: Cross-Boundary Argument Passing (Value Isolation)
+    // ------------------------------------------------------------
+    verify_param_passing(joe, 2);
+    // Elements must remain 100 and 200 because verify_param_passing manipulated a stack clone!
+    assert_equal(joe[0], 100, "Value semantics baseline isolation verification index 0");
+    assert_equal(joe[1], 200, "Value semantics baseline isolation verification index 1");
+    printf("[PASS] Scenario 2: Call-site value isolation deep-copy verified.\n");
+
+    // ------------------------------------------------------------
+    // SCENARIO 3: Pass-by-Reference Mutation Verification
+    // ------------------------------------------------------------
+    mutate_array(&joe);
+    assert_equal(joe[0], 777, "Post-mutation memory verification index 0");
+    assert_equal(joe[1], 888, "Post-mutation memory verification index 1");
+    printf("[PASS] Scenario 3: Memory reference mutability completely verified.\n");
+
+    // ------------------------------------------------------------
+    // SCENARIO 4: Reference Pointer Variables (^[]) and Token Lookahead
+    // ------------------------------------------------------------
+    ^[] int joeptr = &joe; // Verifies your parser lookahead token rules for variable decls
+
+    assert_equal((*joeptr)[0], 777, "Dereferenced variable pointer indexing [0]");
+    assert_equal(joeptr.items[1], 888, "Polished variable pointer arrow field lookup ->items[1]");
+
+    // Test all centralized Intrinsic Size Operator variation gates (Ensures zero exit code 70 backend crashes)
+    assert_equal(#.joeptr, 2, "Intrinsic size evaluation directly on raw pointer token variable");
+    assert_equal(#.(joeptr), 2, "Intrinsic size evaluation inside protective lookahead parentheses");
+    assert_equal(joeptr.count, 2, "Polished public size property dot operator reference on pointer variable");
+    assert_equal(joeptr->count, 2, "Polished public size property native arrow operator reference on pointer variable");
+    printf("[PASS] Scenario 4: Reference pointer variables and intrinsic variations completely verified.\n");
+
+    // ------------------------------------------------------------
+    // SCENARIO 5: Pointer Indirection Dereference Modification Loop
+    // ------------------------------------------------------------
+    modify_via_deref(&joe);
+    assert_equal(joe[0], 787, "Reference pointer calculation mutations index 0 (777 + 10)");
+    assert_equal(joe[1], 898, "Reference pointer calculation mutations index 1 (888 + 10)");
+    printf("[PASS] Scenario 5: Reference pointer looping modification verified.\n");
+
+    // ------------------------------------------------------------
+    // SCENARIO 6: Structural Scoping and Multi-Type Isolation
+    // ------------------------------------------------------------
+    {
+        float dynamic_pi = 3.14f;
+        [] float scores = { dynamic_pi, 9.9f, 85.5f };
+
+        if (#.scores != 3 || scores.count != 3) {
+            printf("[FAIL] Floating point array sizing corrupted.\n");
+            exit(1);
+        }
+    }
+    printf("[PASS] Scenario 6: Scope isolation and floating-point types verified.\n");
+
+    // ------------------------------------------------------------
+    // SCENARIO 7: Iteration Element Offsetting Loop Pass
+    // ------------------------------------------------------------
+    [] int loop_arr = { 10, 20, 30, 40 };
+    int check_accumulator = 0;
+
+    for (volatile int i = 0; i < #.loop_arr; ++i) {
+        check_accumulator += loop_arr[i];
+    }
+    assert_equal(check_accumulator, 100, "Loop accumulator offset mapping summary");
+    printf("[PASS] Scenario 7: Dynamic iteration and offset arithmetic verified.\n");
+
+    // ------------------------------------------------------------
+    // SCENARIO 8: Pass-by-Reference Array Mutations (&[] int)
+    // ------------------------------------------------------------
+    modify_array_ref(joe); // Auto-injects address wrapper via standard call paths
+    assert_equal(joe[0], 792, "Pass-by-reference array mutation verification [0] (787 + 5)");
+    assert_equal(joe[1], 903, "Pass-by-reference array mutation verification [1] (898 + 5)");
+
+    joe::modify_array_ref() // Auto-injects address wrapper via pipelined member dispatch paths
+    assert_equal(joe[0], 797, "Pipelined pass-by-reference array mutation verification [0] (792 + 5)");
+    assert_equal(joe[1], 908, "Pipelined pass-by-reference array mutation verification [1] (903 + 5)");
+    printf("[PASS] Scenario 8: Direct array parameter reference lookups and pipelines verified.\n");
+
+    // ------------------------------------------------------------
+    // SCENARIO 9: Grouped Parameter List Isolation (&[] int r1, r2)
+    // ------------------------------------------------------------
+    int scalar_b = 10;
+    modify_grouped_refs(joe, scalar_b);
+
+    assert_equal(joe[0], 897, "Grouped reference mutation verification (797 + 100)");
+    assert_equal(scalar_b, 10, "Grouped scalar argument value preservation (unchanged outside)");
+    printf("[PASS] Scenario 9: Grouped parameter tracking rules verified.\n");
+
+    printf("\n[SUCCESS] All Core Dynamic Runtime Verification Tests Passed Flawlessly!\n");
+    return 0;
+}

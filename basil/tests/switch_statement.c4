@@ -1,0 +1,93 @@
+test (int line);
+
+main () int {
+    int a = 2;
+    int b = 4;
+
+    // ==========================================
+    // 1. TRADITIONAL PARENTHESISED CASES
+    // ==========================================
+
+    // Standard parenthesised form without init-statement
+    switch (a) {
+        case 2: test(__LINE__); break;
+    }
+
+    // Parenthesised with standard C++ style declaration init
+    switch (int c = 2; a + c) {
+        case 4: test(__LINE__); break;
+    }
+
+    // Parenthesised with custom walrus assignment init
+    switch (c := 2; a + c) {
+        case 4: test(__LINE__); break;
+    }
+
+
+    // ==========================================
+    // 2. UNPARENTHESISED / BRACED CASES
+    // ==========================================
+
+    // Pure unparenthesised expression condition
+    switch a + b {
+        case 6: test(__LINE__); break;
+    }
+
+    // Unparenthesised sub-expression condition starting with paren
+    switch ((a) + b) {
+        case 6: test(__LINE__); break;
+    }
+
+    switch (a + b) {
+        case 6: test(__LINE__); break;
+        default: break;
+    }
+
+    // Unparenthesised sub-expression condition ending with paren
+    switch a + (b) {
+        case 6: test(__LINE__); break;
+    }
+
+    // Unparenthesised condition wrapped inside outer sub-expression parentheses
+    // (This should be disambiguated as unparenthesised due to the + 0 operator)
+    switch ((a + b) + 0) {
+        case 6: test(__LINE__); break;
+    }
+
+
+    // ==========================================
+    // 3. UNPARENTHESISED WITH INITIALIZERS
+    // ==========================================
+
+    // Unparenthesised with custom walrus operator init
+    switch c := 4; c {
+        case 1: test(__LINE__); break;
+    }
+
+    // Unparenthesised with standard declaration init
+    switch int c = 4; c {
+        case 1: test(__LINE__); break;
+    }
+
+
+    // ==========================================
+    // 4. EXPECTED SYNTAX ERROR CASES
+    // ==========================================
+
+    // Missing braces on unparenthesised pure expression condition
+    // expected-error {{expected '{'}}
+    switch a + b
+        case 6: test(__LINE__); break;
+
+    // Missing braces on unparenthesised walrus init statement condition
+    // expected-error {{expected '{'}}
+    switch c := 4; a < c
+        case 1: test(__LINE__); break;
+
+    // Missing braces on unparenthesised declaration init statement condition
+    // expected-error {{expected '{'}}
+    switch int c = 4; a < c
+        case 1: test(__LINE__); break;
+
+    return 0;
+}

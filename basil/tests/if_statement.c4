@@ -1,0 +1,44 @@
+#include <stdio.h>
+int test_n = 1;
+test (int line) int { return printf("%s:%d [%d] OK\n", __FILE__, line, test_n++) }
+
+main () int {
+    a := 2;
+    b := 4;
+
+
+    int *ap = &a;
+    if a < b { *ap = test(__LINE__) }
+    if (a < b) { *ap = test(__LINE__) }
+    if (a < b) *ap = test(__LINE__)
+
+    if (a < b) test(__LINE__)
+    if (a < (b)) test(__LINE__)
+    if ((a) < b) test(__LINE__)
+    if (!(a > b)) test(__LINE__)
+    if a < b { test(__LINE__) }
+    if a < (b) { test(__LINE__) }
+    if !(a > b) { test(__LINE__) }
+    if int c = 4; a < c { test(__LINE__) }
+    if c := 4; a < c { test(__LINE__) }
+    if (int c = 4; a < c) test(__LINE__)
+    if (c := 4; a < c) test(__LINE__)
+    if (a) < b { test(__LINE__) }
+
+    if !(a == 10)
+        test(__LINE__);
+
+    if !(a == 10) {
+        test(__LINE__);
+    }
+
+    if !((a == 10))
+        test(__LINE__);
+
+    if (!!(a == 10))
+        test(__LINE__);
+
+    // expected-error {{expected '{'}}
+    if !!(a == 10)
+        test(__LINE__);
+}

@@ -1,0 +1,77 @@
+typedef unsigned long size_t;
+
+struct Arena {
+    size_t capacity;
+};
+
+void verify_lhs_pointer_syntax_and_precedence(void) {
+
+    // --- Test Class A: Structural Identity & Core Pointer Conversion ---
+    ^int standard_ptr;
+    _Static_assert(_Generic(standard_ptr, int*: 1, default: 0),
+                   "Error: Singular LHS '^int' failed to emit a true int pointer type");
+
+    ^^char matrix_ptr;
+    _Static_assert(_Generic(matrix_ptr, char**: 1, default: 0),
+                   "Error: Double LHS '^^char' failed to emit a true pointer-to-pointer type");
+
+    ^struct Arena arena_ptr;
+    _Static_assert(_Generic(arena_ptr, struct Arena*: 1, default: 0),
+                   "Error: Custom tag type '^struct Arena' failed to target base struct layout");
+
+
+    // --- Test Class B: Qualifier Binding Precedence (Const, Volatile, Restrict) ---
+
+    // const applies to the base int -> const int *
+    const ^int q_level_1 = 0;
+    _Static_assert(_Generic(q_level_1, const int*: 1, default: 0),
+                   "Error: Outer 'const ^int' failed to bind const qualifier to the base integer target");
+
+    // const applies to the pointer layer -> int * const
+    ^const int q_level_2 = 0;
+    _Static_assert(_Generic(&q_level_2, int * const *: 1, default: 0),
+                   "Error: Interleaved '^const int' failed to apply const to the pointer layer");
+
+    // Inner layer is volatile pointer, outer layer is const pointer -> int * volatile * const
+    // _Generic lvalue-decay strips top-level const, matching against: int * volatile *
+    ^const ^volatile int q_nested;
+    _Static_assert(_Generic(q_nested, int * volatile * : 1, default: 0),
+                   "Error: Multi-layered '^const ^volatile int' inner/outer modifier layering desynced");
+
+    // restrict applies to the pointer layer -> char * __restrict
+    ^restrict char block_ptr;
+    _Static_assert(_Generic(&block_ptr, char * __restrict *: 1, default: 0),
+                   "Error: Restrict qualifier failed to apply directly to the generated pointer level");
+
+
+    // --- Test Class C: Multi-Variable Decoupling Protections ---
+    ^int scalar_a, scalar_b;
+    _Static_assert(_Generic(scalar_a, int*: 1, default: 0),
+                   "Error: First variable in sequential LHS syntax failed to become an explicit pointer");
+    _Static_assert(_Generic(scalar_b, int*: 1, default: 0),
+                   "Error: Second variable in sequential LHS syntax bled back down to a scalar int");
+
+    ^^char array_a, array_b;
+    _Static_assert(_Generic(array_a, char**: 1, default: 0),
+                   "Error: Multi-pointer sequence isolation failed on head item");
+    _Static_assert(_Generic(array_b, char**: 1, default: 0),
+                   "Error: Multi-pointer sequence isolation failed on trailing item");
+}
+
+// =========================================================================
+// 3. FUNCTION INTERFACE COMPATIBILITY VERIFICATION
+// =========================================================================
+
+^struct Arena arena_alloc(size_t cap, _Bool chaining) {
+    return 0;
+}
+
+arena_alloc1 (size_t cap, _Bool chaining) ^struct Arena {
+    return 0;
+}
+
+int main(int argc, ^^char argv) {
+    _Static_assert(_Generic(argv, char**: 1, default: 0),
+                   "Error: Function argument vector failed to validate as double pointer via LHS syntax");
+    return 0;
+}

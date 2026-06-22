@@ -1,0 +1,141 @@
+#include <stdio.h>
+#include <stdlib.h>
+
+void assert_equal(int actual, int expected, const char *msg) {
+    if (actual != expected) {
+        printf("[FAIL] If Statement Torture: %s (Got %d, Expected %d)\n", msg, actual, expected);
+        exit(1);
+    }
+}
+
+int main() {
+    printf("==================================================\n");
+    printf("Executing If Statement Syntax Torture Suite...\n");
+    printf("==================================================\n");
+
+    int test_result = 0;
+
+    // ------------------------------------------------------------
+    // TEST 1: Parenthesized condition, no init, no braces required
+    // ------------------------------------------------------------
+    int a = 2, b = 4;
+    if (a < b) test_result = 1;
+    assert_equal(test_result, 1, "Test 1: Parenthesized simple if (no braces)");
+
+    // ------------------------------------------------------------
+    // TEST 2: Parenthesized with extra parentheses and '!'
+    // ------------------------------------------------------------
+    test_result = 0;
+    if (!(a > b)) test_result = 2;
+    assert_equal(test_result, 2, "Test 2: Parenthesized with '!' and extra parens");
+
+    // ------------------------------------------------------------
+    // TEST 3: Unparenthesized condition, braces required
+    // ------------------------------------------------------------
+    test_result = 0;
+    if a < b { test_result = 3; }
+    assert_equal(test_result, 3, "Test 3: Unparenthesized if with braces");
+
+    // ------------------------------------------------------------
+    // DISALLOWED NOW -- TEST 4: Unparenthesized with extra parentheses and braces
+    // ------------------------------------------------------------
+    // test_result = 0;
+    // if (a) < b { test_result = 4; }  // condition is 'a < b' because '(' starts expression
+    // assert_equal(test_result, 4, "Test 4: Unparenthesized with '(' in expression");
+
+    // ------------------------------------------------------------
+    // TEST 5: Parenthesized with ':= ' init
+    // ------------------------------------------------------------
+    test_result = 0;
+    if (c := 4; c == 4) test_result = 5;
+    assert_equal(test_result, 5, "Test 5: Parenthesized with ':=' init (c is in scope)");
+    // c is not visible outside the if statement (scope ends)
+    // We'll verify it's not accessible later
+
+    // ------------------------------------------------------------
+    // TEST 6: Unparenthesized with ':=' init and braces
+    // ------------------------------------------------------------
+    test_result = 0;
+    if d := 5; d == 5 { test_result = 6; }
+    assert_equal(test_result, 6, "Test 6: Unparenthesized with ':=' and braces");
+
+    // ------------------------------------------------------------
+    // TEST 7: Parenthesized with declaration init (int c = 4;)
+    // ------------------------------------------------------------
+    test_result = 0;
+    if (int e = 4; e == 4) test_result = 7;
+    assert_equal(test_result, 7, "Test 7: Parenthesized with declaration init");
+
+    // ------------------------------------------------------------
+    // TEST 8: Unparenthesized with declaration init and braces
+    // ------------------------------------------------------------
+    test_result = 0;
+    if int f = 4; f == 4 { test_result = 8; }
+    assert_equal(test_result, 8, "Test 8: Unparenthesized with declaration and braces");
+
+    // ------------------------------------------------------------
+    // TEST 9: Parenthesized with ':= ' and more complex expression
+    // ------------------------------------------------------------
+    test_result = 0;
+    int x = 10;
+    if (g := 2; x < g + 9) test_result = 9;
+    assert_equal(test_result, 9, "Test 9: Parenthesized ':=' with complex condition");
+
+    // ------------------------------------------------------------
+    // TEST 10: Unparenthesized with '!' and braces
+    // ------------------------------------------------------------
+    test_result = 0;
+    if !(a > b) { test_result = 10; }
+    assert_equal(test_result, 10, "Test 10: Unparenthesized '!' with braces");
+
+    // ------------------------------------------------------------
+    // TEST 11: Unparenthesized with declaration init, else clause
+    // ------------------------------------------------------------
+    test_result = 0;
+    if int h = 6; h == 5 { test_result = 11; } else { test_result = 12; }
+    assert_equal(test_result, 12, "Test 11: Unparenthesized declaration with else");
+
+    // ------------------------------------------------------------
+    // TEST 12: Parenthesized with ':= ' and else
+    // ------------------------------------------------------------
+    test_result = 0;
+    if (i := 7; i == 7) test_result = 13; else test_result = 14;
+    assert_equal(test_result, 13, "Test 12: Parenthesized ':=' with else");
+
+    // Verify that variables declared inside init are not accessible outside
+    // (This would cause a compile error if they were, so we just check that we can compile)
+    // We'll attempt to use 'c' here - if it compiles, the test fails; but we can't test at runtime.
+    // We'll rely on the compiler to reject such usage. We'll include a commented-out invalid line:
+    // int should_fail = c; // Uncommenting this should produce "undeclared identifier" error
+
+    // ------------------------------------------------------------
+    // TEST 13: Unparenthesized '!' with parenthesized expression, no braces
+    // ------------------------------------------------------------
+    int a2 = 10;
+    if !(a2 == 10) {
+        // should not execute
+        assert_equal(0, 1, "Test 13: condition should be true, so body skipped");
+    } else {
+        test_result = 13;
+    }
+    assert_equal(test_result, 13, "Test 13: Unparenthesized '!(a==10)' with else");
+
+    // ------------------------------------------------------------
+    // TEST 14: Unparenthesized '!' with parenthesized expression, no braces,
+    //          and a single statement afterwards
+    // ------------------------------------------------------------
+    test_result = 0;
+    if !(a2 == 5) test_result = 14;   // condition is true, so execute
+    assert_equal(test_result, 14, "Test 14: Unparenthesized '!' with single statement (no braces)");
+
+    // ------------------------------------------------------------
+    // TEST 15: Unparenthesized condition that is a simple ParentExpr, no braces
+    // ------------------------------------------------------------
+    test_result = 0;
+    if (a2 == 10) test_result = 15;   // condition is parenthesized, no braces allowed
+    assert_equal(test_result, 15, "Test 15: Parenthesized condition as expression, no braces");
+
+
+    printf("\n[SUCCESS] All If Statement Torture Tests Passed Flawlessly!\n");
+    return 0;
+}

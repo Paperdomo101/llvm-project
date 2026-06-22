@@ -1,0 +1,157 @@
+// =========================================================================
+// CUSTOM CLANG LANGUAGE EXTENSION ADVANCED SUITE RUNNER
+// =========================================================================
+#include <stdio.h>
+#include <assert.h>
+
+// --- DEPENDENT MOCK TYPE INFRASTRUCTURE ---
+typedef struct { float x, y; } Vector2;
+typedef struct { float x, y, z; } Vector3;
+typedef struct { Vector2 pos; Vector2 scale; } Transform;
+typedef struct { int id; Transform transform; } Entity;
+typedef struct { float x, y, width, height; } Rectangle;
+
+// --- CUSTOM METHOD TARGETS ---
+void check_vector(Vector2 v, float expected_x, float expected_y, const char *test_name) {
+    printf("[%s] Got (%g, %g), Expected (%g, %g)\n", test_name, v.x, v.y, expected_x, expected_y);
+    assert(v.x == expected_x && "X mismatch!");
+    assert(v.y == expected_y && "Y mismatch!");
+}
+
+void check_four_floats(float a, float b, float c, float d, const char *test_name) {
+    printf("[%s] Got (%g, %g, %g, %g), Expected (1, 2, 3, 4)\n", test_name, a, b, c, d);
+    assert(a == 1.0f && b == 2.0f && c == 3.0f && d == 4.0f && "Four float payload mismatch!");
+}
+
+int main() {
+
+    printf("Beginning Advanced Swizzle & Unpacking Pipeline Tests...\n\n");
+
+    // --- TEST 1: Deep Structural Chaining (Nested Field Extraction) ---
+    // Verifies the flattener can reach inside nested structures
+    Entity ent = { 99, {{10.0f, 20.0f}, {30.0f, 40.0f}} }
+
+    // ent.transform.pos.{x, y} should unzip to two floats inside the brace list
+    Vector2 nested_res = { ent.transform.pos.{x, y} }
+    check_vector(nested_res, 10.0f, 20.0f, "Deep Nesting: ent.transform.pos.{x,y}");
+
+    // --- TEST 2: Array of Structures Indexing Context ---
+    // Verifies swizzling behaves when accessed via an array lookup offset pointer
+    Vector2 particle_system[3] = { {0,0}, {55.0f, 66.0f}, {0,0} }
+
+    // particle_system[1].{x, y} must expand properly inside the initializer
+    Vector2 array_res = { particle_system[1].{x, y} }
+    check_vector(array_res, 55.0f, 66.0f, "Array Elements: array[1].{x,y}");
+
+    // --- TEST 3: Order-of-Evaluation / Inline Member Math Shifting ---
+    // Tests that expressions can be evaluated *on* the swizzled components inline
+    Vector2 base = { 4.0f, 8.0f }
+
+    // Multiplying or adding to the outer expression before unzipping
+    Vector2 math_res = { base.{x} * 2.0f, base.{y} + 10.0f }
+    check_vector(math_res, 8.0f, 18.0f, "Inline Math on Swizzled Extractions");
+
+    // --- TEST 4: Multiple Swizzles Interleaved in a Single Call Site ---
+    // This strictly checks that your call-site flattener can process *multiple*
+    // independent ParenListExpr nodes without getting confused or misaligning offsets.
+    Vector2 dynamic_a = { 1.0f, 2.0f }
+    Vector2 dynamic_b = { 3.0f, 4.0f }
+
+    // Should seamlessly flatten into: check_four_floats(1.0, 2.0, 3.0, 4.0)
+    check_four_floats(dynamic_a.{x, y}, dynamic_b.{x, y}, "Multi-Swizzle Interleaving");
+
+    // --- TEST 5: Repeated Member Extraction (Swizzle Duplication) ---
+    // Compilers sometimes break if the same field is fetched multiple times in one expansion
+    Vector2 single_point = { 7.0f, 14.0f }
+    Vector2 duplicate_res = { single_point.{x, x} } // Creates a Vector2 out of just X
+    check_vector(duplicate_res, 7.0f, 7.0f, "Duplicate Extraction: single_point.{x,x}");
+
+    // --- TEST 6: Uniform Scalar Broadcast Swizzle Assignment ---
+    // Verifies that assigning a single value to a swizzle list handles
+    // single-element unwrapping elegantly or errors out cleanly based on type expectations.
+    Vector2 broadcast = { 10.0f, 20.0f }
+    broadcast.{x} = 99.0f;
+    broadcast.{y} = 99.0f;
+    broadcast::check_vector(99.0f, 99.0f, "Uniform Scalar Variable Extraction Writes");
+
+    // --- TEST 7: Pointer-to-Structure Member Inplace Updates ---
+    // This evaluates if the swizzle mechanics survive an explicit arrow dereference
+    Vector2 base_allocated = { 3.0f, 4.0f }
+    Vector2 *ptr = &base_allocated;
+
+    // Verifies the parsing engine successfully dereferences the structure before unzipping
+    Vector2 ptr_swiz_res = { (*ptr).{y, x} }
+    check_vector(ptr_swiz_res, 4.0f, 3.0f, "Structure Pointer Dereference Swizzle");
+
+    // --- TEST 8: Parallel Swizzle Swap on Nested Structures ---
+    // Stress tests your temporary variable caching allocation system (__swiz_tmp_X).
+    Entity complex_swap_ent = { 1, {{1.0f, 2.0f}, {0,0}} }
+
+    // Perform an in-place parallel swap deep inside the Entity object tree
+    complex_swap_ent.transform.pos.{x, y} = complex_swap_ent.transform.pos.{y, x}
+
+    // Verify that the deep properties swapped accurately without corrupting adjacent data layers
+    complex_swap_ent.transform.pos::check_vector(2.0f, 1.0f, "Deep Nesting Parallel Swap");
+
+    // --- TEST 9: Multi-Operand Matrix-Like Multiplication Chain ---
+    Vector2 mat_a = { 2.0f, 3.0f }
+    Vector2 mat_b = { 4.0f, 5.0f }
+    Vector2 mat_c = { 1.0f, 2.0f }
+
+    // Combines element-wise arithmetic with single-element swizzle extractions inline
+    Vector2 compound_matrix_math = {
+        (mat_a.{x} * mat_b.{x}) + mat_c.{x}, // (2 * 4) + 1 = 9
+        (mat_a.{y} * mat_b.{y}) + mat_c.{y}  // (3 * 5) + 2 = 17
+    }
+    check_vector(compound_matrix_math, 9.0f, 17.0f, "Multi-Operand Matrix Element Math");
+
+    // --- TEST 10: Good 'ol swizzling ---
+    Vector2 swiz = {1, 2}
+    swiz.{x, y} = swiz.{y, x}
+    swiz::check_vector( 2, 1, "Swizzle X and Y" );
+
+    struct {
+        float x, y, z;
+    } joe = {1, 2, 3}
+
+    n, m, o := joe.{z, x, y};
+    assert(n == 3 && m == 1 && o == 2 && "Destructuring unpacking values misaligned!");
+    "%g, %g, %g\n"::printf(n, m, o);
+
+    "Here they are:\n"::printf();
+    a, j := swiz.{y, x}; // should not be an error anymore
+    assert(a == 1 && j == 2 && "Destructuring lookup index bound mismatch!");
+    "%g, %g\n"::printf(a, j);
+
+    // --- TEST 11: Evaluation order of functions in swizzle ---
+    f := ^() float { return 5.0; }
+    g := ^() float { return 8.0; }
+    swiz.{x, y} = (Vector2){f(), g()}.{y, x}
+    swiz::check_vector( 8.0, 5.0, "Evaluation Order" );
+
+    // --- TEST 12: Method Dispatch with Inline Unzipped Receiver ---
+    // This evaluates the exact method-dispatch parser lookahead fix!
+    Vector2 b_pos = { 100.0f, 200.0f }
+
+    (Vector2){b_pos.{x, y}}::check_vector(100, 200, "Compound Literal Method Dispatch");
+    {b_pos.{x, y}}::check_vector(100, 200, "Inferred Type Compound Literal Method Dispatch"); // Crux Crash Fixed!
+
+    // --- TEST 13: Chained Method Dispatching via Swizzled Vector Return ---
+    h := ^() Vector2 {
+        Vector2 temporary = { 100.0f, 200.0f }
+        return temporary;
+    }
+
+    {h().{x, y}}::check_vector(100, 200, "Pipelined Method Dispatch");
+
+    // --- TEST 14: Method-Like Dispatch with Swizzling inside Trailing Parameter Slots ---
+    Vector2 receiver_vec = { 100.0f, 200.0f }
+    Vector2 param_vec    = { 32.0f, 64.0f }
+
+    Rectangle rec = {0, 0, param_vec.{x, y}}
+    printf("[Test 14] Trailing payload structure built cleanly: (%g, %g)\n", rec.width, rec.height);
+    assert(rec.width == 32.0f && rec.height == 64.0f);
+
+    printf("\nAll Advanced Syntax Validation Tests Cleared Natively!\n");
+    return 0;
+}

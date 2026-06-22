@@ -1,0 +1,35 @@
+// tests/type_inference_errors.c4
+typedef struct { float x, y; } Vector2;
+typedef struct { float x, y, z; } Vector3;
+
+void takes_vec2(Vector2 v) {}
+
+int main() {
+    Vector2 swiz = {10.0f, 20.0f};
+    Vector3 v3 = {1.0f, 2.0f, 3.0f};
+    void_func := ^() {};
+
+    // --- TEST 6 & 10: Multi-component swizzle to one variable ---
+    e := swiz.{x, y};
+
+    // --- TEST 9: Too many variables ---
+    j, k, l := swiz.{x, y};
+
+    // --- TEST 11: Swizzle larger than target list ---
+    n, o := swiz.{x, y, x};
+
+    // --- TEST 19: Void-return rejection ---
+    ee := void_func();
+
+    // --- TEST 20: Type correctness ---
+    ff, gg := swiz.{x, y};
+    takes_vec2(ff);
+
+    // --- TEST 22: Mixed scalar and tuple assignment ---
+    ii, jj := 123;
+
+    // --- TEST 24: Triple swizzle mismatch ---
+    nn, oo := v3.{x, y, z};
+
+    return 0;
+}

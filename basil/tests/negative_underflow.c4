@@ -1,0 +1,5 @@
+main () int {
+    [] int bob = { 10, 20, 30 };
+    bob[-1] = 99;
+    return 0;
+}

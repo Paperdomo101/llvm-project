@@ -1,0 +1,131 @@
+
+// RUN: %clang_cc1 -triple x86_64-unknown-linux-gnu -fsyntax-only -verify %s
+
+// Test 1: Basic bounds-checked array with explicit cast in literal
+void test_explicit_cast(void) {
+    typedef struct {
+        int x, y;
+    } Thing;
+
+    [] Thing things = {
+        (Thing){2, 3},  // OK: explicit cast
+        (Thing){4, 5}   // OK: explicit cast
+    };
+}
+
+// Test 2: Bounds-checked array with bare initializer (the bug case)
+void test_bare_initializer(void) {
+    typedef struct {
+        int x, y;
+    } Thing;
+
+    [] Thing things = {
+        (Thing){2, 3},  // OK: explicit cast
+        {4, 5}          // OK: bare initializer (should be type-corrected)
+    };
+}
+
+// Test 3: Mixed explicit and bare initializers
+void test_mixed_initializers(void) {
+    typedef struct {
+        int a;
+        float b;
+    } Point;
+
+    [] Point points = {
+        (Point){1, 2.5f},
+        {3, 4.5f},
+        (Point){5, 6.7f}
+    };
+}
+
+// Test 4: Single-element bare initializer
+void test_single_bare_element(void) {
+    typedef struct {
+        int value;
+    } Single;
+
+    [] Single single = {
+        {42}
+    };
+}
+
+// Test 5: Passing bounds-checked array to function
+void process_array([] int arr) {
+    s := #.arr;  // Get size
+    first := arr[0];
+}
+
+void test_function_parameter(void) {
+    [] int bob = {4, 5, 6};
+    process_array(bob);
+}
+
+// Test 6: All bare initializers
+void test_all_bare_initializers(void) {
+    typedef struct {
+        int x;
+        int y;
+        int z;
+    } Vec3;
+
+    [] Vec3 vectors = {
+        {1, 2, 3},
+        {4, 5, 6},
+        {7, 8, 9}
+    };
+}
+
+// Test 7: Nested struct with bare initializer
+void test_nested_struct(void) {
+    typedef struct {
+        int id;
+    } ID;
+
+    typedef struct {
+        ID inner;
+        float value;
+    } Wrapper;
+
+    [] Wrapper wrappers = {
+        (Wrapper){{1}, 1.5f},
+        {{2}, 2.5f}  // bare nested initializer
+    };
+}
+
+// Test 8: Array of integers with bare initializer (sanity check)
+void test_integer_array(void) {
+    [] int numbers = {1, 2, 3, 4, 5};
+}
+
+// Test 9: Empty array initialization
+void test_empty_array(void) {
+    typedef struct {
+        int a;
+    } Item;
+
+    [] Item empty = {};  // empty array
+}
+
+
+typedef struct {
+    int x, y;
+} Thing;
+
+void process_thing_array([] Thing arr) {
+    s := #.arr;
+    first := arr[0]
+}
+
+// Test 10: Main function with bounds-checked arrays
+int main(void) {
+
+    [] Thing things = {
+        (Thing){2, 3},
+               // C4: IN-PLACE STRUCTURAL INITIALIZER REWRITE
+        {4, 5} // === FIX: Type bare InitListExpr elements ===
+    };
+
+    process_thing_array(things);
+    return 0;
+}

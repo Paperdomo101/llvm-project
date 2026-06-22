@@ -1,0 +1,32 @@
+#include <stdio.h>
+#include <stdbool.h>
+#include <stdlib.h>
+
+primitive (bool should_exit = false) {
+    if (should_exit) {
+        printf("Test Failed: primitive() was evaluated as true!\n");
+        exit(1);
+    }
+}
+
+some_proc (int a, int b, int c = 255) { // Ensure types match your clustered grammar rules
+    if (c != 255) {
+        printf("Test Failed: some_proc clustered default parameter 'c' received %d, expected 255!\n", c);
+        exit(1);
+    }
+}
+
+multi_default (int x, int y = 10, int z = 20) {
+    if (y != 10 || z != 20) {
+        printf("Test Failed: multi_default() parameters received unexpected values (y=%d, z=%d)!\n", y, z);
+        exit(1);
+    }
+}
+
+int main() {
+    primitive();
+    some_proc(4, 5);
+    multi_default(5);
+    printf("All Default Parameter Integration Tests Passed Successfully!\n");
+    return 0;
+}

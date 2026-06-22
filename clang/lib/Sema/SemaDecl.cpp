@@ -14074,6 +14074,16 @@ void Sema::AddInitializerToDecl(Decl *RealDecl, Expr *Init, bool DirectInit) {
           // 1. HARDENED ELEMENT TYPE COERCION LOOP
           for (size_t idx = 0; idx < ElementCount; ++idx) {
             Expr *Element = ILE->getInit(idx);
+
+            // === FIX: Type bare InitListExpr elements ===
+            if (auto *NestedILE = dyn_cast<InitListExpr>(Element)) {
+                if (NestedILE->getType()->isVoidType()) {
+                    NestedILE->setType(ElementTy);
+                }
+            }
+            // =============================================
+
+
             QualType ElementSrcTy = Element->getType();
 
             if (!Context.hasSameType(ElementTy, ElementSrcTy)) {

@@ -1,0 +1,9 @@
+attempt_abuse (&int ref) {
+    int *malicious_ptr = &ref; // Must trigger your custom compilation error!
+}
+
+main () int {
+    int a = 10;
+    attempt_abuse(a);
+    return 0;
+}

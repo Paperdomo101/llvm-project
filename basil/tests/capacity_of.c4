@@ -1,0 +1,143 @@
+typedef unsigned long size_t;
+typedef unsigned char uint8_t;
+typedef signed char int8_t;
+typedef unsigned short uint16_t;
+typedef signed short int16_t;
+
+// Standard constant values across systems for explicit verification
+#define MY_INT8_MAX   127
+#define MY_UINT8_MAX  255
+#define MY_INT16_MAX  32767
+#define MY_UINT16_MAX 65535
+
+// Declare forward stubs for custom runtime checks
+void verify_type_size_t(size_t val);
+void verify_type_float(float val);
+void verify_type_double(double val);
+
+// Custom dummy definitions to test error diagnostics
+struct DummyStruct { int x; };
+union DummyUnion { int x; float y; };
+enum DummyEnum { VAL_A, VAL_B };
+
+// RUN: %clang_cc1 -fsyntax-only -verify %s
+// expected-no-diagnostics
+
+typedef unsigned long size_t;
+
+// Standard populated enum group layout
+enum SampleEnum {
+    STATUS_LOW = 10,
+    STATUS_MED = 45,
+    STATUS_HIGH = 99,
+    STATUS_RESET = 5
+};
+
+
+int main(void) {
+    // =========================================================================
+    // 1. INTEGRAL BOUNDS & TYPE CHECKS (Must evaluate strictly to size_t)
+    // =========================================================================
+
+    // Character Types
+    _Static_assert(_Generic(##.char, size_t: 1, default: 0), "##.char type must be size_t");
+    _Static_assert(_Generic(##.signed char, size_t: 1, default: 0), "##.signed char type must be size_t");
+    _Static_assert(_Generic(##.unsigned char, size_t: 1, default: 0), "##.unsigned char type must be size_t");
+    _Static_assert(##.int8_t == MY_INT8_MAX, "##.int8_t boundary value mismatch");
+    _Static_assert(##.uint8_t == MY_UINT8_MAX, "##.uint8_t boundary value mismatch");
+
+    // Short Integer Types
+    _Static_assert(_Generic(##.short, size_t: 1, default: 0), "##.short type must be size_t");
+    _Static_assert(_Generic(##.unsigned short, size_t: 1, default: 0), "##.unsigned short type must be size_t");
+    _Static_assert(##.int16_t == MY_INT16_MAX, "##.int16_t boundary value mismatch");
+    _Static_assert(##.uint16_t == MY_UINT16_MAX, "##.uint16_t boundary value mismatch");
+
+    // Standard Integer & Long Types
+    _Static_assert(_Generic(##.int, size_t: 1, default: 0), "##.int type must be size_t");
+    _Static_assert(_Generic(##.unsigned int, size_t: 1, default: 0), "##.unsigned int type must be size_t");
+    _Static_assert(_Generic(##.long, size_t: 1, default: 0), "##.long type must be size_t");
+    _Static_assert(_Generic(##.unsigned long, size_t: 1, default: 0), "##.unsigned long type must be size_t");
+    _Static_assert(_Generic(##.long long, size_t: 1, default: 0), "##.long long type must be size_t");
+    _Static_assert(_Generic(##.unsigned long long, size_t: 1, default: 0), "##.unsigned long long type must be size_t");
+
+    // Boolean Type
+    _Static_assert(_Generic(##._Bool, size_t: 1, default: 0), "##._Bool type must be size_t");
+    _Static_assert(##._Bool == 1, "##._Bool should evaluate to 1");
+
+
+    // 2. Enum Ceiling Verification Block
+    _Static_assert(_Generic(##.enum SampleEnum, size_t: 1, default: 0), "Enum lookups must return size_t");
+
+    // Must look through the items and correctly pull out the highest value (99)
+    _Static_assert(##.enum SampleEnum == ##.unsigned int,
+                       "Error: ##.enum capacity must match its underlying int container");
+
+    // =========================================================================
+    // 2. REAL FLOATING-POINT BOUNDS & TYPE CHECKS (Must preserve native type)
+    // =========================================================================
+
+    // Float Type Verification
+    _Static_assert(_Generic(##.float, float: 1, default: 0), "##.float type must preserve float");
+    // Verify FLT_MAX bounds range natively (~3.40282347e+38f)
+    _Static_assert(##.float > 3.40282e+38f && ##.float <= 3.40282347E+38f, "##.float maximum valuation check failed");
+
+    // Double Type Verification
+    _Static_assert(_Generic(##.double, double: 1, default: 0), "##.double type must preserve double");
+    // Verify DBL_MAX bounds range natively (~1.7976931348623157e+308)
+    _Static_assert(##.double > 1.79769e+308 && ##.double <= 1.7976931348623157E+308, "##.double maximum valuation check failed");
+
+    // Long Double Type Verification
+    _Static_assert(_Generic(##.long double, long double: 1, default: 0), "##.long double type must preserve long double");
+
+    // Verify that pointers to various underlying types consistently return size_t
+    _Static_assert(_Generic(##.int*, size_t: 1, default: 0), "##.int* must return size_t");
+    _Static_assert(_Generic(##.void*, size_t: 1, default: 0), "##.void* must return size_t");
+    _Static_assert(_Generic(##.char**, size_t: 1, default: 0), "##.char** must return size_t");
+
+    // On a standard 64-bit target platform, a pointer ceiling evaluates to 18446744073709551615ULL (0xFFFFFFFFFFFFFFFF)
+    // On a 32-bit platform, it will evaluate to 4294967295UL (0xFFFFFFFF)
+    // We can dynamically verify this compile-time property by checking if it matches the capacity of an unsigned long/long long
+    _Static_assert(##.void* == ##.unsigned long long || ##.void* == ##.unsigned int,
+                   "##.void* failed target bit-width ceiling resolution");
+
+    // Parenthesised syntax check for pointers
+    _Static_assert(##.(int *) == ##.int*, "Parenthesised pointer validation mismatch");
+
+
+    // =========================================================================
+    // 3. SYNTAX PARENTHESISATION RULES
+    // =========================================================================
+    _Static_assert(##.(unsigned int) == ##.unsigned int, "Parenthesised operator mismatch");
+    _Static_assert(##.(double) == ##.double, "Parenthesised operator mismatch");
+
+
+    // =========================================================================
+    // 4. EXPECTED DIAGNOSTIC ERROR CASES (Negative Testing)
+    // =========================================================================
+
+    // Test Case: Passing literal floats or numbers instead of a type specifier
+    // expected-error@+1 {{expected a type}}
+    size_t err1 = ##.3;
+
+    // expected-error@+1 {{expected a type}}
+    size_t err2 = ##.3.14;
+
+    // Test Case: Attempting to pass a non-numerical user-defined struct type
+    struct DummyStruct d_struct;
+    // expected-error@+1 {{invalid application of '##.' to non-integer type}}
+    size_t err3 = ##.struct DummyStruct;
+
+    // Test Case: Attempting to pass a union container layout
+    // expected-error@+1 {{invalid application of '##.' to non-integer type}}
+    size_t err4 = ##.union DummyUnion;
+
+    // Test Case: Passing array configurations
+    // expected-error@+1 {{invalid application of '##.' to non-integer type}}
+    size_t err6 = ##.int[10];
+
+    // Test Case: Passing completely invalid random tokens instead of valid C type-ids
+    // expected-error@+1 {{expected a type}}
+    size_t err7 = ##.some_undefined_identifier;
+
+    return 0;
+}

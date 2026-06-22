@@ -1,0 +1,5 @@
+main () int {
+    int scalar = 42;
+    unsigned long sz = #.scalar;
+    return 0;
+}
