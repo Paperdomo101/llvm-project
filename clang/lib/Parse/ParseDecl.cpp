@@ -7630,7 +7630,7 @@ void Parser::ParseFunctionDeclarator(Declarator &D,
 
       // 4. Parse the base type specifier (e.g., 'char')
       ParseDeclarationSpecifiers(TargetDS, EmptyTemplateInfo, AS_none,
-                                  DeclSpecContext::DSC_normal);
+                                  DeclSpecContext::DSC_type_specifier);
 
       // 5. Parse trailing pointer modifiers manually
       while (Tok.is(tok::star)) {
