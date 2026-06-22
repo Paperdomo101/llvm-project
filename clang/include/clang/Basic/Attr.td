@@ -797,9 +797,15 @@ class InheritableAttr : Attr {
 }
 
 /// C4: Bounds checked array attribute
-def C4BoundsCheckedArray : InheritableAttr {
-  let Spellings = []; // No source spelling needed since we inject it manually
+def C4BoundsCheckedArray : Attr {
+  let Spellings = [];                // No spelling; implicit only
+  let Args = [TypeArgument<"ElementType">];
   let Subjects = SubjectList<[Record]>;
+  let Documentation = [Undocumented];
+}
+def C4Main : InheritableAttr {
+  let Spellings = [];
+  let Subjects = SubjectList<[Function]>;
   let Documentation = [Undocumented];
 }
 

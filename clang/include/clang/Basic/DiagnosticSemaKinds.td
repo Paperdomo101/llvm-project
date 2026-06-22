@@ -247,6 +247,8 @@ def err_variably_modified_new_type : Error<
   "'new' cannot allocate object of variably modified type %0">;
 
 
+def err_c4_main_invalid_param : Error<
+  "first parameter of 'main' must be of type '[] char *' (bounds-checked array of char pointers)">;
 // C4 swizzle
 def err_swizzle_single_variable_tuple : Error<
   "cannot assign a multi-component swizzle or tuple to a single untyped variable; "

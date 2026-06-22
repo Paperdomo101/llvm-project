@@ -10278,6 +10278,9 @@ Sema::ActOnFunctionDeclarator(Scope *S, Declarator &D, DeclContext *DC,
   // Set the lexical context. If this is a function-scope declaration, or has a
   // C++ scope specifier, or is the object of a friend declaration, the lexical
   // context will be different from the semantic context.
+  // Set the lexical context. If this is a function-scope declaration, or has a
+  // C++ scope specifier, or is the object of a friend declaration, the lexical
+  // context will be different from the semantic context.
   NewFD->setLexicalDeclContext(CurContext);
 
   if (IsLocalExternDecl)
@@ -12778,6 +12781,24 @@ bool Sema::CheckFunctionDeclaration(Scope *S, FunctionDecl *NewFD,
   return Redeclaration;
 }
 
+
+static bool IsC4ArgvType(QualType QT, ASTContext &Context) {
+    auto *RD = QT->getAsRecordDecl();
+    if (!RD) return false;
+
+    auto *Attr = RD->getAttr<C4BoundsCheckedArrayAttr>();
+    if (!Attr) return false;
+
+    QualType EltTy = Attr->getElementType(); // Now it's QualType
+    if (EltTy.isNull()) return false;
+
+    // Verify it's a pointer to char
+    if (auto *PT = EltTy->getAs<PointerType>()) {
+        return PT->getPointeeType()->isCharType();
+    }
+    return false;
+}
+
 void Sema::CheckMain(FunctionDecl *FD, const DeclSpec &DS) {
   // [basic.start.main]p3
   //    The main function shall not be declared with C linkage-specification.
@@ -12891,6 +12912,24 @@ void Sema::CheckMain(FunctionDecl *FD, const DeclSpec &DS) {
   unsigned nparams = FTP->getNumParams();
   assert(FD->getNumParams() == nparams);
 
+  // llvm::errs() << "MAIN PARAM TYPE:\n";
+  // FTP->getParamType(0)->dump();
+
+  // if (auto *RD = FTP->getParamType(0)->getAsRecordDecl()) {
+  //     llvm::errs() << "HAS C4 ATTR = "
+  //                  << RD->hasAttr<C4BoundsCheckedArrayAttr>()
+  //                  << "\n";
+  // }
+
+  bool IsC4Main =
+      !getLangOpts().CPlusPlus &&
+      nparams == 1 &&
+      IsC4ArgvType(FTP->getParamType(0), Context);
+
+  if (IsC4Main)
+      FD->addAttr(C4MainAttr::CreateImplicit(Context));
+
+
   bool HasExtraParameters = (nparams > 3);
 
   if (FTP->isVariadic()) {
@@ -12914,43 +12953,50 @@ void Sema::CheckMain(FunctionDecl *FD, const DeclSpec &DS) {
   // FIXME: a lot of the following diagnostics would be improved
   // if we had some location information about types.
 
-  QualType CharPP =
-    Context.getPointerType(Context.getPointerType(Context.CharTy));
-  QualType Expected[] = { Context.IntTy, CharPP, CharPP, CharPP };
+  if (!IsC4Main) {
+      // If main has exactly one parameter and it's not the C4 array type,
+      // give a custom error and skip the standard type checks.
+      if (nparams == 1) {
+          Diag(FD->getParamDecl(0)->getLocation(), diag::err_c4_main_invalid_param);
+          FD->setInvalidDecl(true);
+      } else {
+          QualType CharPP =
+              Context.getPointerType(Context.getPointerType(Context.CharTy));
+          QualType Expected[] = { Context.IntTy, CharPP, CharPP, CharPP };
 
-  for (unsigned i = 0; i < nparams; ++i) {
-    QualType AT = FTP->getParamType(i);
+          for (unsigned i = 0; i < nparams; ++i) {
+              QualType AT = FTP->getParamType(i);
+              bool mismatch = true;
 
-    bool mismatch = true;
+              if (Context.hasSameUnqualifiedType(AT, Expected[i]))
+                  mismatch = false;
+              else if (Expected[i] == CharPP) {
+                  // As an extension, the following forms are okay:
+                  //   char const **
+                  //   char const * const *
+                  //   char * const *
+                  QualifierCollector qs;
+                  const PointerType* PT;
+                  if ((PT = qs.strip(AT)->getAs<PointerType>()) &&
+                      (PT = qs.strip(PT->getPointeeType())->getAs<PointerType>()) &&
+                      Context.hasSameType(QualType(qs.strip(PT->getPointeeType()), 0),
+                                          Context.CharTy)) {
+                      qs.removeConst();
+                      mismatch = !qs.empty();
+                  }
+              }
 
-    if (Context.hasSameUnqualifiedType(AT, Expected[i]))
-      mismatch = false;
-    else if (Expected[i] == CharPP) {
-      // As an extension, the following forms are okay:
-      //   char const **
-      //   char const * const *
-      //   char * const *
+              if (mismatch) {
+                  Diag(FD->getLocation(), diag::err_main_arg_wrong) << i << Expected[i];
+                  FD->setInvalidDecl(true);
+              }
+          }
 
-      QualifierCollector qs;
-      const PointerType* PT;
-      if ((PT = qs.strip(AT)->getAs<PointerType>()) &&
-          (PT = qs.strip(PT->getPointeeType())->getAs<PointerType>()) &&
-          Context.hasSameType(QualType(qs.strip(PT->getPointeeType()), 0),
-                              Context.CharTy)) {
-        qs.removeConst();
-        mismatch = !qs.empty();
+          // Warn for main(int) only if it wasn't invalidated by the above.
+          if (nparams == 1 && !FD->isInvalidDecl()) {
+              Diag(FD->getLocation(), diag::warn_main_one_arg);
+          }
       }
-    }
-
-    if (mismatch) {
-      Diag(FD->getLocation(), diag::err_main_arg_wrong) << i << Expected[i];
-      // TODO: suggest replacing given type with expected type
-      FD->setInvalidDecl(true);
-    }
-  }
-
-  if (nparams == 1 && !FD->isInvalidDecl()) {
-    Diag(FD->getLocation(), diag::warn_main_one_arg);
   }
 
   if (!FD->isInvalidDecl() && FD->getDescribedFunctionTemplate()) {

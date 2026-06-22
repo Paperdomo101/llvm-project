@@ -186,7 +186,9 @@ QualType Sema::GetOrCreateC4ArrayType(QualType ElementTy) {
   RD->addDecl(SizeField);
 
   RD->completeDefinition();
-  RD->addAttr(C4BoundsCheckedArrayAttr::CreateImplicit(Context));
+  // Convert ElementTy to TypeSourceInfo*
+  TypeSourceInfo *TSI = Context.getTrivialTypeSourceInfo(ElementTy);
+  RD->addAttr(C4BoundsCheckedArrayAttr::CreateImplicit(Context, TSI));
 
   // Use explicit cast to avoid ambiguity
   QualType RecordTy = Context.getTypeDeclType(cast<TypeDecl>(RD));

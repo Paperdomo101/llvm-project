@@ -2429,6 +2429,11 @@ void CodeGenModule::UpdateMultiVersionNames(GlobalDecl GD,
 StringRef CodeGenModule::getMangledName(GlobalDecl GD) {
   GlobalDecl CanonicalGD = GD.getCanonicalDecl();
 
+  if (auto *FD = dyn_cast<FunctionDecl>(GD.getDecl())) {
+      if (FD->hasAttr<C4MainAttr>())
+          return "__c4_main";
+  }
+
   // Some ABIs don't have constructor variants.  Make sure that base and
   // complete constructors get mangled the same.
   if (const auto *CD = dyn_cast<CXXConstructorDecl>(CanonicalGD.getDecl())) {
@@ -6945,6 +6950,75 @@ void CodeGenModule::HandleCXXStaticMemberVarInstantiation(VarDecl *VD) {
   EmitTopLevelDecl(VD);
 }
 
+void CodeGenModule::EmitC4MainWrapper(const FunctionDecl *UserFD,
+                                      llvm::Function *UserFn) {
+    llvm::LLVMContext &Ctx = getLLVMContext();
+
+    // int main(int argc, char **argv)
+    llvm::Type *Int32Ty = llvm::Type::getInt32Ty(getLLVMContext());
+
+    llvm::Type *PtrTy =
+        llvm::PointerType::get(Ctx, 0);
+
+    llvm::FunctionType *MainTy =
+        llvm::FunctionType::get(
+            Int32Ty,
+            {Int32Ty, PtrTy},
+            false);
+
+    llvm::Function *MainFn =
+        llvm::Function::Create(
+            MainTy,
+            llvm::GlobalValue::ExternalLinkage,
+            "main",
+            &getModule());
+
+    llvm::BasicBlock *BB =
+        llvm::BasicBlock::Create(Ctx, "entry", MainFn);
+
+    llvm::IRBuilder<> Builder(BB);
+
+    auto ArgIt = MainFn->arg_begin();
+    llvm::Value *Argc = &*ArgIt++;
+    llvm::Value *Argv = &*ArgIt;
+
+    // === Step 1: get user ABI type ([2 x i64]) ===
+    llvm::Type *ParamTy =
+        UserFn->getFunctionType()->getParamType(0);
+
+    // === Step 2: allocate ABI struct ===
+    llvm::Value *Tmp =
+        Builder.CreateAlloca(ParamTy, nullptr, "c4.args");
+
+    // === Step 3: build fields using GEPs (no ptrtoint) ===
+    llvm::Value *ItemsPtr =
+        Builder.CreateStructGEP(ParamTy, Tmp, 0);
+
+    llvm::Value *CountPtr =
+        Builder.CreateStructGEP(ParamTy, Tmp, 1);
+
+    // argv → pointer stored directly (no integer cast)
+    Builder.CreateStore(Argv, ItemsPtr);
+
+    // argc → i64
+    llvm::Value *Argc64 =
+        Builder.CreateIntCast(Argc,
+                              Builder.getInt64Ty(),
+                              false);
+
+    Builder.CreateStore(Argc64, CountPtr);
+
+    // === Step 4: load aggregate exactly like Clang does ===
+    llvm::Value *Agg =
+        Builder.CreateLoad(ParamTy, Tmp);
+
+    // === Step 5: call user main ===
+    llvm::Value *Result =
+        Builder.CreateCall(UserFn, {Agg});
+
+    Builder.CreateRet(Result);
+}
+
 void CodeGenModule::EmitGlobalFunctionDefinition(GlobalDecl GD,
                                                  llvm::GlobalValue *GV) {
   const auto *D = cast<FunctionDecl>(GD.getDecl());
@@ -6982,6 +7056,11 @@ void CodeGenModule::EmitGlobalFunctionDefinition(GlobalDecl GD,
 
   if (!tryEmitCUDADeviceInvalidFunctionBody(GD, Fn))
     CodeGenFunction(*this).GenerateCode(GD, Fn, FI);
+
+  // C4 main wrapper generation
+  if (D->hasAttr<C4MainAttr>())
+    EmitC4MainWrapper(D, Fn);
+
 
   setNonAliasAttributes(GD, Fn);
 

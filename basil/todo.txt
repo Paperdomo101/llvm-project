@@ -9,12 +9,6 @@
     bobtype := ?.bob
     ```
 
-
-    ## capacity-of operator ##.
-    ```
-    ##.int // INT_MAX
-    ```
-
     ## string-of operator $.
     ```
     bob := 5;
@@ -146,6 +140,17 @@
 # ===|===|=== DONE ===|===|===
 # ____________________________
 
+
+    ## Custom main signature
+    ```
+    main ([] char *args) int {...}
+    ```
+
+
+    ## capacity-of operator ##.
+    ```
+    ##.int // INT_MAX
+    ```
 
 
     ## variable in if statement

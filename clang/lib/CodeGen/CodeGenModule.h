@@ -2004,6 +2004,10 @@ private:
 
   void EmitGlobalDefinition(GlobalDecl D, llvm::GlobalValue *GV = nullptr);
 
+  /// C4: main function wrapper
+  void EmitC4MainWrapper(const FunctionDecl *UserFD, llvm::Function *UserFn);
+  /// ------------------------------
+
   void EmitGlobalFunctionDefinition(GlobalDecl GD, llvm::GlobalValue *GV);
   void EmitMultiVersionFunctionDefinition(GlobalDecl GD, llvm::GlobalValue *GV);
 
