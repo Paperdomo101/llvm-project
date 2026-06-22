@@ -5007,7 +5007,7 @@ LValue CodeGenFunction::EmitArraySubscriptExpr(const ArraySubscriptExpr *E,
  // If the isolated base object represents our custom array metadata structure layout
   if (BaseTy->isRecordType()) {
     const RecordDecl *RD = BaseTy->getAsRecordDecl();
-    if (RD && RD->getIdentifier() == nullptr &&
+    if (RD && RD->hasAttr<C4BoundsCheckedArrayAttr>() && RD->getIdentifier() == nullptr &&
         RD->lookup(&CGM.getContext().Idents.get(C4_ARRAY_SIZE_FIELD)).isSingleResult()) {
 
       // 1. Emit CodeGen tracking instructions to fetch the runtime Index value
@@ -5031,13 +5031,59 @@ LValue CodeGenFunction::EmitArraySubscriptExpr(const ArraySubscriptExpr *E,
       LValue SizeLV = EmitLValueForField(BaseLV, SizeField);
       llvm::Value *SizeVal = EmitLoadOfScalar(SizeLV, SourceLocation());
 
-      // 3. Align operand bit-widths for clean hardware matching
+
+      // =========================================================
+      // Normalize index width to match the array size width.
+      // Preserve signedness when extending/truncating.
+      // =========================================================
+
+      QualType IdxQT = E->getIdx()->getType();
+      bool IndexIsSigned = IdxQT->hasSignedIntegerRepresentation();
+
       if (IndexVal->getType() != SizeVal->getType()) {
-        IndexVal = Builder.CreateIntCast(IndexVal, SizeVal->getType(), /*isSigned=*/true);
+        IndexVal = Builder.CreateIntCast(
+            IndexVal,
+            SizeVal->getType(),
+            IndexIsSigned);
       }
 
-      // 4. Perform the dynamic unsigned greater-or-equal logical comparison evaluation
-      llvm::Value *IsOutOfBounds = Builder.CreateICmpUGE(IndexVal, SizeVal, "is_out_of_bounds");
+      // =========================================================
+      // Explicit negative-index detection.
+      // =========================================================
+
+      llvm::Value *NegativeIndex = nullptr;
+
+      if (IndexIsSigned) {
+        NegativeIndex = Builder.CreateICmpSLT(
+            IndexVal,
+            llvm::ConstantInt::get(SizeVal->getType(), 0),
+            "negative_index");
+      }
+
+      // =========================================================
+      // Upper-bound check.
+      // =========================================================
+
+      llvm::Value *TooLarge = Builder.CreateICmpUGE(
+          IndexVal,
+          SizeVal,
+          "index_ge_size");
+
+      // =========================================================
+      // Final out-of-bounds condition.
+      // =========================================================
+
+      llvm::Value *IsOutOfBounds;
+
+      if (NegativeIndex) {
+        IsOutOfBounds = Builder.CreateOr(
+            NegativeIndex,
+            TooLarge,
+            "is_out_of_bounds");
+      } else {
+        IsOutOfBounds = TooLarge;
+      }
+
 
       llvm::BasicBlock *SafeAccessBB = createBasicBlock("safe_array_access");
       llvm::BasicBlock *TrapBB = createBasicBlock("bounds_panic_abort");
@@ -5048,22 +5094,24 @@ LValue CodeGenFunction::EmitArraySubscriptExpr(const ArraySubscriptExpr *E,
       // --- TRAP BLOCK TARGET REMAPPED TO MATCH COMPILE-TIME FORMAT ---
       EmitBlock(TrapBB);
 
-      // 1. Map the standard C library function prototypes
-      llvm::FunctionCallee FPrintfFn = CGM.getModule().getOrInsertFunction(
-          "fprintf",
-          llvm::FunctionType::get(
-              IntTy, {VoidPtrTy, VoidPtrTy}, true));
+      // 1. Map fprintf and exit (unchanged)
+      llvm::FunctionCallee PrintfFn =
+          CGM.getModule().getOrInsertFunction(
+              "printf",
+              llvm::FunctionType::get(
+                  IntTy,
+                  {Builder.getPtrTy()},
+                  true));
 
-      llvm::FunctionCallee ExitFn = CGM.getModule().getOrInsertFunction(
-          "exit",
-          llvm::FunctionType::get(VoidTy, {IntTy}, false));
+      llvm::FunctionCallee AbortFn =
+          CGM.getModule().getOrInsertFunction(
+              "abort",
+              llvm::FunctionType::get(
+                  VoidTy,
+                  {},
+                  false));
 
-      // 2. Fetch the platform-specific standard error descriptor stream pointer reference
-      llvm::Value *StdErrExt = CGM.getModule().getOrInsertGlobal("__stderrp", VoidPtrTy);
-      llvm::Value *StdErrPtr = Builder.CreateAlignedLoad(
-          VoidPtrTy, StdErrExt, llvm::Align(8), "stderr");
-
-      // 3. COMPILE-TIME METADATA EXTRACTION:
+      // 3. Metadata extraction (unchanged)
       SourceLocation Loc = E->getExprLoc();
       PresumedLoc PLoc = getContext().getSourceManager().getPresumedLoc(Loc);
       const char *FileName = PLoc.isValid() ? PLoc.getFilename() : "<unknown_file>";
@@ -5076,38 +5124,183 @@ LValue CodeGenFunction::EmitArraySubscriptExpr(const ArraySubscriptExpr *E,
         }
       }
 
-      // 4. MATCHED ANSI-COLOUR FORMAT STRING:
-      // Formats exactly like: filename:line: c:: error: index X is out of bounds for array 'NAME' of size Y [X/Z]
-      const char *PanicFormatStr =
-          "\033[0m%s:%u: \033[33mc:: \033[31merror: \033[0;2mindex %zu is out of bounds for array '%s' of size %zu [%zu/%zu]\033[0m\n";
-      llvm::Value *FormatStrPtr = Builder.CreateGlobalString(PanicFormatStr, "bounds_panic_fmt");
+      // 4. --- CHOOSE FORMAT STRING BASED ON TARGET ---
+      // ---------------------------------------------------------
+      // Runtime diagnostic message selection
+      // ---------------------------------------------------------
 
-      // 5. Build the argument parameters list for the runtime fprintf call
-      llvm::Value *FileNamePtr = Builder.CreateGlobalString(FileName, "bounds_panic_file");
-      llvm::Value *ArrayNamePtr = Builder.CreateGlobalString(ArrayNameStr, "bounds_panic_arrname");
-      llvm::Value *LineVal = llvm::ConstantInt::get(Int32Ty, LineNumber);
+      const llvm::Triple &TT = CGM.getTarget().getTriple();
+      bool IsWasm = TT.isWasm();
 
-      // Upcast size trackers to 64-bit size parameters for perfect printf alignment
-      llvm::Value *Idx64 = Builder.CreateIntCast(IndexVal, Int64Ty, /*isSigned=*/false);
-      llvm::Value *Size64 = Builder.CreateIntCast(SizeVal, Int64Ty, /*isSigned=*/false);
+      const char *EmptyFmt;
+      const char *NegativeFmt;
+      const char *BoundsFmt;
 
-      // Calculate the maximum valid index value (size - 1) for the bracket display
-      llvm::Value *MaxIdx64 = Builder.CreateSub(Size64, llvm::ConstantInt::get(Int64Ty, 1), "max_valid_idx");
+      if (IsWasm) {
+        EmptyFmt =
+            "%s:%u: c:: error: index %lld is out of bounds for empty array\n";
 
-      // 6. Generate the function execution blocks sequentially
-      // Arguments mapping matches our format specifiers in exact order:
-      // (%s=filename, %u=line, %zu=index, %s=arrayname, %zu=size, %zu=index, %zu=max_valid_idx)
-      Builder.CreateCall(FPrintfFn, {StdErrPtr, FormatStrPtr, FileNamePtr, LineVal, Idx64, ArrayNamePtr, Size64, Idx64, MaxIdx64});
-      Builder.CreateCall(ExitFn, {llvm::ConstantInt::get(IntTy, 1)});
+        NegativeFmt =
+            "%s:%u: c:: error: negative array index %lld is invalid\n";
 
+        BoundsFmt =
+            "%s:%u: c:: error: array index %zu is out of bounds\n";
+      } else {
+        EmptyFmt =
+            "\033[0m%s:%u: \033[33mc:: \033[31merror: "
+            "\033[0;2mindex %lld is out of bounds for empty array '%s'\033[0m\n";
+
+        NegativeFmt =
+            "\033[0m%s:%u: \033[33mc:: \033[31merror: "
+            "\033[0;2mnegative index %lld is invalid for array '%s' of size %zu\033[0m\n";
+
+        BoundsFmt =
+            "\033[0m%s:%u: \033[33mc:: \033[31merror: "
+            "\033[0;2mindex %zu is out of bounds for array '%s' of size %zu [%zu/%zu]\033[0m\n";
+      }
+
+      llvm::Value *EmptyFmtPtr =
+          Builder.CreateGlobalString(EmptyFmt, "bounds_empty_fmt");
+
+      llvm::Value *NegativeFmtPtr =
+          Builder.CreateGlobalString(NegativeFmt, "bounds_negative_fmt");
+
+      llvm::Value *BoundsFmtPtr =
+          Builder.CreateGlobalString(BoundsFmt, "bounds_oob_fmt");
+
+      llvm::Value *FileNamePtr =
+          Builder.CreateGlobalString(FileName, "bounds_panic_file");
+
+      llvm::Value *ArrayNamePtr =
+          Builder.CreateGlobalString(ArrayNameStr, "bounds_panic_arrname");
+
+      llvm::Value *LineVal =
+          llvm::ConstantInt::get(Int32Ty, LineNumber);
+
+      // Preserve signedness for diagnostic printing.
+      llvm::Value *IdxSigned64 =
+          Builder.CreateIntCast(IndexVal, Int64Ty, IndexIsSigned);
+
+      llvm::Value *IdxUnsigned64 =
+          Builder.CreateIntCast(IndexVal, Int64Ty, false);
+
+      llvm::Value *Size64 =
+          Builder.CreateIntCast(SizeVal, Int64Ty, false);
+
+      llvm::Value *SizeIsZero =
+          Builder.CreateICmpEQ(
+              Size64,
+              llvm::ConstantInt::get(Int64Ty, 0),
+              "size_is_zero");
+
+      llvm::Value *MaxIdx64 =
+          Builder.CreateSelect(
+              Builder.CreateICmpUGT(
+                  Size64,
+                  llvm::ConstantInt::get(Int64Ty, 0)),
+              Builder.CreateSub(
+                  Size64,
+                  llvm::ConstantInt::get(Int64Ty, 1)),
+              llvm::ConstantInt::get(Int64Ty, 0),
+              "max_valid_idx");
+
+      // ---------------------------------------------------------
+      // Emit specialized message
+      // ---------------------------------------------------------
+
+      // ---------------------------------------------------------
+      // Trap sub-blocks
+      // ---------------------------------------------------------
+
+      llvm::BasicBlock *EmptyBB    = createBasicBlock("bounds_empty");
+      llvm::BasicBlock *NonEmptyBB = createBasicBlock("bounds_nonempty");
+      llvm::BasicBlock *NegativeBB = NegativeIndex
+                                         ? createBasicBlock("bounds_negative")
+                                         : nullptr;
+      llvm::BasicBlock *RangeBB    = createBasicBlock("bounds_range");
+
+      // Empty arrays are handled first.
+      Builder.CreateCondBr(
+          SizeIsZero,
+          EmptyBB,
+          NonEmptyBB);
+
+      // =========================================================
+      // Empty array error
+      // =========================================================
+
+      EmitBlock(EmptyBB);
+
+      Builder.CreateCall(
+          PrintfFn,
+          {EmptyFmtPtr,
+           FileNamePtr,
+           LineVal,
+           IdxSigned64,
+           ArrayNamePtr});
+
+      Builder.CreateCall(AbortFn);
       Builder.CreateUnreachable();
-      // ---------------------------------------------------------------------
 
-      // --- SAFE ACCESS BLOCK CONTINUATION ---
+      // =========================================================
+      // Non-empty array
+      // =========================================================
+
+      EmitBlock(NonEmptyBB);
+
+      if (NegativeIndex) {
+        Builder.CreateCondBr(
+            NegativeIndex,
+            NegativeBB,
+            RangeBB);
+
+        // -------------------------------------------------------
+        // Negative index error
+        // -------------------------------------------------------
+
+        EmitBlock(NegativeBB);
+
+        Builder.CreateCall(
+            PrintfFn,
+            {NegativeFmtPtr,
+             FileNamePtr,
+             LineVal,
+             IdxSigned64,
+             ArrayNamePtr,
+             Size64});
+
+        Builder.CreateCall(AbortFn);
+        Builder.CreateUnreachable();
+      } else {
+        Builder.CreateBr(RangeBB);
+      }
+
+      // =========================================================
+      // Range error (index >= size)
+      // =========================================================
+
+      EmitBlock(RangeBB);
+
+      Builder.CreateCall(
+          PrintfFn,
+          {BoundsFmtPtr,
+           FileNamePtr,
+           LineVal,
+           IdxUnsigned64,
+           ArrayNamePtr,
+           Size64,
+           IdxUnsigned64,
+           MaxIdx64});
+
+      Builder.CreateCall(AbortFn);
+      Builder.CreateUnreachable();
+
+      // =========================================================
+      // Safe path resumes here
+      // =========================================================
+
       EmitBlock(SafeAccessBB);
-
-
-
+      // ---------------------------------------------------------------------
 
       // Boundary safety verified! Let execution continue to process the array lookup natively.
     }

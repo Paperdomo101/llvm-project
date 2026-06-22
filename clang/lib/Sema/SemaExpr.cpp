@@ -3029,9 +3029,13 @@ ExprResult Sema::ActOnIdExpression(Scope *S, CXXScopeSpec &SS,
             StringRef Buf = Context.getSourceManager().getBufferData(LocInfo.first, &Invalid);
 
             if (!Invalid && LocInfo.second < Buf.size()) {
-              unsigned StartPos = (LocInfo.second > 16) ? (LocInfo.second - 16) : 0;
-              StringRef TextWindow = Buf.substr(StartPos, LocInfo.second - StartPos + 1);
-              if (TextWindow.contains('&')) {
+              // A C4 reference parameter ('&int r1') always starts with '&' at
+              // the declaration site.  A 16-character backward window is too
+              // broad: it picks up '&' from adjacent reference parameters in
+              // the same signature (e.g. 'error_code& ec' contaminating
+              // 'const char* msg'), causing false auto-dereferences.
+              // Use the same exact-character check as ActOnParamDeclarator.
+              if (Buf[LocInfo.second] == '&') {
                 IsActiveC4Reference = true;
               }
             }
@@ -3645,22 +3649,39 @@ ExprResult Sema::BuildDeclarationNameExpr(
     return CreateRecoveryExpr(E->getBeginLoc(), E->getEndLoc(), {E});
 
   // === C4 LANGUAGE EXTENSION: UNIVERSAL VARIABLE REFERENCE DEREFERENCING ===
+  // Auto-deref is ONLY valid for parameters explicitly declared with the C4
+  // '&type' reference prefix (e.g. '&int r1').  ActOnParamDeclarator turns
+  // those into 'const T *const' pointer params.  We must NOT fire on any
+  // other const-pointer parameter (e.g. standard C 'const T *const Header')
+  // because isConstQualified() alone is far too broad a predicate.
+  //
+  // The same guard used in ActOnIdExpression is applied here: scan the raw
+  // source text immediately before the parameter's start location and confirm
+  // that a literal '&' character is present, which is the C4 reference prefix.
   ExprResult FinalExpr(E);
   if (FinalExpr.isUsable() && !FinalExpr.isInvalid()) {
     if (const auto *VDCheck = dyn_cast_or_null<VarDecl>(VD)) {
       if (isa<ParmVarDecl>(VDCheck) && VDCheck->getType()->isPointerType()) {
-        QualType VarCheckTy = VDCheck->getType();
         SourceLocation ParamStart = VDCheck->getBeginLoc();
 
         if (ParamStart.isValid() && !Context.getSourceManager().isInSystemHeader(ParamStart)) {
-          // Verify if the local parameter symbol natively carries your explicit const qualifier marker
-          if (VarCheckTy.isLocalConstQualified() || VarCheckTy.isConstQualified() ||
-              VarCheckTy.getQualifiers().hasConst()) {
+          std::pair<FileID, unsigned> LocInfo =
+              Context.getSourceManager().getDecomposedLoc(ParamStart);
+          bool Invalid = false;
+          StringRef Buf =
+              Context.getSourceManager().getBufferData(LocInfo.first, &Invalid);
 
-            // Wrap the lookups inside an implicit Dereference (*) operator node!
-            ExprResult DerefExpr = CreateBuiltinUnaryOp(NameInfo.getLoc(), UO_Deref, E);
-            if (!DerefExpr.isInvalid()) {
-              FinalExpr = DerefExpr; // Transforms 'r1' into '*r1' universally!
+          if (!Invalid && LocInfo.second < Buf.size()) {
+            // A C4 reference parameter ('&int r1') always starts with '&'
+            // at its declaration site.  A wider backward scan is too broad:
+            // it picks up '&' from other reference parameters in the same
+            // signature and falsely dereferences unrelated pointer params.
+            // Use the same exact-character check as ActOnParamDeclarator.
+            if (Buf[LocInfo.second] == '&') {
+              ExprResult DerefExpr = CreateBuiltinUnaryOp(NameInfo.getLoc(), UO_Deref, E);
+              if (!DerefExpr.isInvalid()) {
+                FinalExpr = DerefExpr; // Transforms 'r1' into '*r1' universally!
+              }
             }
           }
         }
@@ -15851,15 +15872,14 @@ ExprResult Sema::ActOnArraySizeIntrinsic(Expr *SubExpr, SourceLocation HashDotLo
   Expr *E = SubExpr->IgnoreImplicit();
   QualType TargetTy = E->getType();
 
-  // STAGE 1: Extract the true declared type of the underlying symbol if it is a variable reference
+  // STAGE 1: Extract true type from variable references
   if (auto *DRE = dyn_cast<DeclRefExpr>(E)) {
     if (auto *VD = dyn_cast_or_null<VarDecl>(DRE->getDecl())) {
       TargetTy = VD->getType();
     }
   }
 
-  // STAGE 2: If the incoming expression or variable is an explicit pointer dereference (*arrptr),
-  // peel off the outer PointerType layer to expose the underlying struct payload!
+  // STAGE 2: If it's an explicit dereference (*arrptr), peel the pointer layer
   if (auto *UO = dyn_cast<UnaryOperator>(E)) {
     if (UO->getOpcode() == UO_Deref) {
       if (TargetTy->isPointerType()) {
@@ -15868,12 +15888,12 @@ ExprResult Sema::ActOnArraySizeIntrinsic(Expr *SubExpr, SourceLocation HashDotLo
     }
   }
 
-  // STAGE 3: Fallback check for implicit reference tracking layers
+  // STAGE 3: Fallback check for implicit pointer layers
   if (TargetTy->isPointerType()) {
     TargetTy = TargetTy->getPointeeType();
   }
 
-  // STAGE 4: Enforce your existing standard unnamed record matching guards...
+  // STAGE 4: Ensure it's our custom record type
   const RecordType *RT = TargetTy.getCanonicalType()->getAs<RecordType>();
   if (!RT) {
     Diag(HashDotLoc, diag::err_invalid_size_intrinsic_target) << SubExpr->getSourceRange();
@@ -15882,16 +15902,14 @@ ExprResult Sema::ActOnArraySizeIntrinsic(Expr *SubExpr, SourceLocation HashDotLo
 
   RecordDecl *RD = RT->getDecl();
 
-  // --- REWRITTEN FIX FOR STANDALONE UNNAMED STRUCTS ---
-  // A custom slice array structural type is uniquely identified because it has no
-  // tag name identifier, has exactly 2 fields, and contains our single 'C4_ARRAY_SIZE_FIELD' variable.
+  // Ensure it's our unnamed struct with the size field
   if (RD->getIdentifier() != nullptr ||
       !RD->lookup(&Context.Idents.get(C4_ARRAY_SIZE_FIELD)).isSingleResult()) {
     Diag(HashDotLoc, diag::err_invalid_size_intrinsic_target) << SubExpr->getSourceRange();
     return ExprError();
   }
-  // ----------------------------------------------------
 
+  // Look up the size field
   DeclarationName SizeName(&Context.Idents.get(C4_ARRAY_SIZE_FIELD));
   LookupResult R(*this, SizeName, HashDotLoc, LookupMemberName);
   LookupQualifiedName(R, RD);
@@ -15901,17 +15919,29 @@ ExprResult Sema::ActOnArraySizeIntrinsic(Expr *SubExpr, SourceLocation HashDotLo
     return ExprError();
   }
 
-  // HARDENED POINTER INTRINSIC RESOLUTION:
-  // Check if the stripped expression 'E' itself evaluates to a pointer type.
-  // If it is a pointer (like joeptr), we MUST force IsArrow to true so Clang
-  // builds a proper arrow reference (->) instead of a dot reference (.),
-  // completely preventing the LLVM backend exit code 70 crash!
-  bool NeedsArrowOperator = E->getType()->isPointerType();
+  // Determine if we need arrow or dot based on the **actual base expression** type
+  bool NeedsArrow = E->getType()->isPointerType();
 
-  return BuildMemberReferenceExpr(E, E->getType(), HashDotLoc,
-                                  /*IsArrow=*/NeedsArrowOperator, CXXScopeSpec(),
-                                  SourceLocation(), /*FirstQualifierInScope=*/nullptr,
-                                  R, /*TemplateArgs=*/nullptr, /*S=*/getCurScope());
+  // --- FIX: Convert the base to a prvalue if using arrow ---
+  Expr *BaseExpr = E;
+  if (NeedsArrow) {
+    ExprResult Converted = DefaultLvalueConversion(BaseExpr);
+    if (Converted.isInvalid())
+      return ExprError();
+    BaseExpr = Converted.get();
+  }
+
+  // Build the member reference (now the base is a prvalue for arrow access)
+  return BuildMemberReferenceExpr(BaseExpr,
+                                  BaseExpr->getType(),  // use converted type
+                                  HashDotLoc,
+                                  /*IsArrow=*/NeedsArrow,
+                                  CXXScopeSpec(),
+                                  SourceLocation(),
+                                  /*FirstQualifierInScope=*/nullptr,
+                                  R,
+                                  /*TemplateArgs=*/nullptr,
+                                  /*S=*/getCurScope());
 }
 
 

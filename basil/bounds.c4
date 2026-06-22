@@ -68,6 +68,7 @@ main () int {
     printf("\033[033m[!] DELIBERATE RUNTIME ARRAY BREACH [!]\033[0m\n")
     index := #.int;
     joe[index] = 5;
+    printf("okdoky\n")
 }
 
 

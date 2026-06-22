@@ -420,7 +420,7 @@ conditional_expression (Parser *parser, Expression *left) Expression * {
 }
 
 
-parse_expression (Parser *parser, Precedence prec) Expression * {
+parse_expression (Parser *parser, Precedence prec = PREC_NONE) Expression * {
 
     trace_fn("%d", prec)
     token := parser::consume()
@@ -448,8 +448,14 @@ parse_expression (Parser *parser, Precedence prec) Expression * {
         // printl("infix: %s", token_strings[token.type])
         switch token.type {
             case TOK_QMARK:
-                left = parser::conditional_expression(left);
+                left = parser::conditional_expression( left );
                 break;
+
+            case TOK_PLUS:  case TOK_MINUS:
+            case TOK_STAR:  case TOK_SLASH:
+                left = parser::binary_expression();
+                break;
+
             default:
                 "Could not parse %s"::printl( token_strings[token.type] )
                 return NULL;
@@ -549,9 +555,9 @@ parse (Parser *parser) String_Builder {
 
     String_Builder sb = {0}
 
-    expr := parser::parse_expression( PREC_NONE )
-    &sb::print_expression( expr )
+    expr := parser::parse_expression()
 
+    &sb::print_expression( expr )
 
     return sb;
 }

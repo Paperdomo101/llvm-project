@@ -3442,7 +3442,11 @@ void Parser::ParseDeclarationSpecifiers(
     }
 
     // === C4 PATCH: BOUNDS-CHECKED ARRAY PREFIX INTERCEPT ===
-    if (Tok.is(tok::l_square) && GetLookAheadToken(1).is(tok::r_square)) {
+    // Guard: only consume '[]' as a C4 prefix when no base type has been
+    // parsed yet. Without this, a trailing '[]' in standard C array types
+    // like 'int[]' or 'char[]' would be eaten here instead of being left
+    // for ParseDeclarator/ParseBracketDeclarator to form the array type.
+    if (!DS.hasTypeSpecifier() && Tok.is(tok::l_square) && GetLookAheadToken(1).is(tok::r_square)) {
       ConsumeBracket(); // Consumes '['
       ConsumeBracket(); // Consumes ']'
 
@@ -3459,7 +3463,11 @@ void Parser::ParseDeclarationSpecifiers(
 
     // C4 PATCH: Implicit Void Return Types for Functions
     // Safeguarded against system headers, struct fields, function pointers, AND right-side lookups
-    if (!DS.hasTypeSpecifier() &&
+    // Also gated on C mode: in C++ mode this fires on 'new Type(args)', placement-new
+    // ('::new (&loc) Type(args)'), and CTAD deduction guides ('Name(params)->Name<T...>')
+    // because those all use DSC_type_specifier or DSC_top_level contexts.
+    if (!getLangOpts().CPlusPlus &&
+        !DS.hasTypeSpecifier() &&
         DSContext != DeclSpecContext::DSC_normal && // 👈 FIX: Prevent intercepting your right-side lookups
         Tok.is(tok::identifier) &&
         GetLookAheadToken(1).is(tok::l_paren)) {
@@ -3605,8 +3613,14 @@ void Parser::ParseDeclarationSpecifiers(
     // C4 LANGUAGE EXTENSION: PASS-BY-REFERENCE PREFIX DETECTOR (&type)
     // ==========================================================
     case tok::amp: {
-      // Ensure we are in a valid declaration or parameter declaration context
-      // where a reference modifier prefix is syntactically legal
+      // In C++, '&' after a type specifier is a reference declarator (e.g.
+      // 'const T&', template specialization argument '_From&', etc.),
+      // NOT a C4 pass-by-reference prefix.  Jump to DoneWithDeclSpec to exit
+      // specifier parsing *without* consuming '&', so ParseDeclarator can
+      // handle it as a reference type.  (A plain 'break' would fall through to
+      // ConsumeAnyToken() at the bottom of the loop, eating the '&' anyway.)
+      if (getLangOpts().CPlusPlus) goto DoneWithDeclSpec;
+
       SourceLocation AmpLoc = Tok.getLocation();
       ConsumeToken(); // Consumes the '&' token safely
 

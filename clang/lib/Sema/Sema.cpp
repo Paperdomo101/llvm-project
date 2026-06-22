@@ -150,6 +150,51 @@ IdentifierInfo *Sema::InventAbbreviatedTemplateParameterTypeName(
   return &Context.Idents.get(OS.str());
 }
 
+
+/// C4
+QualType Sema::GetOrCreateC4ArrayType(QualType ElementTy) {
+  QualType CanonElTy = Context.getCanonicalType(ElementTy);
+  auto It = C4ArrayTypeCache.find(CanonElTy);
+  if (It != C4ArrayTypeCache.end())
+    return It->second;
+
+  RecordDecl *RD = RecordDecl::Create(
+      Context,
+      TagDecl::TagKind::Struct,
+      Context.getTranslationUnitDecl(),
+      SourceLocation(),
+      SourceLocation(),
+      nullptr);
+  RD->startDefinition();
+
+  // __data field
+  FieldDecl *DataField = FieldDecl::Create(
+      Context, RD, SourceLocation(), SourceLocation(),
+      &Context.Idents.get(C4_ARRAY_DATA_FIELD),
+      Context.getPointerType(ElementTy),
+      nullptr, nullptr, false, ICIS_NoInit);
+  DataField->setAccess(AS_public);
+  RD->addDecl(DataField);
+
+  // __size field
+  FieldDecl *SizeField = FieldDecl::Create(
+      Context, RD, SourceLocation(), SourceLocation(),
+      &Context.Idents.get(C4_ARRAY_SIZE_FIELD),
+      Context.getSizeType(),
+      nullptr, nullptr, false, ICIS_NoInit);
+  SizeField->setAccess(AS_public);
+  RD->addDecl(SizeField);
+
+  RD->completeDefinition();
+  RD->addAttr(C4BoundsCheckedArrayAttr::CreateImplicit(Context));
+
+  // Use explicit cast to avoid ambiguity
+  QualType RecordTy = Context.getTypeDeclType(cast<TypeDecl>(RD));
+  C4ArrayTypeCache[CanonElTy] = RecordTy;
+  return RecordTy;
+}
+
+
 PrintingPolicy Sema::getPrintingPolicy(const ASTContext &Context,
                                        const Preprocessor &PP) {
   PrintingPolicy Policy = Context.getPrintingPolicy();

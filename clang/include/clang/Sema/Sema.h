@@ -2595,6 +2595,9 @@ public:
                                      Expr *Operand, SourceLocation RParenLoc);
 
   // C4
+  llvm::DenseMap<QualType, QualType> C4ArrayTypeCache;
+  QualType GetOrCreateC4ArrayType(QualType ElementTy);
+
   ExprResult ActOnTypeSizeIntrinsic(ParsedType Ty, SourceLocation OpLoc);
   ExprResult ActOnArraySizeIntrinsic(Expr *SubExpr, SourceLocation HashLoc, SourceLocation PeriodLoc);
 

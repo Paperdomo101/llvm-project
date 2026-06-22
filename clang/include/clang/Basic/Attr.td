@@ -796,6 +796,13 @@ class InheritableAttr : Attr {
   bit InheritEvenIfAlreadyPresent = 0;
 }
 
+/// C4: Bounds checked array attribute
+def C4BoundsCheckedArray : InheritableAttr {
+  let Spellings = []; // No source spelling needed since we inject it manually
+  let Subjects = SubjectList<[Record]>;
+  let Documentation = [Undocumented];
+}
+
 /// Some attributes, like calling conventions, can appear in either the
 /// declaration or the type position. These attributes are morally type
 /// attributes, but have historically been written on declarations.
@@ -5305,7 +5312,7 @@ def HLSLVkLocation : HLSLAnnotationAttr {
 }
 
 // `row_major` / `column_major` are HLSL keywords that select the in-memory
-// layout of a matrix-typed declaration. 
+// layout of a matrix-typed declaration.
 def HLSLRowMajor : TypeAttr {
   let Spellings = [CustomKeyword<"row_major">];
   let LangOpts = [HLSL];

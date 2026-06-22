@@ -129,8 +129,9 @@ CompilerTest custom_test_suite[] = {
     {
         "If Statement",
         "tests/if_statement.c4",
-        false, 1, {
-            "expected '{'"
+        false, 2, {
+            "expected expression",
+            "expected '{'",
         }
     },
     {
@@ -144,6 +145,14 @@ CompilerTest custom_test_suite[] = {
             "expected '{'",
             "'break' statement not in loop or switch statement",
         }
+    },
+    {
+        "Array types don't get demoted by === C4 PATCH: BOUNDS-CHECKED ARRAY PREFIX INTERCEPT ===",
+        "tests/emcc.c4",
+    },
+    {
+        "Postfix '->' after GNU statement-expression macro (cross-macro spelling-line false positive)",
+        "tests/macro_arrow.c4",
     },
     {
         "Enumerations",

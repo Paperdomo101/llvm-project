@@ -4,42 +4,6 @@
 # ____________________________
 
 
-
-// Defined at root scope, automatically typedefs `Entity_States`
-// with no type specified, this implicitly an enum of unsigned int, like vanilla C
-Fruit : {
-    apple,
-    orange,
-    banana,
-}
-
-// `#` is like iota from go in this context, so this is 1 << 0, 1 << 1 and so on
-Entity_States : unsigned char {
-    idle = 1 << #,
-    hurt = 1 << #,
-    walk = 1 << #,
-    dead = 1 << #,
-}
-
-// The killer feature is you can define these enums of non-integer types (they do not automatically increment if so)
-
-typedef struct { unsigned char r, g, b, a; } Color;
-
-Colors : Color {
-    RED   = {255, 0, 0, 255},
-    GREEN = {0, 255, 0, 255},
-    BLUE  = {0, 0, 255, 255},
-}
-
-// Here's the real advantage of these new enums
-DrawPixel (int x, int y, Colors color) {...}
-DrawPixel(0, 0, Colors.RED)
-// can also be written
-DrawPixel(0, 0, .RED)
-
-
-
-
     ## type-of operator ?.
     ```
     bobtype := ?.bob
@@ -130,6 +94,41 @@ DrawPixel(0, 0, .RED)
     < std/io >
 
     ```
+
+
+
+    ## enums
+    // Defined at root scope, automatically typedefs `Entity_States`
+    // with no type specified, this implicitly an enum of unsigned int, like vanilla C
+    Fruit : {
+        apple,
+        orange,
+        banana,
+    }
+
+    // `#` is like iota from go in this context, so this is 1 << 0, 1 << 1 and so on
+    Entity_States : unsigned char {
+        idle = 1 << #,
+        hurt = 1 << #,
+        walk = 1 << #,
+        dead = 1 << #,
+    }
+
+    // The killer feature is you can define these enums of non-integer types (they do not automatically increment if so)
+
+    typedef struct { unsigned char r, g, b, a; } Color;
+
+    Colors : Color {
+        RED   = {255, 0, 0, 255},
+        GREEN = {0, 255, 0, 255},
+        BLUE  = {0, 0, 255, 255},
+    }
+
+    // Here's the real advantage of these new enums
+    DrawPixel (int x, int y, Colors color) {...}
+    DrawPixel(0, 0, Colors.RED)
+    // can also be written
+    DrawPixel(0, 0, .RED)
 
     ## generics
     ```

@@ -1950,12 +1950,14 @@ Parser::ParsePostfixExpressionSuffix(ExprResult LHS) {
 
   while (true) {
     // --- C4: PREVENT EXPRESSION BLEEDING ACROSS NEWLINES ---
-    // If the next token is on a new line, check if the previous token allows an optional semi.
+    // C++ commonly chains postfix operations across lines (e.g. "expr()\n.second",
+    // "expr()\n->member"). The newline heuristic must not fire in C++ mode, or
+    // valid multiline expressions like std::pair's .second accessor break.
     SourceManager &SM = Actions.getASTContext().getSourceManager();
     SourceLocation CurrentLoc = Tok.getLocation();
     SourceLocation PrevLoc = PrevTokLocation;
 
-    if (CurrentLoc.isValid() && PrevLoc.isValid()) {
+    if (!getLangOpts().CPlusPlus && CurrentLoc.isValid() && PrevLoc.isValid()) {
       SourceLocation TargetLoc = PrevLoc.isMacroID() ? SM.getSpellingLoc(PrevLoc)
                                                      : SM.getFileLoc(PrevLoc);
       SourceLocation TokenStartLoc = Lexer::GetBeginningOfToken(TargetLoc, SM, getLangOpts());
@@ -1967,8 +1969,13 @@ Parser::ParsePostfixExpressionSuffix(ExprResult LHS) {
 
           // If the expression just finished a closing delimiter ), ], or }
           if (K == tok::r_paren || K == tok::r_square || K == tok::r_brace) {
-            unsigned CurrentLine = SM.getSpellingLineNumber(CurrentLoc);
-            unsigned PrevLine = SM.getSpellingLineNumber(PrevLoc);
+            // Use expansion line numbers (not spelling line numbers) so that
+            // tokens from different macro definitions on the same source line
+            // are treated as co-located. Spelling locations can span different
+            // lines inside different macro bodies, producing false positives
+            // that prevent '->' from being parsed as a postfix operator.
+            unsigned CurrentLine = SM.getExpansionLineNumber(CurrentLoc);
+            unsigned PrevLine = SM.getExpansionLineNumber(PrevLoc);
 
             // If the next active token is on a completely new line,
             // FORCE the postfix operator builder to stop chewing tokens immediately!
@@ -2309,7 +2316,7 @@ Parser::ParsePostfixExpressionSuffix(ExprResult LHS) {
 
               // OPTIONAL DEFENSIVE GUARD: Make sure we aren't accidentally eating a standard block
               // or macro byproduct by validating that the prior token wasn't a closing paren or macro artifact.
-            SourceLocation LBraceLoc = ConsumeToken(); // Consume '{'
+            SourceLocation LBraceLoc = ConsumeBrace(); // Consume '{'
             SmallVector<Expr *, 4> ExpandedMembers;
 
             while (true) {
@@ -2342,7 +2349,7 @@ Parser::ParsePostfixExpressionSuffix(ExprResult LHS) {
                 continue;
               }
               if (Tok.is(tok::r_brace)) {
-                ConsumeToken(); // Consume '}'
+                ConsumeBrace(); // Consume '}'
                 break;
               }
 

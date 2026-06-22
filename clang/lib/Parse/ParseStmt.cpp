@@ -1618,6 +1618,22 @@ Parser::ParsedCondition Parser::ParseCondition(SourceLocation StmtLoc,
   ParsedCondition Result;
   Result.HasDelimitedCondition = false;
 
+  // In C++ mode, delegate entirely to the original Clang condition parser.
+  // C4's tentative-parse approach doesn't understand C++17 condition
+  // declarations ("if (auto x = expr)") or init-statements
+  // ("if (init; cond)"), and the C4 isTypeSpecifier list includes 'auto'
+  // which would misdirect C++ declaration-conditions into the init-statement
+  // path.  ParseParenExprOrCondition handles all C++ cases correctly.
+  if (getLangOpts().CPlusPlus) {
+    Result.HasDelimitedCondition = true; // C++ always requires parens
+    if (ParseParenExprOrCondition(&Result.InitStmt, Result.Cond, StmtLoc,
+                                  Kind, Result.LParen, Result.RParen)) {
+      // ParseParenExprOrCondition already emitted diagnostics; signal error
+      // by leaving Cond in its default (invalid) state.
+    }
+    return Result;
+  }
+
   // C4: Treat `!(...)` as an explicitly delimited condition even though
   // it does not begin with '('.
   if (Tok.is(tok::exclaim) && GetLookAheadToken(1).is(tok::l_paren))
@@ -1633,41 +1649,15 @@ Parser::ParsedCondition Parser::ParseCondition(SourceLocation StmtLoc,
            false;
   };
 
-  // Helper to decide if a token can start a statement (for parenthesized form).
-  auto isStatementStartToken = [](const Token &Tok) -> bool {
-    switch (Tok.getKind()) {
-    case tok::l_brace:
-    case tok::semi:
-    case tok::kw_else:
-    case tok::kw_if:
-    case tok::kw_while:
-    case tok::kw_do:
-    case tok::kw_for:
-    case tok::kw_switch:
-    case tok::kw_return:
-    case tok::kw_break:
-    case tok::kw_continue:
-    case tok::kw_goto:
-    case tok::kw_case:
-    case tok::kw_default:
-      return true;
-    default:
-      return Tok.is(tok::identifier) || Tok.is(tok::numeric_constant) ||
-             Tok.is(tok::string_literal) || Tok.is(tok::char_constant) ||
-             Tok.is(tok::kw___func__) || Tok.is(tok::kw___FUNCTION__) ||
-             Tok.is(tok::kw___PRETTY_FUNCTION__);
-    }
-  };
 
   // C4: Try parenthesized form with tentative parse.
   if (Tok.is(tok::l_paren)) {
     TentativeParsingAction TPA(*this);
 
     StmtResult TmpInit;
-    Sema::ConditionResult TmpCond;
     SourceLocation TmpLParen, TmpRParen;
 
-    TmpLParen = ConsumeToken(); // consume '('
+    TmpLParen = ConsumeParen(); // consume '('
 
     // Parse optional init (:= or declaration) if present.
     if (Tok.is(tok::identifier) && GetLookAheadToken(1).is(tok::colonequal)) {
@@ -1683,9 +1673,7 @@ Parser::ParsedCondition Parser::ParseCondition(SourceLocation StmtLoc,
       ParsedAttributes DeclSpecAttrs(AttrFactory);
       SourceLocation DeclEnd;
       DeclGroupPtrTy DG = ParseDeclaration(DeclaratorContext::SelectionInit,
-                                           DeclEnd,
-                                           DeclAttrs,
-                                           DeclSpecAttrs,
+                                           DeclEnd, DeclAttrs, DeclSpecAttrs,
                                            /*DeclSpecStart=*/nullptr);
       if (DG) {
         TmpInit = Actions.ActOnDeclStmt(DG, DeclEnd, DeclEnd);
@@ -1708,27 +1696,23 @@ Parser::ParsedCondition Parser::ParseCondition(SourceLocation StmtLoc,
 
     // Expect closing ')'
     if (Tok.is(tok::r_paren)) {
-      TmpRParen = ConsumeToken();
+      TmpRParen = ConsumeParen();
     } else {
       TPA.Revert();
       goto Unparenthesized;
     }
 
-    // Check if token after ')' can start a statement.
-    if (isStatementStartToken(Tok)) {
-      TPA.Commit();
-      Result.HasDelimitedCondition = true;  // parenthesized => delimited
-      Result.InitStmt = std::move(TmpInit);
-      Result.LParen = TmpLParen;
-      Result.RParen = TmpRParen;
-      Result.Cond = Actions.ActOnCondition(getCurScope(), StmtLoc,
-                                           CondExpr.get(), Kind);
-      if (Result.Cond.isInvalid())
-        return Result;
+    // Always commit – parentheses are the sole delimiter.
+    TPA.Commit();
+    Result.HasDelimitedCondition = true;
+    Result.InitStmt = std::move(TmpInit);
+    Result.LParen = TmpLParen;
+    Result.RParen = TmpRParen;
+    Result.Cond = Actions.ActOnCondition(getCurScope(), StmtLoc,
+                                         CondExpr.get(), Kind);
+    if (Result.Cond.isInvalid())
       return Result;
-    } else {
-      TPA.Revert();
-    }
+    return Result;
   }
 
 Unparenthesized:
