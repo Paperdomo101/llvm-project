@@ -7079,13 +7079,17 @@ StmtResult Sema::ActOnTypeInferredAssignment(Scope *S, LHSVarInfo Var, Expr *Ini
   //    is still a StringLiteral (i.e., we didn't have a cast).
   if (isC4ArrayType(FinalType)) {
     Expr *Inner = InitExpr->IgnoreImplicit();
-    if (auto *SL = dyn_cast<StringLiteral>(Inner)) {
-      Expr *Converted = BuildC4ArrayFromStringLiteral(SL, FinalType);
-      if (!Converted) {
-        Diag(SL->getBeginLoc(), diag::err_cannot_convert_string_to_c4);
-        return StmtError();
+    if (auto *ILE = dyn_cast<InitListExpr>(Inner)) {
+      // But only if it's not already inside a CompoundLiteralExpr (i.e., no cast).
+      // We can check if the original InitExpr was a CompoundLiteralExpr; we have HasCast flag.
+      if (!HasCast) {
+        Expr *Converted = BuildC4ArrayFromInitList(ILE, FinalType);
+        if (!Converted) {
+          Diag(ILE->getBeginLoc(), diag::err_cannot_convert_string_to_c4);
+          return StmtError();
+        }
+        InitExpr = Converted;
       }
-      InitExpr = Converted;
     }
   }
 
@@ -7170,14 +7174,16 @@ StmtResult Sema::ActOnMultiTypeInferredAssignment(Scope *S,
       FinalType = Context.getConstType(FinalType);
 
     if (isC4ArrayType(FinalType)) {
-      Expr *SubE = SubInitExpr->IgnoreImplicit();
-      if (auto *SL = dyn_cast<StringLiteral>(SubE)) {
-        Expr *Converted = BuildC4ArrayFromStringLiteral(SL, FinalType);
-        if (!Converted) {
-          Diag(SL->getBeginLoc(), diag::err_cannot_convert_string_to_c4);
-          return StmtError();
+      Expr *SubInner = SubInitExpr->IgnoreImplicit();
+      if (auto *ILE = dyn_cast<InitListExpr>(SubInner)) {
+        if (!HasCast) { // HasCast per sub‑expr, if we track it.
+          Expr *Converted = BuildC4ArrayFromInitList(ILE, FinalType);
+          if (!Converted) {
+            Diag(ILE->getBeginLoc(), diag::err_cannot_convert_string_to_c4);
+            return StmtError();
+          }
+          SubInitExpr = Converted;
         }
-        SubInitExpr = Converted;
       }
     }
 
@@ -14202,107 +14208,47 @@ void Sema::AddInitializerToDecl(Decl *RealDecl, Expr *Init, bool DirectInit) {
     return;
   }
 
-   // --- C4: IN-PLACE STRUCTURAL INITIALIZER REWRITE ---
-  VarDecl *VDeclCheck = dyn_cast<VarDecl>(RealDecl);
-  if (VDeclCheck && VDeclCheck->getType()->isRecordType() && Init) {
-    const RecordDecl *RD = VDeclCheck->getType()->getAsRecordDecl();
+    VarDecl *VDecl = dyn_cast<VarDecl>(RealDecl);
+    // --- C4 REWRITE (pure C) ---
+    if (!getLangOpts().CPlusPlus && VDecl && VDecl->getType()->isRecordType() && Init) {
+      QualType VarType = VDecl->getType();
+      if (isC4ArrayType(VarType)) {
+        Expr *InitExpr = Init->IgnoreImplicit();
+        Expr *NewInit = nullptr;
 
-    if (RD && RD->getNumFields() == 2) {
-      auto It = RD->field_begin();
-      FieldDecl *DataField = *It++;
-      FieldDecl *SizeField = *It;
-
-      if (DataField->getType()->isPointerType() && SizeField->getName() == C4_ARRAY_SIZE_FIELD) {
-        Expr *E = Init->IgnoreImplicit();
-
-        if (auto *ILE = dyn_cast<InitListExpr>(E)) {
-          size_t ElementCount = ILE->getNumInits();
-          QualType ElementTy = DataField->getType()->getPointeeType();
-
-          // 1. HARDENED ELEMENT TYPE COERCION LOOP
-          for (size_t idx = 0; idx < ElementCount; ++idx) {
-            Expr *Element = ILE->getInit(idx);
-
-            // === FIX: Type bare InitListExpr elements ===
-            if (auto *NestedILE = dyn_cast<InitListExpr>(Element)) {
-                if (NestedILE->getType()->isVoidType()) {
-                    NestedILE->setType(ElementTy);
-                }
-            }
-            // =============================================
-
-
-            QualType ElementSrcTy = Element->getType();
-
-            if (!Context.hasSameType(ElementTy, ElementSrcTy)) {
-              CastKind CK = CK_NoOp;
-              if (ElementSrcTy->isFloatingType() && ElementTy->isIntegerType()) {
-                CK = CK_FloatingToIntegral;
-              } else if (ElementSrcTy->isIntegerType() && ElementTy->isFloatingType()) {
-                CK = CK_IntegralToFloating;
-              } else if (ElementSrcTy->isIntegerType() && ElementTy->isIntegerType()) {
-                CK = CK_IntegralCast;
-              }
-
-              // --- FIX: Ensure element is a prvalue before casting ---
-              ExprResult CastExpr = Element;
-              if (Element->isGLValue()) {
-                CastExpr = DefaultLvalueConversion(Element);
-                if (CastExpr.isInvalid())
-                  continue;  // skip this element (or handle error)
-              }
-              CastExpr = ImpCastExprToType(CastExpr.get(), ElementTy, CK);
-              if (!CastExpr.isInvalid()) {
-                ILE->setInit(idx, CastExpr.get());
-              }
-            }
-          }
-
-          // 2. Properly scale the raw backing array configuration type context
-          QualType BackingArrayTy = Context.getConstantArrayType(
-              ElementTy, llvm::APInt(32, ElementCount), nullptr, ArraySizeModifier::Normal, 0);
-          ILE->setType(BackingArrayTy);
-
-          // 3. Wrap your modified ILE directly inside a local CompoundLiteralExpr
-          TypeSourceInfo *TInfo = Context.getTrivialTypeSourceInfo(BackingArrayTy, Init->getBeginLoc());
-          CompoundLiteralExpr *CLE = new (Context) CompoundLiteralExpr(
-              Init->getBeginLoc(), TInfo, BackingArrayTy, VK_LValue, ILE, /*FileScope=*/false);
-
-          // 4. Implicitly decay the Compound Literal array into a raw data pointer
-          ExprResult DecayedPtr = DefaultFunctionArrayLvalueConversion(CLE);
-          if (DecayedPtr.isInvalid()) return;
-
-          // 5. Construct the structural container initializer list components
-          SmallVector<Expr*, 2> StructInits;
-          StructInits.push_back(DecayedPtr.get()); // Field 0: __data pointer address
-
-          llvm::APInt SizeVal(Context.getTypeSize(Context.getSizeType()), ElementCount);
-          Expr *SizeLiteral = IntegerLiteral::Create(Context, SizeVal, Context.getSizeType(), Init->getBeginLoc());
-          StructInits.push_back(SizeLiteral);     // Field 1: __size metadata parameter
-
-          // Create the parent implicit struct layout container wrapper
-          InitListExpr *NewStructInit = new (Context) InitListExpr(Context, Init->getBeginLoc(), StructInits, Init->getEndLoc(), false);
-          NewStructInit->setType(VDeclCheck->getType());
-
-          // --- CRITICAL MUTABILITY FORCE FIX ---
-          // Forcefully toggle the value kind on all nested expression nodes!
-          // This overrides Clang's default temporary optimizations and flags the
-          // memory as a fully writeable LValue, ensuring modifications to 'arr[0]' persist.
-          CLE->setValueKind(VK_LValue);
-          DecayedPtr.get()->setValueKind(VK_PRValue);
-          NewStructInit->setValueKind(VK_LValue);
-          // -------------------------------------
-
-          // 6. Update the initialization nodes inline and let execution fall through naturally
-          Init = NewStructInit;
-          VDeclCheck->setInit(NewStructInit);
+        // If already a valid InitListExpr of the struct type, keep it.
+        if (auto *ILE = dyn_cast<InitListExpr>(InitExpr)) {
+          if (Context.hasSameType(ILE->getType(), VarType))
+            NewInit = ILE;
         }
 
+        if (!NewInit) {
+          // Unwrap compound literals to get the inner initializer.
+          if (auto *CLE = dyn_cast<CompoundLiteralExpr>(InitExpr)) {
+            InitExpr = CLE->getInitializer();
+          }
+
+          if (auto *ILE = dyn_cast<InitListExpr>(InitExpr)) {
+            NewInit = BuildC4ArrayFromInitList(ILE, VarType);
+          } else if (auto *SL = dyn_cast<StringLiteral>(InitExpr)) {
+            // Direct string literal → direct C4 struct.
+            NewInit = BuildC4ArrayFromStringLiteral(SL, VarType);
+          } else {
+            Diag(InitExpr->getBeginLoc(), diag::err_cannot_create_c4_array);
+            return;
+          }
+        }
+
+        if (NewInit) {
+          VDecl->setInit(NewInit);
+          return; // early return
+        } else {
+          Diag(InitExpr->getBeginLoc(), diag::err_cannot_create_c4_array);
+          return;
+        }
       }
     }
-  }
-
-  // =============================================================
+    // --- END C4 REWRITE ---
 
 
   if (auto *Method = dyn_cast<CXXMethodDecl>(RealDecl)) {
@@ -14315,7 +14261,7 @@ void Sema::AddInitializerToDecl(Decl *RealDecl, Expr *Init, bool DirectInit) {
     return;
   }
 
-  VarDecl *VDecl = dyn_cast<VarDecl>(RealDecl);
+  // VarDecl *VDecl = dyn_cast<VarDecl>(RealDecl);
   if (!VDecl) {
     assert(!isa<FieldDecl>(RealDecl) && "field init shouldn't get here");
     Diag(RealDecl->getLocation(), diag::err_illegal_initializer);

@@ -2598,17 +2598,30 @@ public:
   // C4
   llvm::DenseMap<QualType, QualType> C4ArrayTypeCache;
 
+  ExprResult decayExpr(Expr *E);
+
+  bool IsIdentifierDeclaredInCurrentContext(IdentifierInfo *II, Scope *S);
+  // bool IsIdentifierDeclaredInScope(Scope *S, IdentifierInfo *II);
+
+  /// Check if a type is a C4 bounds‑checked array (struct with C4BoundsCheckedArray attr).
+  bool isC4ArrayType(QualType T) const;
+
+  /// Extract the element type from a C4 array struct (by looking at __data field).
+  QualType getElementTypeFromC4Array(QualType C4Type) const;
+
+  /// Build a CompoundLiteralExpr of the C4 array struct from an InitListExpr.
+  InitListExpr* BuildC4ArrayFromInitList(InitListExpr *ILE, QualType C4Type);
+
+  /// Build a CompoundLiteralExpr of the C4 array struct from a StringLiteral.
+  InitListExpr* BuildC4ArrayFromStringLiteral(StringLiteral *SL, QualType C4Type);
+
 
   QualType getArrayTypeForInitList(InitListExpr *ILE);
 
-  bool isC4ArrayType(QualType T) const;
 
-  /// Build a CompoundLiteralExpr of the C4 array struct type from a StringLiteral.
-  /// The struct's __data points to the string, and __size is set to length (excluding null).
-  Expr* BuildC4ArrayFromStringLiteral(StringLiteral *SL, QualType C4Type);
   std::pair<QualType, uint64_t> getStringLiteralInfo(StringLiteral *SL);
 
-  QualType getElementTypeFromC4Array(QualType T) const;
+  // QualType getElementTypeFromC4Array(QualType T) const;
   QualType ApplyArrayQualifier(QualType Type, ArrayKind Kind);
 
   QualType GetOrCreateC4ArrayType(QualType ElementTy);

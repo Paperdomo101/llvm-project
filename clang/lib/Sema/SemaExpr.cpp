@@ -5248,6 +5248,7 @@ ExprResult Sema::ActOnArraySubscriptExpr(Scope *S, Expr *base,
 
           if (HasKnownCapacity && (IndexValue >= (int64_t)ArrayCapacity || IndexValue < 0)) {
             int64_t MaxValidIndex = (int64_t)ArrayCapacity - 1;
+            /// TODO:C4: err_array_is_empty
             Diag(Idx->getExprLoc(), diag::err_array_index_out_of_bounds)
               << IndexValue << MaxValidIndex << (int64_t)ArrayCapacity << UnwrappedBase->getSourceRange();
             return ExprError();
@@ -8523,6 +8524,22 @@ Sema::ActOnCastExpr(Scope *S, SourceLocation LParenLoc,
       isVectorLiteral = true;
   }
 
+  // Handle (char[])"string" as a compound literal with inferred size.
+  if (castType->isIncompleteArrayType() && isa<StringLiteral>(CastExpr)) {
+    StringLiteral *SL = cast<StringLiteral>(CastExpr);
+    const ArrayType *AT = Context.getAsArrayType(SL->getType());
+    if (!AT) return ExprError();
+    QualType EltTy = AT->getElementType();
+    uint64_t Len = SL->getLength() + 1; // include null terminator
+    llvm::APInt Size(Context.getTypeSize(Context.getSizeType()), Len);
+    QualType CompleteArrayTy = Context.getConstantArrayType(EltTy, Size, nullptr,
+                                                            ArraySizeModifier::Normal, 0);
+    // Create a CompoundLiteralExpr with this complete type.
+    TypeSourceInfo *TSI = Context.getTrivialTypeSourceInfo(CompleteArrayTy, LParenLoc);
+    Expr *Result = new (Context) CompoundLiteralExpr(LParenLoc, TSI, CompleteArrayTy,
+                                                     VK_LValue, SL, /*IsFileScope=*/false);
+    return Result;
+  }
   // If this is a vector initializer, '(' type ')' '(' init, ..., init ')'
   // then handle it as such.
   if (isVectorLiteral)

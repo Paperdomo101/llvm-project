@@ -1843,11 +1843,29 @@ StmtResult Parser::ParseIfStatement(SourceLocation *TrailingElseLoc) {
   std::optional<bool> ConstexprCondition;
 
   // C4: Parse the condition using the common helper.
+  SourceLocation CondStartLoc = Tok.getLocation();
   ParsedCondition Parsed = ParseCondition(
       IfLoc,
       IsConstexpr ? Sema::ConditionKind::ConstexprIf : Sema::ConditionKind::Boolean);
-  if (Parsed.Cond.isInvalid() || Parsed.InitStmt.isInvalid())
-    return StmtError();
+  if (Parsed.Cond.isInvalid() || Parsed.InitStmt.isInvalid()) {
+    ExprResult Recovery = Actions.CreateRecoveryExpr(CondStartLoc, Tok.getLocation(), {});
+    if (Recovery.isInvalid())
+      return StmtError();
+    // Determine ConditionKind (same as passed to ParseCondition).
+    Sema::ConditionKind CK = IsConstexpr ? Sema::ConditionKind::ConstexprIf
+                                          : Sema::ConditionKind::Boolean;
+    Parsed.Cond = Actions.ActOnCondition(
+        getCurScope(),
+        IfLoc,
+        Recovery.get(),
+        CK,
+        Parsed.InitStmt.get());   // may be null
+    // If InitStmt was invalid, clear it (already handled above).
+    if (Parsed.InitStmt.isInvalid())
+      Parsed.InitStmt = StmtResult();
+    if (Parsed.RParen.isInvalid())
+      Parsed.RParen = Tok.getLocation();
+  }
 
   if (IsConstexpr)
     ConstexprCondition = Parsed.Cond.getKnownValue();

@@ -195,7 +195,7 @@ CompilerTest custom_test_suite[] = {
         "tests/qualified_type_inference.c4",
         false, 2, {
             "cannot assign to variable 'a' with const-qualified type 'const int'",
-            "note: variable 'a' declared const here",
+            "cannot infer element type for array initializer"
         }
     },
     {

@@ -153,85 +153,244 @@ IdentifierInfo *Sema::InventAbbreviatedTemplateParameterTypeName(
 
 /// C4
 
-QualType Sema::getArrayTypeForInitList(InitListExpr *ILE) {
-  unsigned NumInits = ILE->getNumInits();
-  if (NumInits == 0)
-    return QualType(); // error: empty initializer not allowed here
-
-  // Determine the common element type (all must be same for now).
-  QualType FirstType = ILE->getInit(0)->getType();
-  for (unsigned i = 1; i < NumInits; ++i) {
-    QualType T = ILE->getInit(i)->getType();
-    // Simple check: exact same type. You can extend with usual conversions.
-    if (!Context.hasSameType(FirstType, T))
-      return QualType(); // error: type mismatch
-  }
-
-  // Create a constant array type with size = NumInits.
-  llvm::APInt Size(Context.getTypeSize(Context.getSizeType()), NumInits);
-  return Context.getConstantArrayType(FirstType, Size, nullptr,
-                                      ArraySizeModifier::Normal, 0);
-}
-
 /// Checks if a type is a C4 bounds‑checked array (struct with the attribute).
 bool Sema::isC4ArrayType(QualType T) const {
-  if (auto *RT = T->getAs<RecordType>()) {
-    RecordDecl *RD = RT->getDecl();
-    if (RD->hasAttr<C4BoundsCheckedArrayAttr>())
-      return true;
-  }
-  return false;
+  if (T.isNull()) return false;
+  const RecordType *RT = T->getAs<RecordType>();
+  if (!RT) return false;
+  RecordDecl *RD = RT->getDecl();
+  return RD->hasAttr<C4BoundsCheckedArrayAttr>();
 }
 
 
-Expr* Sema::BuildC4ArrayFromStringLiteral(StringLiteral *SL, QualType C4Type) {
-  if (!isC4ArrayType(C4Type)) return nullptr;
-
+QualType Sema::getElementTypeFromC4Array(QualType C4Type) const {
+  if (!isC4ArrayType(C4Type)) return QualType();
   RecordDecl *RD = C4Type->getAs<RecordType>()->getDecl();
-  FieldDecl *DataField = nullptr, *SizeField = nullptr;
   for (auto *Field : RD->fields()) {
-    if (Field->getName() == C4_ARRAY_DATA_FIELD)
-      DataField = Field;
-    else if (Field->getName() == C4_ARRAY_SIZE_FIELD)
-      SizeField = Field;
+    if (Field->getName() == C4_ARRAY_DATA_FIELD) {
+      QualType PtrTy = Field->getType();
+      if (auto *PT = PtrTy->getAs<PointerType>())
+        return PT->getPointeeType();
+    }
   }
-  if (!DataField || !SizeField) return nullptr;
+  return QualType();
+}
 
-  // 1. Build __data pointer: array-to-pointer decay of the string literal.
-  QualType ElementTy = Context.getAsArrayType(SL->getType())->getElementType();
-  QualType PtrTy = Context.getPointerType(ElementTy);
+
+ExprResult Sema::decayExpr(Expr *E) {
+  if (!E) return ExprError();
+  // First try standard lvalue conversion (including function-to-pointer).
+  ExprResult R = DefaultLvalueConversion(E);
+  if (R.isInvalid()) return R;
+  // If still an array type, explicitly decay to pointer.
+  QualType Ty = R.get()->getType();
+  if (Ty->isArrayType()) {
+    const ArrayType *AT = Context.getAsArrayType(Ty);
+    if (!AT) return R; // safety
+    QualType ElementTy = AT->getElementType();
+    QualType PtrTy = Context.getPointerType(ElementTy);
+    R = ImpCastExprToType(R.get(), PtrTy, CK_ArrayToPointerDecay);
+  }
+  return R;
+}
+
+InitListExpr* Sema::BuildC4ArrayFromInitList(InitListExpr *ILE, QualType C4Type) {
+  if (!ILE || C4Type.isNull()) return nullptr;
+
+  // ---- 1. Determine element type ----
+  QualType ElementType = getElementTypeFromC4Array(C4Type);
+  if (ElementType.isNull() && ILE->getNumInits() > 0) {
+    Expr *FirstInit = ILE->getInit(0);
+    ExprResult Decayed = decayExpr(FirstInit);
+    if (Decayed.isUsable())
+      ElementType = Decayed.get()->getType();
+    else
+      ElementType = FirstInit->getType();
+    if (ElementType.isNull()) return nullptr;
+  }
+  if (ElementType.isNull()) return nullptr;
+
+  unsigned NumInits = ILE->getNumInits();
+  SourceLocation Loc = ILE->getBeginLoc();
+
+  // ---- 2. SPECIAL CASE: single initializer that is a string literal AND element type is character ----
+  if (NumInits == 1) {
+    Expr *SingleInit = ILE->getInit(0)->IgnoreImplicit();
+    if (auto *SL = dyn_cast<StringLiteral>(SingleInit)) {
+      // Only apply this special case if the element type is a character type.
+      if (ElementType->isCharType()) {
+        // Decay string literal directly to pointer to character type.
+        QualType DecayedPtrTy = Context.getPointerType(ElementType);
+        Expr *DataExpr = ImplicitCastExpr::Create(
+            Context,
+            DecayedPtrTy,
+            CK_ArrayToPointerDecay,
+            SL,
+            nullptr,
+            VK_PRValue,
+            FPOptionsOverride());
+        uint64_t Len = SL->getLength(); // excluding null
+        QualType SizeTy = Context.getSizeType();
+        Expr *SizeExpr = IntegerLiteral::Create(
+            Context,
+            llvm::APInt(Context.getTypeSize(SizeTy), Len),
+            SizeTy, Loc);
+        SmallVector<Expr*, 2> StructInits = {DataExpr, SizeExpr};
+        InitListExpr *Result = new (Context) InitListExpr(Context, Loc, StructInits, Loc,
+                                                          /*Synthetic=*/false);
+        Result->setType(C4Type);
+        return Result;
+      }
+      // Otherwise, fall through to general path.
+    }
+    // Other single inits (e.g., compound literals) also fall through.
+  }
+
+  // ---- 3. Fix nested InitListExpr types ----
+  for (unsigned i = 0; i < NumInits; ++i) {
+    Expr *Init = ILE->getInit(i);
+    if (auto *NestedILE = dyn_cast<InitListExpr>(Init)) {
+      if (NestedILE->getType().isNull() || NestedILE->getType()->isVoidType())
+        NestedILE->setType(ElementType);
+    }
+  }
+
+  // ---- 4. Empty initializer ----
+  if (NumInits == 0) {
+    QualType PtrType = Context.getPointerType(ElementType);
+    QualType IntTy = Context.IntTy;
+    Expr *Zero = IntegerLiteral::Create(
+        Context,
+        llvm::APInt(Context.getIntWidth(IntTy), 0),
+        IntTy, Loc);
+    Expr *NullPtr = ImplicitCastExpr::Create(
+        Context, PtrType, CK_IntegralToPointer,
+        Zero, nullptr, VK_PRValue, FPOptionsOverride());
+    QualType SizeTy = Context.getSizeType();
+    Expr *SizeExpr = IntegerLiteral::Create(
+        Context,
+        llvm::APInt(Context.getTypeSize(SizeTy), 0),
+        SizeTy, Loc);
+    SmallVector<Expr*, 2> StructInits = {NullPtr, SizeExpr};
+    InitListExpr *Result = new (Context) InitListExpr(Context, Loc, StructInits, Loc,
+                                                      /*Synthetic=*/false);
+    Result->setType(C4Type);
+    return Result;
+  }
+
+  // ---- 5. General case: convert each element to ElementType (prvalue) ----
+  SmallVector<Expr*, 8> ConvertedInits;
+  for (unsigned i = 0; i < NumInits; ++i) {
+    Expr *Orig = ILE->getInit(i);
+    ExprResult Arg = decayExpr(Orig);
+    if (Arg.isInvalid()) return nullptr;
+    QualType SrcType = Arg.get()->getType();
+
+    if (Context.hasSameType(SrcType, ElementType)) {
+      ConvertedInits.push_back(Arg.get());
+      continue;
+    }
+
+    CastKind CK = CK_NoOp;
+    if (SrcType->isFloatingType() && ElementType->isIntegerType())
+      CK = CK_FloatingToIntegral;
+    else if (SrcType->isIntegerType() && ElementType->isFloatingType())
+      CK = CK_IntegralToFloating;
+    else if (SrcType->isIntegerType() && ElementType->isIntegerType())
+      CK = CK_IntegralCast;
+    else if (SrcType->isPointerType() && ElementType->isPointerType())
+      CK = CK_BitCast;
+    else
+      return nullptr;
+
+    ExprResult Cast = ImpCastExprToType(Arg.get(), ElementType, CK);
+    if (Cast.isInvalid()) return nullptr;
+    ConvertedInits.push_back(Cast.get());
+  }
+
+  // ---- 6. Build temporary array compound literal ----
+  llvm::APInt Size(Context.getTypeSize(Context.getSizeType()), NumInits);
+  QualType ArrayType = Context.getConstantArrayType(ElementType, Size, nullptr,
+                                                    ArraySizeModifier::Normal, 0);
+  InitListExpr *ArrayILE = new (Context) InitListExpr(Context, Loc, ConvertedInits,
+                                                      ILE->getEndLoc(), /*Synthetic=*/false);
+  ArrayILE->setType(ArrayType);
+  TypeSourceInfo *ArrayTSI = Context.getTrivialTypeSourceInfo(ArrayType);
+  CompoundLiteralExpr *ArrayCLE = new (Context) CompoundLiteralExpr(
+      Loc, ArrayTSI, ArrayType, VK_LValue, ArrayILE, /*IsFileScope=*/false);
+
+  // ---- 7. Build struct initializer: { __data, __size } ----
+  QualType PtrType = Context.getPointerType(ElementType);
   Expr *DataExpr = ImplicitCastExpr::Create(
+      Context, PtrType, CK_ArrayToPointerDecay,
+      ArrayCLE, nullptr, VK_PRValue, FPOptionsOverride());
+  QualType SizeTy = Context.getSizeType();
+  Expr *SizeExpr = IntegerLiteral::Create(
       Context,
-      PtrTy,
-      CK_ArrayToPointerDecay,
-      SL,
-      /*BasePath=*/nullptr,
-      VK_PRValue,
-      FPOptionsOverride()
-  );
+      llvm::APInt(Context.getTypeSize(SizeTy), NumInits),
+      SizeTy, Loc);
+  SmallVector<Expr*, 2> StructInits = {DataExpr, SizeExpr};
+  InitListExpr *Result = new (Context) InitListExpr(Context, Loc, StructInits, Loc,
+                                                    /*Synthetic=*/false);
+  Result->setType(C4Type);
+  return Result;
+}
 
-  // 2. Build __size constant: length excluding null terminator.
+
+InitListExpr* Sema::BuildC4ArrayFromStringLiteral(StringLiteral *SL, QualType C4Type) {
+  if (!SL || C4Type.isNull()) return nullptr;
+
+  // Ensure the element type is a character type.
+  QualType ElementType = getElementTypeFromC4Array(C4Type);
+  if (ElementType.isNull() || !ElementType->isCharType()) return nullptr;
+
+  SourceLocation Loc = SL->getBeginLoc();
+
+  // 1. Decay string literal to a pointer of the element type.
+  QualType PtrType = Context.getPointerType(ElementType);
+  Expr *DataExpr = ImplicitCastExpr::Create(
+      Context, PtrType, CK_ArrayToPointerDecay,
+      SL, nullptr, VK_PRValue, FPOptionsOverride());
+
+  // 2. Size = length (excluding null terminator).
   uint64_t Len = SL->getLength();
   QualType SizeTy = Context.getSizeType();
   Expr *SizeExpr = IntegerLiteral::Create(
       Context,
       llvm::APInt(Context.getTypeSize(SizeTy), Len),
-      SizeTy,
-      SL->getBeginLoc()
-  );
+      SizeTy, Loc);
 
-  // 3. Create InitListExpr for the two fields (in order of declaration).
-  SmallVector<Expr*, 2> FieldInits = {DataExpr, SizeExpr};
-  SourceLocation Loc = SL->getBeginLoc();
-  // Correct constructor: (ASTContext&, SourceLocation, ArrayRef<Expr*>, SourceLocation, bool)
-  InitListExpr *ILE = new (Context) InitListExpr(Context, Loc, FieldInits, Loc, /*Synthetic=*/false);
-  ILE->setType(C4Type);
-
-  // 4. Wrap in a CompoundLiteralExpr to give it the proper type.
-  TypeSourceInfo *TSI = Context.getTrivialTypeSourceInfo(C4Type);
-  return new (Context) CompoundLiteralExpr(Loc, TSI, C4Type, VK_LValue, ILE, /*IsFileScope=*/false);
+  // 3. Build the struct initializer: { items, count }
+  SmallVector<Expr*, 2> StructInits = {DataExpr, SizeExpr};
+  InitListExpr *Result = new (Context) InitListExpr(Context, Loc, StructInits, Loc,
+                                                    /*Synthetic=*/false);
+  Result->setType(C4Type);
+  return Result;
 }
 
+
+
+QualType Sema::getArrayTypeForInitList(InitListExpr *ILE) {
+  unsigned NumInits = ILE->getNumInits();
+  if (NumInits == 0) return QualType();
+
+  QualType CommonType;
+  for (unsigned i = 0; i < NumInits; ++i) {
+    Expr *Init = ILE->getInit(i);
+    ExprResult Decayed = decayExpr(Init);
+    if (Decayed.isInvalid()) return QualType();
+    QualType Ty = Decayed.get()->getType();
+    if (i == 0) {
+      CommonType = Ty;
+    } else if (!Context.hasSameType(CommonType, Ty)) {
+      return QualType();  // mismatched types
+    }
+  }
+
+  llvm::APInt Size(Context.getTypeSize(Context.getSizeType()), NumInits);
+  return Context.getConstantArrayType(CommonType, Size, nullptr,
+                                      ArraySizeModifier::Normal, 0);
+}
 
 
 /// For a string literal, returns the element type (char, wchar_t, etc.)
@@ -246,23 +405,6 @@ std::pair<QualType, uint64_t> Sema::getStringLiteralInfo(StringLiteral *SL) {
   QualType CharType = AT->getElementType();
   uint64_t Len = SL->getLength(); // number of characters excluding null terminator
   return {CharType, Len};
-}
-
-/// Extracts the element type from a C4 array struct.
-/// Returns null QualType if T is not a C4 array.
-QualType Sema::getElementTypeFromC4Array(QualType T) const {
-  if (!isC4ArrayType(T)) return QualType();
-  auto *RT = T->getAs<RecordType>();
-  RecordDecl *RD = RT->getDecl();
-  // Find the __data field; its type is a pointer to the element type.
-  for (auto *Field : RD->fields()) {
-    if (Field->getName() == C4_ARRAY_DATA_FIELD) {
-      QualType PtrTy = Field->getType();
-      if (auto *PT = PtrTy->getAs<PointerType>())
-        return PT->getPointeeType();
-    }
-  }
-  return QualType();
 }
 
 /// Applies an array qualifier to a type.

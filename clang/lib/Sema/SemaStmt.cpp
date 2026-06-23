@@ -954,6 +954,7 @@ StmtResult Sema::ActOnIfStmt(SourceLocation IfLoc,
                              ConditionResult Cond, SourceLocation RParenLoc,
                              Stmt *thenStmt, SourceLocation ElseLoc,
                              Stmt *elseStmt) {
+  // 1. Check if the wrapper itself is marked invalid
   if (Cond.isInvalid())
     return StmtError();
 
@@ -962,8 +963,18 @@ StmtResult Sema::ActOnIfStmt(SourceLocation IfLoc,
       StatementKind == IfStatementKind::ConstevalNegated;
 
   Expr *CondExpr = Cond.get().second;
+
+  // 2. NEW FIX: If there is no expression and it's not consteval,
+  // gracefully exit instead of hitting the assert.
+  if (!CondExpr && !ConstevalOrNegatedConsteval) {
+    return StmtError();
+  }
+
+  // Your debug logging code stays here...
+
   assert((CondExpr || ConstevalOrNegatedConsteval) &&
          "If statement: missing condition");
+
   // Only call the CommaVisitor when not C89 due to differences in scope flags.
   if (CondExpr && (getLangOpts().C99 || getLangOpts().CPlusPlus) &&
       !Diags.isIgnored(diag::warn_comma_operator, CondExpr->getExprLoc()))

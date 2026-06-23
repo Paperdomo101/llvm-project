@@ -1,157 +1,208 @@
+// ============================================================================
+// C4 Type‑Inferred Assignment & Array Test Suite
+// ============================================================================
 
-main () int {
+// Simple assertions
+#define assert_eq(x, y) if ((x) != (y)) { printf("FAIL at line %d: %d != %d\n", __LINE__, (int)(x), (int)(y)); exit(1); }
+#define assert_str_eq(x, y) if (strcmp((x), (y)) != 0) { printf("FAIL at line %d: expected %s, got %s\n", __LINE__, (y), (x)); exit(1); }
 
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+// ----------------------------------------------------------------------------
+// 1. CONST
+// ----------------------------------------------------------------------------
+void test_const() {
     const a := 5;
-    a = 10; // error: a is const
+    assert_eq(a, 5);
+    a = 10; // ERROR: a is const
 
-    [] c := {4, 6, 7} // infer a C4 bounds-checked array
-
-    c[] := {4, 6, 7} // infer a C array
-
-    b := {2, 4, 5} // if no type cast and all types are the same, infer a C4 array
-
+    const b := {1, 2, 3};
+    assert_eq(b.count, 3);
+    assert_eq(b.items[0], 1);
+    // b.items[0] = 42; // ERROR: const
 }
 
+// ----------------------------------------------------------------------------
+// 2. EXPLICIT QUALIFIERS
+// ----------------------------------------------------------------------------
+void test_explicit_qualifiers() {
+    [] c := {10, 20, 30};
+    assert_eq(c.count, 3);
+    assert_eq(c.items[0], 10);
 
-/|| EVENTUALLY...
+    d[] := {40, 50, 60};
+    assert_eq(d[0], 40);
+    assert_eq(d[1], 50);
 
-// ============================================================================
-// Type‑Inferred Assignment Test Suite
-// ============================================================================
+    const [] e := {1, 2, 3};
+    assert_eq(e.count, 3);
+    // e.items[0] = 5; // ERROR: const
 
-// Helper struct for struct‑cast tests.
-struct Vector2 {
-    float x, y;
-};
+    const f[] := {7, 8, 9};
+    assert_eq(f[0], 7);
+}
 
-main () int {
+// ----------------------------------------------------------------------------
+// 3. DEFAULT INFERENCE
+// ----------------------------------------------------------------------------
+void test_default_inference() {
+    g := {1, 2, 3};
+    assert_eq(g.count, 3);
+    assert_eq(g.items[0], 1);
+    h := {1, 2, 3.0}; // ERROR: mixed types
+}
 
-    // ------------------------------------------------------------------------
-    // 1. CONST
-    // ------------------------------------------------------------------------
-    const a := 5;               // a is const int
-    // a = 10;                  // ERROR: cannot assign to const variable
+// ----------------------------------------------------------------------------
+// 4. STRING LITERALS
+// ----------------------------------------------------------------------------
+void test_string_literals() {
+    s := "hello";
+    assert_eq(s.count, 5);
+    assert_str_eq(s.items, "hello");
 
-    const b := {1, 2, 3};       // b is const C4 array (bounds‑checked)
-    // b[0] = 42;               // ERROR: b is const; element assignment may also be disallowed
+    [] s_c4 := "world";
+    assert_eq(s_c4.count, 5);
+    assert_str_eq(s_c4.items, "world");
 
-    // ------------------------------------------------------------------------
-    // 2. EXPLICIT ARRAY QUALIFIERS
-    // ------------------------------------------------------------------------
-    [] c := {4, 6, 7};          // C4 array (bounds‑checked) of int[3]
-    c := {1, 2};                // ERROR: cannot reassign (if c is not const? Actually c is not const, but maybe we allow? Check your semantics.)
-                                // But if we allow reassignment, it must be compatible type.
+    s_c[] := "world";          // raw C array
+    assert_str_eq(s_c, "world");
 
-    d[] := {4, 6, 7};           // C array (raw, unchecked) of int[3]
+    s3 := (char[])"hello";     // cast → C array char[6]
+    assert_str_eq(s3, "hello");
 
-    // Qualifier + const
-    const [] e := {1, 2, 3};    // const C4 array
-    // e[0] = 5;                // ERROR: const
+    // Direct C4 char array with string literal
+    [] char s4 = "hi";
+    assert_eq(s4.count, 2);
+    assert_str_eq(s4.items, "hi");
+}
 
-    const f[] := {1, 2, 3};     // const C array
-    // f[0] = 5;                // ERROR: const
+// ----------------------------------------------------------------------------
+// 5. COMPOUND LITERALS & STRUCTS
+// ----------------------------------------------------------------------------
+typedef struct { float x, y; }  Vector2;
+typedef struct { int id; char *name; }  Thing;
 
-    // ------------------------------------------------------------------------
-    // 3. DEFAULT INFERENCE (no qualifier)
-    // ------------------------------------------------------------------------
-    g := {1, 2, 3};             // default: C4 array (since it's an array literal)
-    h := {1, 2, 3.0};           // ERROR: mixed types – cannot infer element type
+void test_compound_literals() {
+    pos := (Vector2){0, 0};
+    assert_eq((int)pos.x, 0);
+    assert_eq((int)pos.y, 0);
+    pos.x = 10;
 
-    // ------------------------------------------------------------------------
-    // 4. STRING LITERALS
-    // ------------------------------------------------------------------------
-    s := "hello";               // default: C4 array of char, size = 5 (excluding null)
-    s2 := "hello\n";            // C4 char[6] (including newline, excluding null)
+    arr := (int[]){1, 2, 3};
+    assert_eq(arr[0], 1);
+    assert_eq(arr[1], 2);
 
-    // Explicit qualifiers with strings
-    [] str_c4 := "world";       // C4 array of char, size = 5
-    str_c[] := "world";         // C array of char[6] (includes null terminator)
+    [] arr_c4 := (int[]){4, 5, 6};   // C4 array despite cast
+    assert_eq(arr_c4.count, 3);
+    assert_eq(arr_c4.items[0], 4);
 
-    // String with cast
-    s3 := (char[])"hello";      // explicit cast -> C array char[6] (no default C4)
-    s4 := (const char[])"hi";   // C array of const char[3]
+    arr_c[] := (int[]){7, 8, 9};    // C array
+    assert_eq(arr_c[0], 7);
 
-    // Wide strings (if supported)
-    // ws := L"wide";            // C4 array of wchar_t, size = 4
+    thing := (Thing){42, "answer"};
+    assert_eq(thing.id, 42);
+    assert_str_eq(thing.name, "answer");
+}
 
-    // ------------------------------------------------------------------------
-    // 5. COMPOUND LITERALS (explicit casts)
-    // ------------------------------------------------------------------------
-    pos := (Vector2){0, 0};     // struct, not array – type is Vector2
-    pos.x = 10;                 // OK, member access
+// ----------------------------------------------------------------------------
+// 6. DESTRUCTURING
+// ----------------------------------------------------------------------------
+void test_destructuring() {
+    x, y := {10, 20};
+    assert_eq(x, 10);
+    assert_eq(y, 20);
 
-    arr := (int[]){1, 2, 3};    // explicit cast -> C array int[3] (not C4)
-    // arr is a C array, not bounds‑checked.
+    a, b, c := {1, 2, 3};
+    assert_eq(a, 1);
+    assert_eq(b, 2);
+    assert_eq(c, 3);
 
-    // Compound literal with qualifier forcing C4
-    [] arr_c4 := (int[]){4, 5, 6};   // C4 array, despite cast (LHS overrides)
-    arr_c4[] := (int[]){7, 8, 9};    // C array, LHS forces C
+    s1, s2 := {"hello", "world"};
+    assert_str_eq(s1.items, "hello");
+    assert_str_eq(s2.items, "world");
 
-    // Compound literal with const
-    const c_arr := (int[]){1, 2};     // const C array int[2]
+    m, n := {(int){5}, (int){6}};
+    assert_eq(m, 5);
+    assert_eq(n, 6);
+}
 
-    // ------------------------------------------------------------------------
-    // 6. MULTI‑VARIABLE DESTRUCTURING (swizzle / tuple unpack)
-    // ------------------------------------------------------------------------
-    x, y := {10, 20};           // x = 10, y = 20 (both int)
-    // x, y, z := {1, 2};       // ERROR: count mismatch (3 vars vs 2 inits)
+// ----------------------------------------------------------------------------
+// 7. NESTED INITIALIZERS
+// ----------------------------------------------------------------------------
+typedef struct { int x, y; } Point;
 
-    a, b := "hello", "world";   // a and b are C4 arrays of char (size 5 each)
-    // but careful: the RHS is a comma expression? Actually our parser expects
-    // a single expression, but if we support multi‑value RHS with comma, then it works.
+void test_nested_initializers() {
+    [] Point points = { {1,2}, {3,4}, {5,6} };
+    assert_eq(points.count, 3);
+    assert_eq(points.items[0].x, 1);
+    assert_eq(points.items[0].y, 2);
+    assert_eq(points.items[1].x, 3);
+    assert_eq(points.items[1].y, 4);
+}
 
-    // With qualifiers on individual variables
-    [] p, q[] := {1, 2}, {3, 4};   // p is C4 int[1], q is C int[1] (depending on syntax)
-    // Not sure if we support per‑variable qualifiers in destructuring; adjust as needed.
+// ----------------------------------------------------------------------------
+// 8. SHADOWING / SCOPE
+// ----------------------------------------------------------------------------
+void test_shadowing() {
+    v := 10;
+    {
+        v := 20;
+        assert_eq(v, 20);
+    }
+    assert_eq(v, 10);
+}
 
-    // Destructuring with compound literals
-    m, n := (int){5}, (int){6};     // m=5, n=6 (both int)
-    // But compound literal of scalar may not be needed.
+// ----------------------------------------------------------------------------
+// 9. EDGE CASES
+// ----------------------------------------------------------------------------
+void test_edge_cases() {
+    [] int empty = {};
+    assert_eq(empty.count, 0);
+    // empty.items should be NULL; we don't dereference.
 
-    // ------------------------------------------------------------------------
-    // 7. EDGE CASES AND ERRORS
-    // ------------------------------------------------------------------------
-    // Empty initializer list
-    // empty := {};              // ERROR: cannot infer element type from empty list
+    [] char *args = { "hello", "world", NULL };
+    assert_eq(args.count, 3);
+    assert_str_eq(args.items[0], "hello");
+    assert_str_eq(args.items[1], "world");
 
-    // Array qualifier on non‑array
-    // [] bad := 42;             // ERROR: array qualifier on non‑array type
+    [] const char *single = { "single" };
+    assert_eq(single.count, 1);
+    assert_str_eq(single.items[0], "single");
+}
 
-    // C qualifier on non‑array
-    // bad[] := 42;              // ERROR: array qualifier on non‑array type
+// ----------------------------------------------------------------------------
+// 10. FUNCTION PARAMETERS (by value)
+// ----------------------------------------------------------------------------
+void verify_param([] int arr, size_t expected_count, int expected_0, int expected_1) {
+    assert_eq(arr.count, expected_count);
+    assert_eq(arr.items[0], expected_0);
+    assert_eq(arr.items[1], expected_1);
+    arr.items[0] = 999;  // local copy
+}
 
-    // Mismatched LHS/RHS types after inference
-    // float_arr := {1, 2, 3};   // default C4 int[3]; if we later assign float? Not here.
+void test_parameter_passing() {
+    [] int my_arr = {100, 200};
+    verify_param(my_arr, 2, 100, 200);
+    assert_eq(my_arr.items[0], 100);  // original unchanged
+}
 
-    // Using the variables to verify types (compile‑time checks)
-    // For example, sizeof should work:
-    // int sz = sizeof(c);       // should give size of C4 struct (includes data pointer + size)
-    // int sz2 = sizeof(d);      // should give 3 * sizeof(int) for C array
+// ----------------------------------------------------------------------------
+// MAIN
+// ----------------------------------------------------------------------------
+int main() {
+    test_const();
+    test_explicit_qualifiers();
+    test_default_inference();
+    test_string_literals();
+    test_compound_literals();
+    test_destructuring();
+    test_nested_initializers();
+    test_shadowing();
+    test_edge_cases();
+    test_parameter_passing();
 
-    // Member access on C4 arrays? Not directly; you need to access .data or .size.
-    // If you have such fields, you can test them.
-    // int first = c.data[0];    // if C4 struct has __data field
-    // int len = c.__size;       // should be 3
-
-    // For C arrays, normal subscript works.
-    // d[1] = 42;
-
-    // Const with destructuring?
-    // const u, v := {1, 2};     // u and v are const int
-
-    // Nested arrays?
-    // matrix := {{1,2},{3,4}};  // default C4 array of C4 arrays? Or flat? Should define.
-
-    // ------------------------------------------------------------------------
-    // 8. STRING LITERAL WITH CAST AND QUALIFIER
-    // ------------------------------------------------------------------------
-    // Already covered above.
-
-    // ------------------------------------------------------------------------
-    // 9. MIXED WITH OTHER DECLARATIONS
-    // ------------------------------------------------------------------------
-    int normal_var = 10;        // traditional declaration works alongside.
-
+    printf("All tests passed!\n");
     return 0;
 }
-||/
