@@ -4977,6 +4977,12 @@ void CodeGenFunction::EmitCountedByBoundsChecking(
 
 LValue CodeGenFunction::EmitArraySubscriptExpr(const ArraySubscriptExpr *E,
                                                bool Accessed) {
+  // Holds the pre-evaluated index value when C4 runtime bounds checking runs
+  // first.  The EmitIdxAfterBase lambda reuses this to avoid evaluating the
+  // index expression a second time (which would double-fire side effects like
+  // sp++ in stack[sp++]).
+  llvm::Value *C4IdxVal = nullptr;
+
   // --- C4: UNIVERSAL RUNTIME BOUNDS-CHECKING TRAPS ---
   const Expr *BaseExpr = E->getBase()->IgnoreImplicit();
 
@@ -5010,8 +5016,11 @@ LValue CodeGenFunction::EmitArraySubscriptExpr(const ArraySubscriptExpr *E,
     if (RD && RD->hasAttr<C4BoundsCheckedArrayAttr>() && RD->getIdentifier() == nullptr &&
         RD->lookup(&CGM.getContext().Idents.get(C4_ARRAY_SIZE_FIELD)).isSingleResult()) {
 
-      // 1. Emit CodeGen tracking instructions to fetch the runtime Index value
+      // 1. Emit CodeGen tracking instructions to fetch the runtime Index value.
+      // Save into C4IdxVal so EmitIdxAfterBase can reuse it without re-emitting
+      // the expression (which would double-evaluate side effects).
       llvm::Value *IndexVal = EmitScalarExpr(E->getIdx());
+      C4IdxVal = IndexVal;
 
       // 2. Load the implicit 'count' component from the parent structure instance
       LValue BaseLV = EmitLValue(BaseExpr);
@@ -5313,9 +5322,13 @@ LValue CodeGenFunction::EmitArraySubscriptExpr(const ArraySubscriptExpr *E,
       (E->getLHS() == E->getIdx()) ? EmitScalarExpr(E->getIdx()) : nullptr;
   bool SignedIndices = false;
   auto EmitIdxAfterBase = [&, IdxPre](bool Promote) -> llvm::Value * {
-    auto *Idx = IdxPre;
-    if (E->getLHS() != E->getIdx()) {
-      assert(E->getRHS() == E->getIdx() && "index was neither LHS nor RHS");
+    // If the C4 bounds-check already evaluated the index (to avoid emitting
+    // a side-effecting expression like sp++ twice), use that result directly.
+    auto *Idx = C4IdxVal ? C4IdxVal : IdxPre;
+    if (!Idx) {
+      if (E->getLHS() != E->getIdx()) {
+        assert(E->getRHS() == E->getIdx() && "index was neither LHS nor RHS");
+      }
       Idx = EmitScalarExpr(E->getIdx());
     }
 

@@ -9565,6 +9565,30 @@ ExprResult Sema::ActOnConditionalOp(SourceLocation QuestionLoc,
                                     SourceLocation ColonLoc,
                                     Expr *CondExpr, Expr *LHSExpr,
                                     Expr *RHSExpr) {
+  // C4: A single-field swizzle like v.{x} is a ParenListExpr with a null
+  // QualType.  Unwrap it to a ParenExpr so all subsequent getType() calls
+  // in this function and in CheckConditionalOperands are safe.
+  // Only single-element lists are unwrapped; multi-element lists in a ternary
+  // position are invalid — a null-type guard below converts them to ExprError
+  // instead of crashing.
+  auto unwrapSwizzle = [&](Expr *E) -> Expr * {
+    if (!E) return E;
+    auto *PLE = dyn_cast<ParenListExpr>(E);
+    if (!PLE || PLE->getNumExprs() != 1) return E;
+    ExprResult R = ActOnParenExpr(PLE->getLParenLoc(), PLE->getRParenLoc(),
+                                  PLE->getExpr(0));
+    return R.isUsable() ? R.get() : E;
+  };
+  CondExpr = unwrapSwizzle(CondExpr);
+  LHSExpr  = unwrapSwizzle(LHSExpr);
+  RHSExpr  = unwrapSwizzle(RHSExpr);
+  // Catch any remaining null-typed operand (e.g. multi-element swizzle used
+  // in a ternary position) and turn it into a clean error rather than a crash.
+  if ((CondExpr && CondExpr->getType().isNull()) ||
+      (LHSExpr  && LHSExpr->getType().isNull())  ||
+      (RHSExpr  && RHSExpr->getType().isNull()))
+    return ExprError();
+
   // If this is the gnu "x ?: y" extension, analyze the types as though the LHS
   // was the condition.
   OpaqueValueExpr *opaqueValue = nullptr;
@@ -16678,99 +16702,112 @@ static void DiagnoseBinOpPrecedence(Sema &Self, BinaryOperatorKind Opc,
     DiagnoseShiftCompare(Self, OpLoc, LHSExpr, RHSExpr);
 }
 
+
+
 ExprResult Sema::ActOnBinOp(Scope *S, SourceLocation TokLoc,
                             tok::TokenKind Kind,
                             Expr *LHSExpr, Expr *RHSExpr) {
 
-  // ---> C4: SWIZZLED ELEMENT MATH SUPPORT <---
-  // If the LHS is a ParenListExpr holding exactly 1 element, extract it transparently.
-  // This seamlessly transforms 'base.{x} * 2.0f' into 'base.x * 2.0f' inside Sema!
-  if (LHSExpr && isa<ParenListExpr>(LHSExpr)) {
-    auto *PLE = cast<ParenListExpr>(LHSExpr);
-    if (PLE->getNumExprs() == 1) {
-      LHSExpr = PLE->getExpr(0);
-    }
-  }
-
-  // Do the exact same protective extraction check for the RHS operand
-  if (RHSExpr && isa<ParenListExpr>(RHSExpr)) {
-    auto *PLE = cast<ParenListExpr>(RHSExpr);
-    if (PLE->getNumExprs() == 1) {
-      RHSExpr = PLE->getExpr(0);
-    }
-  }
-  // ----------------------------------------------------
-
   // ---> C4: PARALLEL BATCH SWIZZLE ASSIGNMENTS <---
-  if (Kind == tok::equal && LHSExpr && RHSExpr &&
-      isa<ParenListExpr>(LHSExpr) && isa<ParenListExpr>(RHSExpr)) {
+if (Kind == tok::equal && LHSExpr && RHSExpr && isa<ParenListExpr>(LHSExpr)) {
+  auto *LHSList = cast<ParenListExpr>(LHSExpr);
+  SmallVector<Expr*, 4> RHSExprs;
 
-    auto *LHSList = cast<ParenListExpr>(LHSExpr);
-    auto *RHSList = cast<ParenListExpr>(RHSExpr);
+  // 1. Collect RHS expressions: ParenListExpr, InitListExpr, or Comma Chain
+  if (auto *RHSList = dyn_cast<ParenListExpr>(RHSExpr)) {
+    for (unsigned i = 0, n = RHSList->getNumExprs(); i < n; ++i)
+      RHSExprs.push_back(RHSList->getExpr(i));
 
-    // 1. Enforce that the number of variables on both sides match perfectly
-    if (LHSList->getNumExprs() == RHSList->getNumExprs()) {
-      unsigned NumOps = LHSList->getNumExprs();
+  } else if (auto *InitList = dyn_cast<InitListExpr>(RHSExpr)) {
+    // FIX: Safely extract expressions from brace initializers like {output_raw, output_len}
+    for (unsigned i = 0, n = InitList->getNumInits(); i < n; ++i)
+      RHSExprs.push_back(InitList->getInit(i));
 
-      SmallVector<Stmt *, 8> SynthesizedAssignments;
-      SmallVector<Expr *, 4> TempVarRefs;
-
-      // --- PHASE A: Cache all RHS expressions inside hidden local variables ---
-      for (unsigned i = 0; i < NumOps; ++i) {
-        Expr *RHSVal = RHSList->getExpr(i);
-
-        IdentifierInfo *TmpII = &Context.Idents.get(
-            "__swiz_tmp_" + std::to_string(i) + "_" + std::to_string(TokLoc.getRawEncoding()));
-
-        VarDecl *TmpVD = VarDecl::Create(
-            Context, getCurLexicalContext(), TokLoc, TokLoc, TmpII,
-            RHSVal->getType(), Context.getTrivialTypeSourceInfo(RHSVal->getType(), TokLoc),
-            SC_None);
-        TmpVD->setImplicit(true);
-        TmpVD->setInit(RHSVal);
-
-        // Directly invoke the Sema action to convert the decl to a Stmt block
-        DeclGroupPtrTy DG = ConvertDeclToDeclGroup(TmpVD);
-        StmtResult DeclSt = ActOnDeclStmt(DG, TokLoc, TokLoc);
-        if (DeclSt.isUsable())
-          SynthesizedAssignments.push_back(DeclSt.get());
-
-        ExprResult TmpRef = BuildDeclRefExpr(TmpVD, RHSVal->getType(), VK_LValue, TokLoc);
-        TempVarRefs.push_back(TmpRef.get());
-      }
-
-      // --- PHASE B: Perform sequential assignments from the temps back to LHS targets ---
-      for (unsigned i = 0; i < NumOps; ++i) {
-        Expr *LHSTarget = LHSList->getExpr(i);
-        Expr *TmpValue = TempVarRefs[i];
-
-        // Construct individual assignment expressions: 'swiz.x = __swiz_tmp_0'
-        ExprResult SubAssign = BuildBinOp(S, TokLoc, BO_Assign, LHSTarget, TmpValue);
-        if (SubAssign.isUsable()) {
-          StmtResult ExprSt = ActOnExprStmt(SubAssign.get());
-          if (ExprSt.isUsable())
-            SynthesizedAssignments.push_back(ExprSt.get());
-        }
-      }
-
-      // --- PHASE C: Package everything cleanly inside a Statement Expression ---
-      CompoundStmt *CS = CompoundStmt::Create(Context, SynthesizedAssignments,
-                                              FPOptionsOverride(), TokLoc, TokLoc);
-
-      // Correct Clang allocation placement-new method for constructing a StmtExpr
-      Expr *FinalResult = new (Context) StmtExpr(
-          CS,
-          LHSList->getExpr(0)->getType(),
-          TokLoc,
-          TokLoc,
-          /*TemplateDepth=*/0);
-
-      return FinalResult;
+  } else if (auto *Comma = dyn_cast<BinaryOperator>(RHSExpr); Comma && Comma->getOpcode() == BO_Comma) {
+    SmallVector<Expr*, 4> Stack;
+    Expr *E = RHSExpr;
+    while (auto *B = dyn_cast<BinaryOperator>(E)) {
+      if (B->getOpcode() != BO_Comma) break;
+      Stack.push_back(B->getRHS());
+      E = B->getLHS();
     }
+    Stack.push_back(E);
+
+    for (auto It = Stack.rbegin(), End = Stack.rend(); It != End; ++It)
+      RHSExprs.push_back(*It);
   }
-  // ---------------------------------------------------------
 
+  // 2. Enforce that the number of variables on both sides match perfectly
+  if (!RHSExprs.empty() && LHSList->getNumExprs() == RHSExprs.size()) {
+    unsigned NumOps = LHSList->getNumExprs();
 
+    SmallVector<Stmt *, 8> SynthesizedAssignments;
+    SmallVector<Expr *, 4> TempVarRefs;
+
+    // --- PHASE A: Cache all RHS expressions inside hidden local variables ---
+    for (unsigned i = 0; i < NumOps; ++i) {
+      Expr *RHSVal = RHSExprs[i];
+
+      // Defensively avoid cascading bugs if a sub-expression itself lacks type info
+      if (!RHSVal || RHSVal->getType().isNull())
+        return ExprError();
+
+      IdentifierInfo *TmpII = &Context.Idents.get(
+          "__swiz_tmp_" + std::to_string(i) + "_" + std::to_string(TokLoc.getRawEncoding()));
+
+      // Strip any lingering placeholder type dependencies
+      QualType TmpType = RHSVal->getType().getNonReferenceType();
+
+      VarDecl *TmpVD = VarDecl::Create(
+          Context, getCurLexicalContext(), TokLoc, TokLoc, TmpII,
+          TmpType, Context.getTrivialTypeSourceInfo(TmpType, TokLoc),
+          SC_None);
+      TmpVD->setImplicit(true);
+      TmpVD->setInit(RHSVal);
+
+      if (S) {
+        PushOnScopeChains(TmpVD, S);
+      } else {
+        getCurLexicalContext()->addDecl(TmpVD);
+      }
+
+      DeclGroupPtrTy DG = ConvertDeclToDeclGroup(TmpVD);
+      StmtResult DeclSt = ActOnDeclStmt(DG, TokLoc, TokLoc);
+      if (DeclSt.isUsable())
+        SynthesizedAssignments.push_back(DeclSt.get());
+
+      ExprResult TmpRef = BuildDeclRefExpr(TmpVD, TmpType, VK_LValue, TokLoc);
+      if (TmpRef.isUsable())
+        TempVarRefs.push_back(TmpRef.get());
+    }
+
+    // --- PHASE B: Perform sequential assignments from the temps back to LHS targets ---
+    for (unsigned i = 0; i < NumOps; ++i) {
+      Expr *LHSTarget = LHSList->getExpr(i);
+      Expr *TmpValue = TempVarRefs[i];
+
+      ExprResult SubAssign = BuildBinOp(S, TokLoc, BO_Assign, LHSTarget, TmpValue);
+      if (SubAssign.isUsable()) {
+        StmtResult ExprSt = ActOnExprStmt(SubAssign.get());
+        if (ExprSt.isUsable())
+          SynthesizedAssignments.push_back(ExprSt.get());
+      }
+    }
+
+    // --- PHASE C: Package everything cleanly inside a Statement Expression ---
+    CompoundStmt *CS = CompoundStmt::Create(Context, SynthesizedAssignments,
+                                            FPOptionsOverride(), TokLoc, TokLoc);
+
+    Expr *FinalResult = new (Context) StmtExpr(
+        CS,
+        LHSList->getExpr(0)->getType(),
+        TokLoc,
+        TokLoc,
+        /*TemplateDepth=*/0);
+
+    return FinalResult;
+  }
+}
 
 
   BinaryOperatorKind Opc = ConvertTokenKindToBinaryOpcode(Kind);
@@ -16844,6 +16881,28 @@ ExprResult Sema::BuildBinOp(Scope *S, SourceLocation OpLoc,
                             BinaryOperatorKind Opc,
                             Expr *LHSExpr, Expr *RHSExpr, bool ForFoldExpression) {
   if (!LHSExpr || !RHSExpr) return ExprError();
+
+  // --- C4: SWIZZLE PAREN-LIST UNWRAP ---
+  // A single-field swizzle like base.{x} produces a ParenListExpr whose
+  // QualType is null.  Every subsequent getType() call in this function
+  // would assert (!isNull()) before we even reach our compound-assignment
+  // guard below.  Unwrap single-element lists to their inner expression so
+  // they behave like any normal sub-expression (e.g. base.{x} * 2.0f).
+  // Multi-element lists in a non-assignment binary context are not valid;
+  // MaybeConvertParenListExprToParenExpr folds them to a comma expression
+  // and lets the normal type-checker produce a sensible diagnostic instead
+  // of crashing.
+  if (isa<ParenListExpr>(LHSExpr)) {
+    ExprResult R = MaybeConvertParenListExprToParenExpr(S, LHSExpr);
+    if (R.isInvalid()) return ExprError();
+    LHSExpr = R.get();
+  }
+  if (isa<ParenListExpr>(RHSExpr)) {
+    ExprResult R = MaybeConvertParenListExprToParenExpr(S, RHSExpr);
+    if (R.isInvalid()) return ExprError();
+    RHSExpr = R.get();
+  }
+  // ----------------------------------------
 
   // --- C4 FIX FOR COMPOUND ASSIGNMENT CRASH ---
   // If this is a compound assignment (e.g., +=, -=, *=) and the LHS
@@ -17360,6 +17419,14 @@ bool Sema::isQualifiedMemberAccess(Expr *E) {
 ExprResult Sema::BuildUnaryOp(Scope *S, SourceLocation OpLoc,
                               UnaryOperatorKind Opc, Expr *Input,
                               bool IsAfterAmp) {
+  // C4: Unwrap single-field swizzle (ParenListExpr with null type) so the
+  // placeholder check below does not assert on a null QualType.
+  if (isa<ParenListExpr>(Input)) {
+    ExprResult R = MaybeConvertParenListExprToParenExpr(S, Input);
+    if (R.isInvalid()) return ExprError();
+    Input = R.get();
+  }
+
   // First things first: handle placeholders so that the
   // overloaded-operator check considers the right type.
   if (const BuiltinType *pty = Input->getType()->getAsPlaceholderType()) {

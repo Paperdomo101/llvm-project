@@ -1,0 +1,170 @@
+// tests/subscript_side_effects.c4
+//
+// Regression test for double-evaluation of side-effecting index expressions
+// in C4 bounds-checked array subscripts.
+//
+// Root cause: EmitArraySubscriptExpr's C4 runtime bounds-check block called
+// EmitScalarExpr(E->getIdx()) to obtain the index value, then the normal
+// codegen path called it a second time through EmitIdxAfterBase().  Any
+// expression with a side effect (e.g. sp++) was therefore evaluated twice.
+//
+// This test verifies that sp is incremented exactly once per subscript
+// operation in every relevant syntactic position.
+
+#include <stdio.h>
+#include <stdlib.h>
+
+void assert_equal(int actual, int expected, const char *msg) {
+    if (actual != expected) {
+        printf("[FAIL] %s  (got %d, expected %d)\n", msg, actual, expected);
+        exit(1);
+    }
+}
+
+// ---- helper called by reference-pointer scenario ----------------------------
+void fill_via_ref(^[] int arr) {
+    int sp = 0;
+
+    (*arr)[sp++] = 10;
+    assert_equal(sp, 1, "ref-ptr write: sp after (*arr)[sp++] = 10");
+    assert_equal((*arr)[0], 10, "ref-ptr write: arr[0] == 10");
+
+    (*arr)[sp++] = 20;
+    assert_equal(sp, 2, "ref-ptr write: sp after (*arr)[sp++] = 20");
+    assert_equal((*arr)[1], 20, "ref-ptr write: arr[1] == 20");
+}
+
+// ---- helper called by value-copy scenario -----------------------------------
+void read_via_param([] int arr) {
+    int sp = 0;
+
+    int v0 = arr[sp++];
+    assert_equal(sp, 1, "param read: sp after arr[sp++] (first)");
+    assert_equal(v0, 10, "param read: value at index 0 == 10");
+
+    int v1 = arr[sp++];
+    assert_equal(sp, 2, "param read: sp after arr[sp++] (second)");
+    assert_equal(v1, 20, "param read: value at index 1 == 20");
+}
+
+int main() {
+    printf("==================================================\n");
+    printf("Subscript Side-Effect Evaluation Regression Tests\n");
+    printf("==================================================\n");
+
+    // -------------------------------------------------------------------------
+    // SCENARIO 1: Write with post-increment index  (arr[sp++] = v)
+    // sp must advance by exactly 1 per assignment.
+    // -------------------------------------------------------------------------
+    [] int arr1 = { 0, 0, 0, 0 };
+    int sp = 0;
+
+    arr1[sp++] = 11;
+    assert_equal(sp, 1, "S1: sp after arr1[sp++] = 11  (should be 1, not 2)");
+    assert_equal(arr1[0], 11, "S1: arr1[0] == 11");
+
+    arr1[sp++] = 22;
+    assert_equal(sp, 2, "S1: sp after arr1[sp++] = 22  (should be 2, not 4)");
+    assert_equal(arr1[1], 22, "S1: arr1[1] == 22");
+
+    arr1[sp++] = 33;
+    assert_equal(sp, 3, "S1: sp after arr1[sp++] = 33  (should be 3, not 6)");
+    assert_equal(arr1[2], 33, "S1: arr1[2] == 33");
+
+    printf("[PASS] Scenario 1: post-increment write (arr[sp++] = v)\n");
+
+    // -------------------------------------------------------------------------
+    // SCENARIO 2: Read with post-increment index  (v = arr[sp++])
+    // -------------------------------------------------------------------------
+    [] int arr2 = { 100, 200, 300 };
+    sp = 0;
+
+    int v0 = arr2[sp++];
+    assert_equal(sp, 1, "S2: sp after v = arr2[sp++] first read");
+    assert_equal(v0, 100, "S2: read value == 100");
+
+    int v1 = arr2[sp++];
+    assert_equal(sp, 2, "S2: sp after v = arr2[sp++] second read");
+    assert_equal(v1, 200, "S2: read value == 200");
+
+    printf("[PASS] Scenario 2: post-increment read (v = arr[sp++])\n");
+
+    // -------------------------------------------------------------------------
+    // SCENARIO 3: Pre-increment index  (arr[++sp] = v)
+    // -------------------------------------------------------------------------
+    [] int arr3 = { 0, 0, 0 };
+    sp = -1;
+
+    arr3[++sp] = 55;
+    assert_equal(sp, 0, "S3: sp after arr3[++sp] = 55  (should be 0)");
+    assert_equal(arr3[0], 55, "S3: arr3[0] == 55");
+
+    arr3[++sp] = 66;
+    assert_equal(sp, 1, "S3: sp after arr3[++sp] = 66  (should be 1)");
+    assert_equal(arr3[1], 66, "S3: arr3[1] == 66");
+
+    printf("[PASS] Scenario 3: pre-increment write (arr[++sp] = v)\n");
+
+    // -------------------------------------------------------------------------
+    // SCENARIO 4: Post-decrement index  (arr[sp--])
+    // -------------------------------------------------------------------------
+    [] int arr4 = { 10, 20, 30 };
+    sp = 2;
+
+    int d0 = arr4[sp--];
+    assert_equal(sp, 1, "S4: sp after arr4[sp--] first  (should be 1, not 0)");
+    assert_equal(d0, 30, "S4: read arr4[2] == 30");
+
+    int d1 = arr4[sp--];
+    assert_equal(sp, 0, "S4: sp after arr4[sp--] second (should be 0, not -2)");
+    assert_equal(d1, 20, "S4: read arr4[1] == 20");
+
+    printf("[PASS] Scenario 4: post-decrement read (arr[sp--])\n");
+
+    // -------------------------------------------------------------------------
+    // SCENARIO 5: Compound post-increment expression  (arr[sp++ + 0])
+    // -------------------------------------------------------------------------
+    [] int arr5 = { 0, 0 };
+    sp = 0;
+
+    arr5[sp++ + 0] = 77;
+    assert_equal(sp, 1, "S5: sp after arr5[sp++ + 0] = 77  (should be 1)");
+    assert_equal(arr5[0], 77, "S5: arr5[0] == 77");
+
+    printf("[PASS] Scenario 5: compound post-increment (arr[sp++ + 0])\n");
+
+    // -------------------------------------------------------------------------
+    // SCENARIO 6: Reference-pointer path  (^[] int)
+    // Verifies the fix also holds when the subscript base is a ^[] pointer.
+    // -------------------------------------------------------------------------
+    [] int arr6 = { 0, 0, 0 };
+    fill_via_ref(&arr6);
+    assert_equal(arr6[0], 10, "S6: arr6[0] == 10 after fill_via_ref");
+    assert_equal(arr6[1], 20, "S6: arr6[1] == 20 after fill_via_ref");
+    printf("[PASS] Scenario 6: reference-pointer subscript ((*arr)[sp++])\n");
+
+    // -------------------------------------------------------------------------
+    // SCENARIO 7: Value-copy parameter path  ([] int param)
+    // -------------------------------------------------------------------------
+    [] int arr7 = { 10, 20 };
+    read_via_param(arr7);
+    printf("[PASS] Scenario 7: value-copy parameter subscript (arr[sp++])\n");
+
+    // -------------------------------------------------------------------------
+    // SCENARIO 8: Sequential chained increments in a loop
+    // Ensures the stack pointer ends at exactly N after N pushes.
+    // -------------------------------------------------------------------------
+    [] int arr8 = { 0, 0, 0, 0, 0 };
+    sp = 0;
+    for (int i = 0; i < 5; ++i) {
+        arr8[sp++] = i * 3;
+    }
+    assert_equal(sp, 5, "S8: sp == 5 after 5 push iterations");
+    for (int i = 0; i < 5; ++i) {
+        assert_equal(arr8[i], i * 3, "S8: arr8[i] == i*3");
+    }
+    printf("[PASS] Scenario 8: loop push — sp ends at exactly N\n");
+
+    printf("\n[SUCCESS] All subscript side-effect regression tests passed!\n");
+    return 0;
+}

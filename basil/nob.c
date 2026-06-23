@@ -250,6 +250,10 @@ CompilerTest custom_test_suite[] = {
         "Refrences",
         "tests/reference.c4", true
     },
+    {
+        "Subscript Side-Effect Evaluation (arr[sp++] double-increment regression)",
+        "tests/subscript_side_effects.c4", true
+    },
 };
 
 bool run_compiler_tests(const char *compiler_path) {

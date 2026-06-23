@@ -964,13 +964,11 @@ StmtResult Sema::ActOnIfStmt(SourceLocation IfLoc,
 
   Expr *CondExpr = Cond.get().second;
 
-  // 2. NEW FIX: If there is no expression and it's not consteval,
+  // 2. C4: NEW FIX: If there is no expression and it's not consteval,
   // gracefully exit instead of hitting the assert.
   if (!CondExpr && !ConstevalOrNegatedConsteval) {
     return StmtError();
   }
-
-  // Your debug logging code stays here...
 
   assert((CondExpr || ConstevalOrNegatedConsteval) &&
          "If statement: missing condition");

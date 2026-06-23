@@ -3,6 +3,12 @@
 # ===|===|=== TODO ===|===|===
 # ____________________________
 
+    ## Loop ranges
+    ```
+    for i := 0..10 {...}
+    for i := 0..2..10 {...}
+    for i := 0..-10 {...}
+    ```
 
     ## type-of operator ?.
     ```
@@ -41,7 +47,7 @@
     ## strip
 
     ## procedure aliasing
-    
+
 
 
     ## multiple returns
