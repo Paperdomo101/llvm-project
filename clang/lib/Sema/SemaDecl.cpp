@@ -7987,29 +7987,24 @@ NamedDecl *Sema::ActOnVariableDeclarator(
   IdentifierInfo *II = Name.getAsIdentifierInfo();
   bool IsPlaceholderVariable = false;
 
-  // --- C4: BOUNDS-CHECKED ARRAY POINTER TYPE TRANSFORMATION ---
-  if (D.getDeclSpec().isBoundsCheckedArrayPtr()) {
-    // 1. Get or create the unified layout cache for this element type
-    QualType RecordTy = GetOrCreateC4ArrayType(R);
-
-    // 2. CRITICAL POINTER WRAPPING:
-    // Overwrite the type variable 'R' to be a concrete POINTER to this cached structure
-    R = Context.getPointerType(RecordTy);
-    TInfo = Context.getTrivialTypeSourceInfo(R, D.getIdentifierLoc());
-  }
-
-  // === C4: HARDENED ARRAY TYPE TRANSFORMATION ENTRY GUARD ===
-  // Explicitly ensure this transformation ONLY fires on real instances of your array syntax,
-  // completely preventing standard scalar variables like 'a := 24' from bleeding layout states!
+  // === C4: TYPE PREFIX TRANSFORMATION ===
+  // 1. If [] or [N] was written, convert the base type to the C4 struct.
   if (D.getDeclSpec().isBoundsCheckedArray() &&
-      D.getDeclSpec().getTypeSpecType() != DeclSpec::TST_error) { // Verify it's an explicit array specification
-
-    // 1. Fetch or build the global canonical struct representation
+      D.getDeclSpec().getTypeSpecType() != DeclSpec::TST_error) {
     R = GetOrCreateC4ArrayType(R);
     TInfo = Context.getTrivialTypeSourceInfo(R, D.getIdentifierLoc());
   }
 
-  // ====================================================
+  // 2. Each leading ^ wraps the current type in one pointer level.
+  //    ^int    → int*
+  //    ^^int   → int**
+  //    ^[]int  → struct{int*,size_t}*
+  if (unsigned PtrDepth = D.getDeclSpec().getC4PointerDepth()) {
+    for (unsigned i = 0; i < PtrDepth; ++i)
+      R = Context.getPointerType(R);
+    TInfo = Context.getTrivialTypeSourceInfo(R, D.getIdentifierLoc());
+  }
+  // ======================================
 
   if (D.isDecompositionDeclarator()) {
 
@@ -8120,6 +8115,69 @@ NamedDecl *Sema::ActOnVariableDeclarator(
         NewVD->hasLocalStorage())
       checkNonTrivialCUnion(NewVD->getType(), NewVD->getLocation(),
                             NonTrivialCUnionContext::AutoVar, NTCUK_Destruct);
+
+    // === C4: [N] auto-storage synthesis ===
+    // For local `[N] T var` (no explicit initializer yet, no pointer depth),
+    // synthesize an initializer: { (T[N]){}, N }.
+    // The compound literal allocates N elements on the stack with the same
+    // lifetime as the enclosing block, matching the VarDecl's scope.
+    if (Expr *SizeExpr = D.getDeclSpec().getC4ArraySizeExpr()) {
+      if (isC4ArrayType(NewVD->getType()) &&
+          D.getDeclSpec().getC4PointerDepth() == 0 &&
+          DC->isFunctionOrMethod() &&
+          !NewVD->isInvalidDecl()) {
+
+        QualType StructTy = NewVD->getType();
+        QualType ElemTy   = getElementTypeFromC4Array(StructTy);
+
+        if (!ElemTy.isNull()) {
+          // Only handle compile-time constant sizes for now.
+          Expr::EvalResult ER;
+          if (SizeExpr->EvaluateAsInt(ER, Context)) {
+            llvm::APSInt SizeAPInt = ER.Val.getInt();
+
+            // Build T[N] constant array type.
+            QualType ArrTy = Context.getConstantArrayType(
+                ElemTy, SizeAPInt, SizeExpr, ArraySizeModifier::Normal, 0);
+            TypeSourceInfo *ArrTSI =
+                Context.getTrivialTypeSourceInfo(ArrTy, D.getIdentifierLoc());
+
+            // Build (T[N]){} — a zero-initialised compound literal.
+            InitListExpr *EmptyInit = new (Context) InitListExpr(
+                Context, D.getIdentifierLoc(), {}, D.getIdentifierLoc(),
+                /*isExplicit=*/false);
+            EmptyInit->setType(ArrTy);
+            CompoundLiteralExpr *CLit = new (Context) CompoundLiteralExpr(
+                D.getIdentifierLoc(), ArrTSI, ArrTy, VK_LValue, EmptyInit,
+                /*fileScope=*/false);
+
+            // Decay T[N] lvalue → T*.
+            QualType PtrTy = Context.getPointerType(ElemTy);
+            ImplicitCastExpr *ItemsPtr = ImplicitCastExpr::Create(
+                Context, PtrTy, CK_ArrayToPointerDecay, CLit,
+                /*BasePath=*/nullptr, VK_PRValue, FPOptionsOverride());
+
+            // Build the count as a size_t integer literal.
+            llvm::APInt CountVal =
+                SizeAPInt.zextOrTrunc(Context.getTypeSize(Context.getSizeType()));
+            IntegerLiteral *CountLit = IntegerLiteral::Create(
+                Context, CountVal, Context.getSizeType(), D.getIdentifierLoc());
+
+            // Build struct initialiser { items_ptr, count }.
+            SmallVector<Expr *, 2> Inits = {ItemsPtr, CountLit};
+            InitListExpr *StructInit = new (Context) InitListExpr(
+                Context, D.getIdentifierLoc(), Inits, D.getIdentifierLoc(),
+                /*isExplicit=*/false);
+            StructInit->setType(StructTy);
+
+            NewVD->setInit(StructInit);
+            NewVD->setInitStyle(VarDecl::CInit);
+          }
+        }
+      }
+    }
+    // ======================================
+
   } else {
     bool Invalid = false;
     // Match up the template parameter lists with the scope specifier, then
@@ -16109,16 +16167,9 @@ Decl *Sema::ActOnParamDeclarator(Scope *S, Declarator &D,
       }
     }
 
-    // 2. CASE A: POINTER-ARRAY EXPRESSIONS ONLY (^[] int)
-    if (D.getDeclSpec().isBoundsCheckedArrayPtr()) {
-      QualType ElementTy = parmDeclType; // This is the element type, e.g., 'int'
-      QualType RecordTy = GetOrCreateC4ArrayType(ElementTy);
-      parmDeclType = Context.getPointerType(RecordTy); // ^[] int → pointer to the struct
-      TInfo = Context.getTrivialTypeSourceInfo(parmDeclType, D.getIdentifierLoc());
-    }
-    // 3. CASE B: VALUE ARRAYS OR REFERENCE ARRAYS ([] int or &[] int)
-    else if (D.getDeclSpec().isBoundsCheckedArray() &&
-             D.getDeclSpec().getTypeSpecType() != DeclSpec::TST_error) {
+    // 2. Apply [] / [N] → C4 struct conversion first.
+    if (D.getDeclSpec().isBoundsCheckedArray() &&
+        D.getDeclSpec().getTypeSpecType() != DeclSpec::TST_error) {
       QualType ElementTy = parmDeclType;
       QualType RecordTy = GetOrCreateC4ArrayType(ElementTy);
 
@@ -16142,7 +16193,7 @@ Decl *Sema::ActOnParamDeclarator(Scope *S, Declarator &D,
       TInfo = Context.getTrivialTypeSourceInfo(parmDeclType, D.getIdentifierLoc());
     }
 
-    // 4. CASE C: BASIC SCALAR PASS-BY-REFERENCE VARIABLES ONLY (&int)
+    // 3. CASE C: BASIC SCALAR PASS-BY-REFERENCE VARIABLES ONLY (&int)
     else if (IsExplicitC4Ref) {
       QualType PtrTy = Context.getPointerType(parmDeclType);
       PtrTy.addConst();
@@ -16150,6 +16201,13 @@ Decl *Sema::ActOnParamDeclarator(Scope *S, Declarator &D,
       TInfo = Context.getTrivialTypeSourceInfo(parmDeclType, D.getIdentifierLoc());
 
       D.AddTypeInfo(DeclaratorChunk::getPointer(/*TypeQuals=*/DeclSpec::TQ_const, D.getBeginLoc(), SourceLocation(), SourceLocation(), SourceLocation(), SourceLocation(), SourceLocation()), D.getEndLoc());
+    }
+
+    // Apply ^ pointer depth (can stack on top of [] for ^[]int, ^^[]int, etc.)
+    if (unsigned PtrDepth = D.getDeclSpec().getC4PointerDepth()) {
+      for (unsigned i = 0; i < PtrDepth; ++i)
+        parmDeclType = Context.getPointerType(parmDeclType);
+      TInfo = Context.getTrivialTypeSourceInfo(parmDeclType, D.getIdentifierLoc());
     }
   }
   // ======================================================================

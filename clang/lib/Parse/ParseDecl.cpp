@@ -3426,40 +3426,43 @@ void Parser::ParseDeclarationSpecifiers(
 
     SourceLocation Loc = Tok.getLocation();
 
-    // === C4: BOUNDS-CHECKED ARRAY POINTER PREFIX INTERCEPT (^[]) ===
-    if (Tok.is(tok::caret) && GetLookAheadToken(1).is(tok::l_square) &&
-        GetLookAheadToken(2).is(tok::r_square)) {
-
-      ConsumeToken();   // Consumes '^'
-      ConsumeBracket(); // Consumes '['
-      ConsumeBracket(); // Consumes ']'
-
-      // Ensure you add 'bool IsBoundsCheckedArrayPtr;' alongside helper
-      // getters/setters to your custom DeclSpec class definition in DeclSpec.h
-      DS.SetTypeSpecBoundsCheckedArrayPtr(true, Loc);
-
-      continue; // Jump straight to processing the element type keyword (like 'int')
-    }
-
-    // === C4 PATCH: BOUNDS-CHECKED ARRAY PREFIX INTERCEPT ===
-    // Guard: only consume '[]' as a C4 prefix when no base type has been
-    // parsed yet. Without this, a trailing '[]' in standard C array types
-    // like 'int[]' or 'char[]' would be eaten here instead of being left
-    // for ParseDeclarator/ParseBracketDeclarator to form the array type.
-    if (!DS.hasTypeSpecifier() && Tok.is(tok::l_square) && GetLookAheadToken(1).is(tok::r_square)) {
-      ConsumeBracket(); // Consumes '['
-      ConsumeBracket(); // Consumes ']'
-
-      // Update your DeclSpec to hold this state.
-      // Make sure you add 'bool IsBoundsCheckedArray;' alongside helper
-      // getters/setters in 'include/clang/Sema/DeclSpec.h'
-      DS.SetTypeSpecBoundsCheckedArray(true, Loc);
-
-      // Advance to the next loop iteration to process the remaining
-      // types (like 'int' or 'float') behind the brackets.
+    // === C4: ^ pointer-depth prefix (can stack: ^, ^^, ^^^, …) ===
+    // Each ^ increments the pointer depth; the type is wrapped that many times
+    // in pointer indirection by Sema.  Block literals (^( or ^{) are never
+    // reached here because they only appear in expression context.
+    if (Tok.is(tok::caret)) {
+      DS.incrementC4PointerDepth(Loc);
+      ConsumeToken(); // consume '^'
       continue;
     }
-    // =======================================================
+
+    // === C4: [N] or [] bounds-checked array prefix ===
+    // Guard: only consume '[' as a C4 prefix before any base type has been
+    // parsed, so that trailing '[]' in plain C array types is left for the
+    // normal declarator parser.
+    if (!DS.hasTypeSpecifier() && Tok.is(tok::l_square)) {
+      ConsumeBracket(); // '['
+      if (Tok.is(tok::r_square)) {
+        // [] — unsized, no auto-storage
+        ConsumeBracket(); // ']'
+        DS.SetTypeSpecBoundsCheckedArray(true, Loc);
+      } else {
+        // [N] — sized; parse N as a constant expression for auto-storage
+        ExprResult SizeExpr = ParseAssignmentExpression();
+        if (SizeExpr.isInvalid()) {
+          SkipUntil(tok::r_square, StopAtSemi);
+        } else if (Tok.is(tok::r_square)) {
+          ConsumeBracket(); // ']'
+          DS.SetTypeSpecBoundsCheckedArray(true, Loc);
+          DS.setC4ArraySizeExpr(SizeExpr.get());
+        } else {
+          Diag(Tok, diag::err_expected) << tok::r_square;
+          SkipUntil(tok::r_square, StopAtSemi);
+        }
+      }
+      continue;
+    }
+    // =====================================================
 
     // C4 PATCH: Implicit Void Return Types for Functions
     // Safeguarded against system headers, struct fields, function pointers, AND right-side lookups
@@ -5957,14 +5960,27 @@ bool Parser::isDeclarationSpecifier(
   switch (Tok.getKind()) {
   default: return false;
 
-  // === C4: DESTRUCTION POINTER REGISTRY LOOKAHEAD ===
+  // === C4: ^ is a pointer-type prefix, but ONLY in genuine C4 type contexts.
+  // Returning true unconditionally breaks Apple block-pointer syntax such as
+  // (^ _Nonnull)(void) in system headers: the parser uses isDeclarationSpecifier
+  // when disambiguating cast-expressions, and a spurious true causes (^...)
+  // to be treated as a type-id rather than a grouped declarator.
+  // Rule: ^ is a C4 declaration specifier when the immediately following token
+  // is another ^, a [ (C4 array), or a type keyword.  Identifiers (like
+  // _Nonnull, _Nullable) and ( / { (block literals) are excluded.
   case tok::caret: {
-    // If the caret is immediately followed by a bounds-checked array bracket pair,
-    // force Clang to recognize this as a highly valid type declaration specifier!
-    if (NextToken().is(tok::l_square) && GetLookAheadToken(2).is(tok::r_square)) {
-      return true;
-    }
-    return false; // Fall back to standard C behavior for regular blocks
+    const Token &Next = NextToken();
+    if (Next.is(tok::l_paren) || Next.is(tok::l_brace))
+      return false; // ^( / ^{ — block literal or grouped block-pointer declarator
+    if (Next.is(tok::caret) || Next.is(tok::l_square))
+      return true;  // ^^ or ^[ — stacked C4 pointer / C4 array pointer
+    // Type keywords: ^int, ^float, ^struct Foo, ^const int, etc.
+    return Next.isOneOf(
+        tok::kw_int,      tok::kw_float,    tok::kw_double,  tok::kw_char,
+        tok::kw_long,     tok::kw_short,    tok::kw_signed,  tok::kw_unsigned,
+        tok::kw_void,     tok::kw__Bool,    tok::kw_struct,  tok::kw_union,
+        tok::kw_enum,     tok::kw_const,    tok::kw_volatile,tok::kw_restrict,
+        tok::kw__Atomic,  tok::kw___attribute, tok::kw_typedef);
   }
   // ===================================================
 

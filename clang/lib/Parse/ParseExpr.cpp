@@ -329,11 +329,15 @@ Parser::ParseRHSOfBinaryExpression(ExprResult LHS, prec::Level MinPrec) {
     // --- C4 GREEDY EXPRESSION BREAK FIX ---
     if (!getLangOpts().CPlusPlus) {
 
-      // CRITICAL: Check if this caret token represents our custom pointer array declaration prefix '^[]'
+      // C4: ^ is a pointer-type declaration prefix, not binary XOR, when:
+      //   a) it is followed by [] (old ^[] array-pointer syntax still works), or
+      //   b) it sits at the start of a new line (^T var or ^^T var declarations).
+      // XOR on the same line (a ^ b) is unaffected.
       if (OpTokenKind == tok::caret) {
-        if (NextToken().is(tok::l_square) && PP.LookAhead(1).is(tok::r_square)) {
+        if (Tok.isAtStartOfLine())
           return LHS;
-        }
+        if (NextToken().is(tok::l_square) && PP.LookAhead(1).is(tok::r_square))
+          return LHS;
       }
 
       if ((OpTokenKind == tok::amp || OpTokenKind == tok::star ||
@@ -1826,9 +1830,21 @@ Parser::ParseCastExpression(CastParseKind ParseKind, bool isAddressOfOperand,
     SourceLocation AtLoc = ConsumeToken();
     return ParseObjCAtExpression(AtLoc);
   }
-  case tok::caret:
+  case tok::caret: {
+    // C4: ^expr is address-of (equivalent to C's &expr) unless the caret is
+    // immediately followed by '(' or '{', which introduce a block literal.
+    const Token &Next = NextToken();
+    if (Next.isNot(tok::l_paren) && Next.isNot(tok::l_brace)) {
+      SourceLocation CaretLoc = ConsumeToken(); // consume '^'
+      ExprResult Operand = ParseCastExpression(CastParseKind::AnyCastExpr,
+                                               /*isAddressOfOperand=*/false);
+      if (Operand.isInvalid()) return ExprError();
+      return Actions.BuildUnaryOp(getCurScope(), CaretLoc,
+                                  clang::UO_AddrOf, Operand.get());
+    }
     Res = ParseBlockLiteralExpression();
     break;
+  }
   case tok::code_completion: {
     cutOffParsing();
     Actions.CodeCompletion().CodeCompleteExpression(

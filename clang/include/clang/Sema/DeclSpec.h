@@ -432,8 +432,11 @@ private:
   // --- C4 Language Extension Fields ---
     bool IsBoundsCheckedArray = false;
     SourceLocation BoundsCheckedArrayLoc;
-    bool IsBoundsCheckedArrayPtr = false;
-    SourceLocation BoundsCheckedArrayPtrLoc;
+    // Number of leading ^ pointer prefixes (0 = none, 1 = ^, 2 = ^^, …)
+    unsigned C4PointerDepth = 0;
+    SourceLocation C4PointerDepthLoc;
+    // Size expression from [N] syntax (null for unsized [])
+    Expr *C4ArraySizeExpr = nullptr;
     unsigned IsC4Reference : 1;
     SourceLocation C4ReferenceLoc;
   // ------------------------------------
@@ -468,20 +471,24 @@ public:
   bool isBoundsCheckedArray() const { return IsBoundsCheckedArray; }
   SourceLocation getBoundsCheckedArrayLoc() const { return BoundsCheckedArrayLoc; }
 
-
-  void SetTypeSpecBoundsCheckedArrayPtr(bool val, SourceLocation loc) {
-    IsBoundsCheckedArrayPtr = val;
-    BoundsCheckedArrayPtrLoc = loc;
+  // ^ pointer depth (one per leading caret)
+  void incrementC4PointerDepth(SourceLocation loc) {
+    if (C4PointerDepth == 0) C4PointerDepthLoc = loc;
+    ++C4PointerDepth;
   }
-  bool isBoundsCheckedArrayPtr() const { return IsBoundsCheckedArrayPtr; }
-  SourceLocation getBoundsCheckedArrayPtrLoc() const { return BoundsCheckedArrayPtrLoc; }
+  unsigned getC4PointerDepth() const { return C4PointerDepth; }
+  SourceLocation getC4PointerDepthLoc() const { return C4PointerDepthLoc; }
+
+  // [N] inline size expression
+  void setC4ArraySizeExpr(Expr *E) { C4ArraySizeExpr = E; }
+  Expr *getC4ArraySizeExpr() const { return C4ArraySizeExpr; }
 
   void SetIsC4Reference(bool b, SourceLocation loc) {
     IsC4Reference = b;
     C4ReferenceLoc = loc;
   }
 
-  bool isC4Reference() const { return IsC4Reference; } // Marked const for internal Clang pipeline safety
+  bool isC4Reference() const { return IsC4Reference; }
   // ---------------------------------------
 
   static bool isDeclRep(TST T) {
@@ -677,8 +684,9 @@ public:
     IsBoundsCheckedArray = false;
     BoundsCheckedArrayLoc = SourceLocation();
 
-    IsBoundsCheckedArrayPtr = false;
-    BoundsCheckedArrayPtrLoc = SourceLocation();
+    C4PointerDepth = 0;
+    C4PointerDepthLoc = SourceLocation();
+    C4ArraySizeExpr = nullptr;
 
     IsC4Reference = false;
     C4ReferenceLoc = SourceLocation();

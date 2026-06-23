@@ -154,10 +154,10 @@ CompilerTest custom_test_suite[] = {
         "Postfix '->' after GNU statement-expression macro (cross-macro spelling-line false positive)",
         "tests/macro_arrow.c4",
     },
-    // {
-    //     "^ pointers",
-    //     "tests/caret_pointers.c4",
-    // },
+    {
+        "LHS ^ Pointer Type Lowering (^T, ^^T, ^^^T, params, return types)",
+        "tests/caret_pointers.c4",
+    },
     {
         "Enumerations",
         "tests/enums.c4",
@@ -253,6 +253,10 @@ CompilerTest custom_test_suite[] = {
     {
         "Subscript Side-Effect Evaluation (arr[sp++] double-increment regression)",
         "tests/subscript_side_effects.c4", true
+    },
+    {
+        "Pointer Syntax & Sized Arrays (^T, ^^T, [N]T, ^expr, ^[]T)",
+        "tests/caret_pointers_runtime.c4", true
     },
 };
 

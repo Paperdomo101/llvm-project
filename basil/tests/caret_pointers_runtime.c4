@@ -1,0 +1,276 @@
+// tests/pointer_syntax.c4
+//
+// Runtime regression suite for:
+//   ^T      — pointer-type prefix (one level)
+//   ^^T     — double pointer prefix
+//   ^^^T    — triple pointer prefix
+//   ^expr   — address-of operator in expression position
+//   [N] T   — bounds-checked array with auto-allocated stack storage
+//   ^[] T   — pointer to a C4 bounds-checked array (refactored from the ^[] hack)
+//
+// Every scenario writes and reads back real values so that the test catches
+// both parser/sema bugs (wrong types) and codegen bugs (bad addressing).
+//
+// Exit 0 = all assertions passed.
+
+#include <stdio.h>
+#include <stdlib.h>
+
+static void fail(const char *msg, int got, int expected) {
+    printf("[FAIL] %s  (got %d, expected %d)\n", msg, got, expected);
+    exit(1);
+}
+static void fail_null(const char *msg) {
+    printf("[FAIL] %s  (unexpected null pointer)\n", msg);
+    exit(1);
+}
+
+#define CHECK(actual, expected, msg) \
+    do { if ((int)(actual) != (expected)) fail(msg, (int)(actual), (expected)); } while(0)
+#define CHECK_NOTNULL(ptr, msg) \
+    do { if (!(ptr)) fail_null(msg); } while(0)
+
+// ---------------------------------------------------------------------------
+// Helper functions that accept pointer-typed parameters
+// ---------------------------------------------------------------------------
+
+// Receives a ^int (plain int*) and increments the value.
+void ptr_increment(^int p) {
+    *p += 1;
+}
+
+// Receives ^^int and swaps the two pointed-to int* values.
+void ptr_swap(^^int a, ^^int b) {
+    ^int tmp = *a;
+    *a = *b;
+    *b = tmp;
+}
+
+// Receives ^[]int (pointer to a C4 array) and fills it with sequential values.
+void fill_c4_array(^[] int arr, int start) {
+    for (int i = 0; i < (int)(*arr).count; ++i)
+        (*arr)[i] = start + i;
+}
+
+// Receives &[]int (C4 reference parameter) and sums all elements.
+int sum_c4_ref(&[] int arr) {
+    int total = 0;
+    for (int i = 0; i < (int)arr.count; ++i)
+        total += arr[i];
+    return total;
+}
+
+// ---------------------------------------------------------------------------
+main () int {
+    printf("=====================================================\n");
+    printf("C4 Pointer Syntax & Sized Array  —  Runtime Tests\n");
+    printf("=====================================================\n\n");
+
+    // =========================================================================
+    // SCENARIO 1: ^int — single-level pointer, ^expr address-of
+    // =========================================================================
+    {
+        int value = 42;
+        ^int ptr = ^value;          // ^int ≡ int*,  ^value ≡ &value
+
+        CHECK(*ptr, 42, "S1: deref gives original value");
+
+        *ptr = 99;
+        CHECK(value, 99, "S1: write through pointer mutates original");
+
+        // Pass by ^int parameter
+        ptr_increment(^value);
+        CHECK(value, 100, "S1: ptr_increment via ^expr param");
+
+        printf("[PASS] Scenario 1: ^int / ^expr address-of\n");
+    }
+
+    // =========================================================================
+    // SCENARIO 2: ^^int — double pointer
+    // =========================================================================
+    {
+        int a = 10, b = 20;
+        ^int  pa = ^a;
+        ^int  pb = ^b;
+        ^^int ppa = ^pa;
+        ^^int ppb = ^pb;
+
+        CHECK(**ppa, 10, "S2: **ppa == 10");
+        CHECK(**ppb, 20, "S2: **ppb == 20");
+
+        // Swap the int* values through the ^^int pointers
+        ptr_swap(ppa, ppb);
+        CHECK(*pa, 20, "S2: after swap *pa == 20");
+        CHECK(*pb, 10, "S2: after swap *pb == 10");
+
+        printf("[PASS] Scenario 2: ^^int double pointer\n");
+    }
+
+    // =========================================================================
+    // SCENARIO 3: ^^^int — triple pointer
+    // =========================================================================
+    {
+        int x = 7;
+        ^int   p1 = ^x;
+        ^^int  p2 = ^p1;
+        ^^^int p3 = ^p2;
+
+        CHECK(***p3, 7, "S3: ***p3 == 7");
+
+        ***p3 = 77;
+        CHECK(x, 77, "S3: mutation through triple pointer");
+
+        printf("[PASS] Scenario 3: ^^^int triple pointer\n");
+    }
+
+    // =========================================================================
+    // SCENARIO 4: [N] — auto-storage, items non-null, count == N
+    // =========================================================================
+    {
+        [] int ints;
+
+        CHECK_NOTNULL(ints.items, "S4: [32] int items != NULL");
+        CHECK((int)ints.count, 32, "S4: count == 32");
+
+        // Write and read back
+        for (int i = 0; i < 32; ++i) ints[i] = i * 3;
+        CHECK(ints[0],  0,  "S4: ints[0]  == 0");
+        CHECK(ints[15], 45, "S4: ints[15] == 45");
+        CHECK(ints[31], 93, "S4: ints[31] == 93");
+
+        printf("[PASS] Scenario 4: [32] int auto-storage\n");
+    }
+
+    // =========================================================================
+    // SCENARIO 5: [N] with float element type
+    // =========================================================================
+    {
+        [4] float floats;
+
+        CHECK_NOTNULL(floats.items, "S5: [4] float items != NULL");
+        CHECK((int)floats.count, 4, "S5: count == 4");
+
+        floats[0] = 1.5f; floats[1] = 2.5f;
+        floats[2] = 3.5f; floats[3] = 4.5f;
+
+        if (floats[2] < 3.4f || floats[2] > 3.6f) {
+            printf("[FAIL] S5: floats[2] expected ~3.5, got %f\n", floats[2]);
+            exit(1);
+        }
+
+        printf("[PASS] Scenario 5: [4] float auto-storage\n");
+    }
+
+    // =========================================================================
+    // SCENARIO 6: ^[]int — pointer to C4 array (refactored from ^[] hack)
+    // =========================================================================
+    {
+        [4] int src;
+        src[0] = 10; src[1] = 20; src[2] = 30; src[3] = 40;
+
+        ^[] int arrptr = ^src;      // pointer to the C4 struct
+
+        CHECK_NOTNULL(arrptr, "S6: arrptr != NULL");
+        CHECK((int)arrptr->count, 4, "S6: arrptr->count == 4");
+        CHECK((*arrptr)[0], 10, "S6: (*arrptr)[0] == 10");
+        CHECK((*arrptr)[3], 40, "S6: (*arrptr)[3] == 40");
+
+        // Mutate through the pointer
+        (*arrptr)[1] = 200;
+        CHECK(src[1], 200, "S6: mutation through ^[]int pointer");
+
+        // Fill via helper that takes ^[]int
+        fill_c4_array(^src, 100);
+        CHECK(src[0], 100, "S6: fill_c4_array src[0]");
+        CHECK(src[3], 103, "S6: fill_c4_array src[3]");
+
+        printf("[PASS] Scenario 6: ^[]int pointer to C4 array\n");
+    }
+
+    // =========================================================================
+    // SCENARIO 7: [N] as a push stack — the original motivating use-case
+    // =========================================================================
+    {
+        [256] int stack;
+        CHECK_NOTNULL(stack.items, "S7: stack.items != NULL");
+        CHECK((int)stack.count, 256, "S7: stack capacity == 256");
+
+        int sp = 0;
+        stack[sp++] = 1;
+        stack[sp++] = 2;
+        stack[sp++] = 3;
+
+        CHECK(sp, 3, "S7: sp == 3 after three pushes");
+        CHECK(stack[0], 1, "S7: stack[0] == 1");
+        CHECK(stack[1], 2, "S7: stack[1] == 2");
+        CHECK(stack[2], 3, "S7: stack[2] == 3");
+
+        // Pop — also tests that sp-- doesn't double-decrement (regression)
+        int top = stack[--sp];
+        CHECK(sp, 2, "S7: sp == 2 after pop");
+        CHECK(top, 3, "S7: popped value == 3");
+
+        printf("[PASS] Scenario 7: [256] int push/pop stack\n");
+    }
+
+    // =========================================================================
+    // SCENARIO 8: ^int parameter interacting with [N] array
+    // =========================================================================
+    {
+        [8] int arr;
+        CHECK_NOTNULL(arr.items, "S8: arr.items != NULL");
+
+        int cursor = 0;
+        for (int i = 0; i < 8; ++i) {
+            arr[cursor] = i * 10;
+            ptr_increment(^cursor);         // ^cursor ≡ &cursor
+        }
+
+        CHECK(cursor, 8, "S8: cursor == 8 after 8 ptr_increments");
+        CHECK(arr[0], 0,  "S8: arr[0] == 0");
+        CHECK(arr[7], 70, "S8: arr[7] == 70");
+
+        printf("[PASS] Scenario 8: ^int param + [N] array interaction\n");
+    }
+
+    // =========================================================================
+    // SCENARIO 9: &[]int reference parameter — unchanged from before
+    // =========================================================================
+    {
+        [5] int nums;
+        nums[0]=1; nums[1]=2; nums[2]=3; nums[3]=4; nums[4]=5;
+
+        int total = sum_c4_ref(nums);
+        CHECK(total, 15, "S9: sum via &[]int ref param == 15");
+
+        printf("[PASS] Scenario 9: &[]int reference parameter still works\n");
+    }
+
+    // =========================================================================
+    // SCENARIO 10: Nested [N] scopes — verify each has independent storage
+    // =========================================================================
+    {
+        [4] int outer;
+        outer[0] = 1; outer[1] = 2; outer[2] = 3; outer[3] = 4;
+
+        {
+            [4] int inner;
+            inner[0] = 10; inner[1] = 20; inner[2] = 30; inner[3] = 40;
+
+            CHECK(inner[0], 10, "S10: inner[0] == 10");
+            CHECK(outer[0],  1, "S10: outer[0] == 1 (no aliasing)");
+
+            ^[] int pi = ^inner;
+            CHECK((*pi)[3], 40, "S10: pointer into inner[3] == 40");
+        }
+
+        // Outer values must be intact after inner scope exits
+        CHECK(outer[0], 1, "S10: outer[0] intact after inner scope");
+        CHECK(outer[3], 4, "S10: outer[3] intact after inner scope");
+
+        printf("[PASS] Scenario 10: nested [N] scopes — independent storage\n");
+    }
+
+    printf("\n[SUCCESS] All pointer-syntax and sized-array tests passed!\n");
+    return 0;
+}

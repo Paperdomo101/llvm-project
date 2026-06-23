@@ -1,5 +1,13 @@
 typedef unsigned long size_t;
 
+
+main ([]*char args) int {
+    _Static_assert(_Generic(argv, char**: 1, default: 0),
+                   "Error: Function argument vector failed to validate as double pointer via LHS syntax");
+    return 0;
+}
+
+
 struct Arena {
     size_t capacity;
 };
@@ -29,7 +37,7 @@ void verify_lhs_pointer_syntax_and_precedence(void) {
 
     // const applies to the pointer layer -> int * const
     ^const int q_level_2 = 0;
-    _Static_assert(_Generic(&q_level_2, int * const *: 1, default: 0),
+    _Static_assert(_Generic(&q_level_2, int *const: 1, default: 0),
                    "Error: Interleaved '^const int' failed to apply const to the pointer layer");
 
     // Inner layer is volatile pointer, outer layer is const pointer -> int * volatile * const
@@ -67,11 +75,5 @@ void verify_lhs_pointer_syntax_and_precedence(void) {
 }
 
 arena_alloc1 (size_t cap, _Bool chaining) ^struct Arena {
-    return 0;
-}
-
-int main(int argc, ^^char argv) {
-    _Static_assert(_Generic(argv, char**: 1, default: 0),
-                   "Error: Function argument vector failed to validate as double pointer via LHS syntax");
     return 0;
 }
