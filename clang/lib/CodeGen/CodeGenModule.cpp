@@ -6953,68 +6953,63 @@ void CodeGenModule::HandleCXXStaticMemberVarInstantiation(VarDecl *VD) {
 void CodeGenModule::EmitC4MainWrapper(const FunctionDecl *UserFD,
                                       llvm::Function *UserFn) {
     llvm::LLVMContext &Ctx = getLLVMContext();
+    llvm::Type *Int32Ty = llvm::Type::getInt32Ty(Ctx);
+    llvm::Type *PtrTy   = llvm::PointerType::get(Ctx, 0);
+    llvm::Type *Int64Ty = llvm::Type::getInt64Ty(Ctx);
 
-    // int main(int argc, char **argv)
-    llvm::Type *Int32Ty = llvm::Type::getInt32Ty(getLLVMContext());
-
-    llvm::Type *PtrTy =
-        llvm::PointerType::get(Ctx, 0);
-
+    // Emit a standard `int main(int argc, char **argv)` entry point that
+    // builds a C4 array struct and forwards to the user's __c4_main.
     llvm::FunctionType *MainTy =
-        llvm::FunctionType::get(
-            Int32Ty,
-            {Int32Ty, PtrTy},
-            false);
-
+        llvm::FunctionType::get(Int32Ty, {Int32Ty, PtrTy}, false);
     llvm::Function *MainFn =
-        llvm::Function::Create(
-            MainTy,
-            llvm::GlobalValue::ExternalLinkage,
-            "main",
-            &getModule());
+        llvm::Function::Create(MainTy, llvm::GlobalValue::ExternalLinkage,
+                               "main", &getModule());
 
-    llvm::BasicBlock *BB =
-        llvm::BasicBlock::Create(Ctx, "entry", MainFn);
-
+    llvm::BasicBlock *BB = llvm::BasicBlock::Create(Ctx, "entry", MainFn);
     llvm::IRBuilder<> Builder(BB);
 
     auto ArgIt = MainFn->arg_begin();
     llvm::Value *Argc = &*ArgIt++;
     llvm::Value *Argv = &*ArgIt;
 
-    // === Step 1: get user ABI type ([2 x i64]) ===
-    llvm::Type *ParamTy =
-        UserFn->getFunctionType()->getParamType(0);
+    // Build the C4 array struct { ptr items; i64 count; i64 capacity } on the
+    // stack and fill it from argc/argv.  We always use this explicit struct
+    // type rather than the ABI-lowered parameter type, because the 3-field
+    // 24-byte struct is passed by pointer (byval) on all 64-bit ABIs and
+    // accessing it via `ParamTy` (which becomes `ptr`) with struct-GEP would
+    // produce invalid IR.
+    llvm::StructType *C4StructTy =
+        llvm::StructType::get(Ctx, {PtrTy, Int64Ty, Int64Ty});
 
-    // === Step 2: allocate ABI struct ===
-    llvm::Value *Tmp =
-        Builder.CreateAlloca(ParamTy, nullptr, "c4.args");
+    llvm::Value *Tmp = Builder.CreateAlloca(C4StructTy, nullptr, "c4.args");
+    Builder.CreateStore(Argv,
+        Builder.CreateStructGEP(C4StructTy, Tmp, 0)); // items = argv
+    llvm::Value *Argc64 = Builder.CreateIntCast(Argc, Int64Ty, false);
+    Builder.CreateStore(Argc64,
+        Builder.CreateStructGEP(C4StructTy, Tmp, 1)); // count = argc
+    Builder.CreateStore(Argc64,
+        Builder.CreateStructGEP(C4StructTy, Tmp, 2)); // capacity = argc
 
-    // === Step 3: build fields using GEPs (no ptrtoint) ===
-    llvm::Value *ItemsPtr =
-        Builder.CreateStructGEP(ParamTy, Tmp, 0);
-
-    llvm::Value *CountPtr =
-        Builder.CreateStructGEP(ParamTy, Tmp, 1);
-
-    // argv → pointer stored directly (no integer cast)
-    Builder.CreateStore(Argv, ItemsPtr);
-
-    // argc → i64
-    llvm::Value *Argc64 =
-        Builder.CreateIntCast(Argc,
-                              Builder.getInt64Ty(),
-                              false);
-
-    Builder.CreateStore(Argc64, CountPtr);
-
-    // === Step 4: load aggregate exactly like Clang does ===
-    llvm::Value *Agg =
-        Builder.CreateLoad(ParamTy, Tmp);
-
-    // === Step 5: call user main ===
-    llvm::Value *Result =
-        Builder.CreateCall(UserFn, {Agg});
+    // Call the user function using whatever ABI Clang chose for the parameter.
+    llvm::Type *ParamTy = UserFn->getFunctionType()->getParamType(0);
+    llvm::Value *Result;
+    if (ParamTy->isPointerTy()) {
+        // Large struct (>16 bytes on 64-bit): Clang uses byval/pointer passing.
+        // Forward the alloca pointer and copy the byval attribute so the
+        // backend knows to make a callee-side copy if required.
+        llvm::CallInst *CI = Builder.CreateCall(UserFn, {Tmp});
+        if (UserFn->hasParamAttribute(0, llvm::Attribute::ByVal)) {
+            CI->addParamAttr(0,
+                llvm::Attribute::getWithByValType(
+                    Ctx, UserFn->getParamByValType(0)));
+        }
+        Result = CI;
+    } else {
+        // Small struct (<=16 bytes on 64-bit): Clang lowers to an integer
+        // aggregate (e.g. [2 x i64]).  Load the ABI type and pass directly.
+        llvm::Value *Agg = Builder.CreateLoad(ParamTy, Tmp);
+        Result = Builder.CreateCall(UserFn, {Agg});
+    }
 
     Builder.CreateRet(Result);
 }

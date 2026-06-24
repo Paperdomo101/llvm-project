@@ -1972,9 +1972,20 @@ Parser::DeclGroupPtrTy Parser::ParseSimpleDeclaration(
 
   // If we had a free-standing type definition with a missing semicolon, we
   // may get this far before the problem becomes obvious.
-  if (DS.hasTagDefinition() &&
+  //
+  // C4: At file scope, struct/union/enum bodies may omit the trailing ';'.
+  // Suppress the diagnostic (and its recovery code that clears the DeclSpec
+  // and re-parses, which would corrupt the following declaration) when we
+  // know the semicolon is optional.
+  bool C4BraceTerminatedDecl =
+      getLangOpts().C4() &&
+      Context == DeclaratorContext::File &&
+      DS.hasTagDefinition() && DS.isTypeSpecOwned();
+  if (!C4BraceTerminatedDecl && DS.hasTagDefinition() &&
       DiagnoseMissingSemiAfterTagDefinition(DS, AS_none, DSContext))
     return nullptr;
+  if (C4BraceTerminatedDecl)
+    TryConsumeToken(tok::semi); // consume if present; skip silently if absent
 
   // C99 6.7.2.3p6: Handle "struct-or-union identifier;", "enum { X };"
   // declaration-specifiers init-declarator-list[opt] ';'
@@ -2450,7 +2461,20 @@ Parser::DeclGroupPtrTy Parser::ParseDeclGroup(ParsingDeclSpec &DS,
   if (DeclEnd)
     *DeclEnd = Tok.getLocation();
 
-  if (ExpectSemi && !TryConsumeOptionalSemi() && ExpectAndConsumeSemi(
+  // C4: 'struct Foo { ... }' / 'union U { ... }' / 'enum E { ... }' at
+  // file scope can omit the trailing ';' when there is no declarator
+  // (no variable name after the closing brace).
+  bool C4SemiOptional =
+      getLangOpts().C4() &&
+      Context == DeclaratorContext::File &&
+      D.getIdentifier() == nullptr &&
+      DS.isTypeSpecOwned() &&
+      (DS.getTypeSpecType() == DeclSpec::TST_struct ||
+       DS.getTypeSpecType() == DeclSpec::TST_union  ||
+       DS.getTypeSpecType() == DeclSpec::TST_enum);
+  if (C4SemiOptional)
+    TryConsumeToken(tok::semi); // consume if present; OK if absent
+  else if (ExpectSemi && !TryConsumeOptionalSemi() && ExpectAndConsumeSemi(
                         Context == DeclaratorContext::File
                             ? diag::err_invalid_token_after_toplevel_declarator
                             : diag::err_expected_semi_declaration)) {
@@ -3399,7 +3423,10 @@ void Parser::ParseDeclarationSpecifiers(
   ParsedAttributes attrs(AttrFactory);
   // We use Sema's policy to get bool macros right.
   PrintingPolicy Policy = Actions.getPrintingPolicy();
-
+  // C4: index of the '^' level whose qualifiers we are currently collecting
+  // (-1 = not in caret-qual phase; >= 0 = redirect const/volatile/restrict
+  // to DS.C4PointerLevelQuals[C4CaretQualLevel]).
+  int C4CaretQualLevel = -1;
 
 
   while (true) {
@@ -3426,90 +3453,97 @@ void Parser::ParseDeclarationSpecifiers(
 
     SourceLocation Loc = Tok.getLocation();
 
-    // === C4: ^ pointer-depth prefix (can stack: ^, ^^, ^^^, …) ===
-    // Each ^ increments the pointer depth; the type is wrapped that many times
-    // in pointer indirection by Sema.  Block literals (^( or ^{) are never
-    // reached here because they only appear in expression context.
-    if (Tok.is(tok::caret)) {
-      DS.incrementC4PointerDepth(Loc);
-      ConsumeToken(); // consume '^'
-      continue;
-    }
+    // C4: once a base type specifier is established, qualifiers no longer
+    // belong to a preceding '^' level – they qualify the base type instead.
+    if (DS.hasTypeSpecifier() && C4CaretQualLevel >= 0)
+      C4CaretQualLevel = -1;
 
-    // === C4: [N] or [] bounds-checked array prefix ===
-    // Guard: only consume '[' as a C4 prefix before any base type has been
-    // parsed, so that trailing '[]' in plain C array types is left for the
-    // normal declarator parser.
-    if (!DS.hasTypeSpecifier() && Tok.is(tok::l_square)) {
-      ConsumeBracket(); // '['
-      if (Tok.is(tok::r_square)) {
-        // [] — unsized, no auto-storage
-        ConsumeBracket(); // ']'
-        DS.SetTypeSpecBoundsCheckedArray(true, Loc);
-      } else {
-        // [N] — sized; parse N as a constant expression for auto-storage
-        ExprResult SizeExpr = ParseAssignmentExpression();
-        if (SizeExpr.isInvalid()) {
-          SkipUntil(tok::r_square, StopAtSemi);
-        } else if (Tok.is(tok::r_square)) {
-          ConsumeBracket(); // ']'
-          DS.SetTypeSpecBoundsCheckedArray(true, Loc);
-          DS.setC4ArraySizeExpr(SizeExpr.get());
-        } else {
-          Diag(Tok, diag::err_expected) << tok::r_square;
-          SkipUntil(tok::r_square, StopAtSemi);
+    if (getLangOpts().C4()) {
+        // === C4: ^ pointer-depth prefix (can stack: ^, ^^, ^^^, …) ===
+        // Each ^ increments the pointer depth; the type is wrapped that many times
+        // in pointer indirection by Sema.  Block literals (^( or ^{) are never
+        // reached here because they only appear in expression context.
+        if (Tok.is(tok::caret)) {
+            DS.incrementC4PointerDepth(Loc);
+            // Track which ^ level qualifiers after this caret belong to.
+            C4CaretQualLevel = (int)DS.getC4PointerDepth() - 1;
+            ConsumeToken(); // consume '^'
+        continue;
         }
-      }
-      continue;
-    }
-    // =====================================================
 
-    // C4 PATCH: Implicit Void Return Types for Functions
-    // Safeguarded against system headers, struct fields, function pointers, AND right-side lookups
-    // Also gated on C mode: in C++ mode this fires on 'new Type(args)', placement-new
-    // ('::new (&loc) Type(args)'), and CTAD deduction guides ('Name(params)->Name<T...>')
-    // because those all use DSC_type_specifier or DSC_top_level contexts.
-    if (!getLangOpts().CPlusPlus &&
-        !DS.hasTypeSpecifier() &&
-        DSContext != DeclSpecContext::DSC_normal && // 👈 FIX: Prevent intercepting your right-side lookups
-        Tok.is(tok::identifier) &&
-        GetLookAheadToken(1).is(tok::l_paren)) {
-
-
-      // Safety 1: Never apply this feature inside system header files
-      bool IsInSystemHeader = Actions.getASTContext().getSourceManager().isInSystemHeader(Loc);
-
-      // Safety 2: Check the declaration context to ensure we aren't inside a struct field layout
-      bool IsStructOrUnionContext = (DSContext == DeclSpecContext::DSC_class ||
-                                     DSContext == DeclSpecContext::DSC_trailing);
-
-      // Safety 3: Scan ahead to confirm this is a real function definition or top-level decl,
-      // rather than a nested function pointer declaration (which uses (*ptr)(args) layout)
-      bool IsFunctionPointerOrCast = false;
-      unsigned LookAheadIndex = 2;
-      while (true) {
-        const Token &AheadTok = GetLookAheadToken(LookAheadIndex++);
-        if (AheadTok.is(tok::r_paren)) {
-          // If the parameters end and we see an opening parenthesis next,
-          // it's a function pointer layout like: (*identifier)(args), skip it!
-          if (GetLookAheadToken(LookAheadIndex).is(tok::l_paren)) {
-            IsFunctionPointerOrCast = true;
-          }
-          break;
+        // === C4: [N] or [] bounds-checked array prefix ===
+        // Guard: only consume '[' as a C4 prefix before any base type has been
+        // parsed, so that trailing '[]' in plain C array types is left for the
+        // normal declarator parser.
+        if (!DS.hasTypeSpecifier() && Tok.is(tok::l_square)) {
+                ConsumeBracket(); // '['
+            if (Tok.is(tok::r_square)) {
+                // [] — unsized, no auto-storage
+                ConsumeBracket(); // ']'
+                DS.SetTypeSpecBoundsCheckedArray(true, Loc);
+            } else {
+                // [N] — sized; parse N as a constant expression for auto-storage
+                ExprResult SizeExpr = ParseAssignmentExpression();
+                if (SizeExpr.isInvalid()) {
+                    SkipUntil(tok::r_square, StopAtSemi);
+                } else if (Tok.is(tok::r_square)) {
+                    ConsumeBracket(); // ']'
+                    DS.SetTypeSpecBoundsCheckedArray(true, Loc);
+                    DS.setC4ArraySizeExpr(SizeExpr.get());
+                } else {
+                    Diag(Tok, diag::err_expected) << tok::r_square;
+                    SkipUntil(tok::r_square, StopAtSemi);
+                }
+            }
+            continue;
         }
-        // Safety break if we overrun a statement boundary
-        if (AheadTok.isOneOf(tok::semi, tok::l_brace, tok::eof)) break;
-      }
+        // =====================================================
 
-      if (!IsInSystemHeader && !IsStructOrUnionContext && !IsFunctionPointerOrCast) {
-        // Programmatically inject 'void' as the default return type specifier
-        isInvalid = DS.SetTypeSpecType(DeclSpec::TST_void, Loc, PrevSpec, DiagID, Policy);
-        if (isInvalid) return;
+        // C4 PATCH: Implicit Void Return Types for Functions
+        // Safeguarded against system headers, struct fields, function pointers, AND right-side lookups
+        // Also gated on C mode: in C++ mode this fires on 'new Type(args)', placement-new
+        // ('::new (&loc) Type(args)'), and CTAD deduction guides ('Name(params)->Name<T...>')
+        // because those all use DSC_type_specifier or DSC_top_level contexts.
+        if (!DS.hasTypeSpecifier() &&
+            DSContext != DeclSpecContext::DSC_normal && // FIX: Prevent intercepting your right-side lookups
+            Tok.is(tok::identifier) &&
+            GetLookAheadToken(1).is(tok::l_paren)) {
 
-        break;
-      }
+
+            // Safety 1: Never apply this feature inside system header files
+            bool IsInSystemHeader = Actions.getASTContext().getSourceManager().isInSystemHeader(Loc);
+
+            // Safety 2: Check the declaration context to ensure we aren't inside a struct field layout
+            bool IsStructOrUnionContext = (DSContext == DeclSpecContext::DSC_class ||
+                                            DSContext == DeclSpecContext::DSC_trailing);
+
+            // Safety 3: Scan ahead to confirm this is a real function definition or top-level decl,
+            // rather than a nested function pointer declaration (which uses (*ptr)(args) layout)
+            bool IsFunctionPointerOrCast = false;
+            unsigned LookAheadIndex = 2;
+            while (true) {
+                const Token &AheadTok = GetLookAheadToken(LookAheadIndex++);
+                if (AheadTok.is(tok::r_paren)) {
+                    // If the parameters end and we see an opening parenthesis next,
+                    // it's a function pointer layout like: (*identifier)(args), skip it!
+                    if (GetLookAheadToken(LookAheadIndex).is(tok::l_paren)) {
+                        IsFunctionPointerOrCast = true;
+                    }
+                    break;
+                }
+                // Safety break if we overrun a statement boundary
+                if (AheadTok.isOneOf(tok::semi, tok::l_brace, tok::eof)) break;
+            }
+
+            if (!IsInSystemHeader && !IsStructOrUnionContext && !IsFunctionPointerOrCast) {
+            // Programmatically inject 'void' as the default return type specifier
+                isInvalid = DS.SetTypeSpecType(DeclSpec::TST_void, Loc, PrevSpec, DiagID, Policy);
+                if (isInvalid) return;
+
+                break;
+            }
+        }
     }
-
 
     // Helper for image types in OpenCL.
     auto handleOpenCLImageKW = [&] (StringRef Ext, TypeSpecifierType ImageTypeSpec) {
@@ -3616,13 +3650,13 @@ void Parser::ParseDeclarationSpecifiers(
     // C4 LANGUAGE EXTENSION: PASS-BY-REFERENCE PREFIX DETECTOR (&type)
     // ==========================================================
     case tok::amp: {
+      if (!getLangOpts().C4()) goto DoneWithDeclSpec;
       // In C++, '&' after a type specifier is a reference declarator (e.g.
       // 'const T&', template specialization argument '_From&', etc.),
       // NOT a C4 pass-by-reference prefix.  Jump to DoneWithDeclSpec to exit
       // specifier parsing *without* consuming '&', so ParseDeclarator can
       // handle it as a reference type.  (A plain 'break' would fall through to
       // ConsumeAnyToken() at the bottom of the loop, eating the '&' anyway.)
-      if (getLangOpts().CPlusPlus) goto DoneWithDeclSpec;
 
       SourceLocation AmpLoc = Tok.getLocation();
       ConsumeToken(); // Consumes the '&' token safely
@@ -4636,14 +4670,29 @@ void Parser::ParseDeclarationSpecifiers(
 
     // cv-qualifier:
     case tok::kw_const:
+      if (getLangOpts().C4() && C4CaretQualLevel >= 0) {
+        DS.addC4PointerLevelQual(C4CaretQualLevel, DeclSpec::TQ_const);
+        Loc = ConsumeToken();
+        continue; // skip normal qualifier processing
+      }
       isInvalid = DS.SetTypeQual(DeclSpec::TQ_const, Loc, PrevSpec, DiagID,
                                  getLangOpts());
       break;
     case tok::kw_volatile:
+      if (getLangOpts().C4() && C4CaretQualLevel >= 0) {
+        DS.addC4PointerLevelQual(C4CaretQualLevel, DeclSpec::TQ_volatile);
+        Loc = ConsumeToken();
+        continue;
+      }
       isInvalid = DS.SetTypeQual(DeclSpec::TQ_volatile, Loc, PrevSpec, DiagID,
                                  getLangOpts());
       break;
     case tok::kw_restrict:
+      if (getLangOpts().C4() && C4CaretQualLevel >= 0) {
+        DS.addC4PointerLevelQual(C4CaretQualLevel, DeclSpec::TQ_restrict);
+        Loc = ConsumeToken();
+        continue;
+      }
       isInvalid = DS.SetTypeQual(DeclSpec::TQ_restrict, Loc, PrevSpec, DiagID,
                                  getLangOpts());
       break;
@@ -7632,8 +7681,9 @@ void Parser::ParseFunctionDeclarator(Declarator &D,
   // C4 PATCH: Handle Trailing Return Type for C (Moved after AddTypeInfo)
   bool TypeWasOmittedOnLeft = (D.getDeclSpec().getSourceRange().getBegin() == D.getIdentifierLoc());
 
-  if (!getLangOpts().CPlusPlus && TypeWasOmittedOnLeft &&
-      isDeclarationSpecifier(ImplicitTypenameContext::No)) {
+  if (getLangOpts().C4() && TypeWasOmittedOnLeft &&
+      (isDeclarationSpecifier(ImplicitTypenameContext::No) ||
+       Tok.is(tok::caret))) {
 
       // 1. Capture the active, mutable DeclSpec context from the declarator
       DeclSpec &TargetDS = D.getMutableDeclSpec();
@@ -7644,15 +7694,39 @@ void Parser::ParseFunctionDeclarator(Declarator &D,
       // 3. Setup empty template state configurations
       ParsedTemplateInfo EmptyTemplateInfo;
 
-      // 4. Parse the base type specifier (e.g., 'char')
+      // 3a. Consume any leading '^' (C4 caret pointer depth) that prefix the
+      //     return type, e.g. 'foo() ^int' or 'alloc() ^struct Arena'.
+      //     Each '^' adds one pointer indirection to the return type.
+      //     We record them as pointer chunks on D, the same way '*' is handled.
+      while (Tok.is(tok::caret)) {
+          SourceLocation CaretLoc = ConsumeToken(); // consume '^'
+          // Record the leading ^ as a plain pointer chunk (no qualifiers),
+          // identically to how trailing '*' pointer modifiers are handled.
+          D.AddTypeInfo(DeclaratorChunk::getPointer(
+                            /*TypeQuals=*/0, CaretLoc,
+                            SourceLocation(), SourceLocation(),
+                            SourceLocation(), SourceLocation(),
+                            SourceLocation()),
+                        Tok.getLocation());
+      }
 
-      // Trailing return types are parsed in a type-id-like context rather than
-      // a declaration context. DSC_normal causes anonymous tag definitions such as
-      //   f() struct { int x; }
-      // to be treated as incomplete declarations and emit
-      // "expected ';' after struct".
+      // 4. Parse the base type specifier (e.g., 'char' or 'struct Arena')
+
+      // Trailing return types are parsed in a type-id-like context.
+      //
+      // DSC_trailing (C++ trailing-return-type context) is used here so that
+      // 'struct'/'union'/'enum' tokens are treated as TYPE REFERENCES only
+      // (AllowDefiningTypeSpec::No), preventing the parser from consuming the
+      // opening '{' of the function body as a struct body.
+      //
+      // Previously DSC_type_specifier was used, which is
+      // AllowDefiningTypeSpec::NoButErrorRecovery and still caused the struct
+      // body to be parsed with cascading errors for e.g.:
+      //   arena_alloc1(size_t cap) ^struct Arena {
+      //       return 0;
+      //   }
       ParseDeclarationSpecifiers(TargetDS, EmptyTemplateInfo, AS_none,
-                                  DeclSpecContext::DSC_type_specifier);
+                                  DeclSpecContext::DSC_trailing);
 
       // 5. Parse trailing pointer modifiers manually
       while (Tok.is(tok::star)) {

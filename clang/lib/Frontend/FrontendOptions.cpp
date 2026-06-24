@@ -17,6 +17,9 @@ InputKind FrontendOptions::getInputKindForExtension(StringRef Extension) {
       .Cases({"ast", "pcm"},
              InputKind(Language::Unknown, InputKind::Precompiled))
       .Case("c", Language::C)
+      // C4 language extensions – treated as C at the language level
+      .Cases({"c4", "civ"}, Language::C)
+      .Cases({"h4", "hiv"}, Language::C)
       .Cases({"S", "s"}, Language::Asm)
       .Case("i", InputKind(Language::C).getPreprocessed())
       .Case("ii", InputKind(Language::CXX).getPreprocessed())

@@ -7083,7 +7083,15 @@ StmtResult Sema::ActOnTypeInferredAssignment(Scope *S, LHSVarInfo Var, Expr *Ini
       // But only if it's not already inside a CompoundLiteralExpr (i.e., no cast).
       // We can check if the original InitExpr was a CompoundLiteralExpr; we have HasCast flag.
       if (!HasCast) {
-        Expr *Converted = BuildC4ArrayFromInitList(ILE, FinalType);
+        // Pass the capacity from Var.SizeExpr (if present) so the synthesised
+        // struct gets the correct {items, count, capacity} layout.
+        unsigned InlineCapacity = 0;
+        if (Var.SizeExpr) {
+          Expr::EvalResult ER;
+          if (Var.SizeExpr->EvaluateAsInt(ER, Context))
+            InlineCapacity = (unsigned)ER.Val.getInt().getZExtValue();
+        }
+        Expr *Converted = BuildC4ArrayFromInitList(ILE, FinalType, InlineCapacity);
         if (!Converted) {
           Diag(ILE->getBeginLoc(), diag::err_cannot_convert_string_to_c4);
           return StmtError();
@@ -7100,6 +7108,19 @@ StmtResult Sema::ActOnTypeInferredAssignment(Scope *S, LHSVarInfo Var, Expr *Ini
                                    SC_None);
   NewVD->setLocalExternDecl();
   PushOnScopeChains(NewVD, S);
+
+  // For the sized [N] id := init form, evaluate the explicit capacity and
+  // attach C4ArrayInfo so that AddInitializerToDecl can validate
+  // InitCount <= Capacity before synthesising the runtime struct.
+  if (Var.SizeExpr && isC4ArrayType(FinalType)) {
+    Expr::EvalResult SizeER;
+    unsigned Capacity = 0;
+    if (Var.SizeExpr->EvaluateAsInt(SizeER, Context))
+      Capacity = (unsigned)SizeER.Val.getInt().getZExtValue();
+    NewVD->addAttr(C4ArrayInfoAttr::CreateImplicit(
+        Context, Capacity, /*InitCount=*/0, /*HasInitializer=*/false));
+  }
+
   AddInitializerToDecl(NewVD, InitExpr, /*DirectInit=*/false);
   return ActOnDeclStmt(ConvertDeclToDeclGroup(NewVD), Var.IdentLoc, InitExpr->getEndLoc());
 }
@@ -7176,8 +7197,9 @@ StmtResult Sema::ActOnMultiTypeInferredAssignment(Scope *S,
     if (isC4ArrayType(FinalType)) {
       Expr *SubInner = SubInitExpr->IgnoreImplicit();
       if (auto *ILE = dyn_cast<InitListExpr>(SubInner)) {
-        if (!HasCast) { // HasCast per sub‑expr, if we track it.
-          Expr *Converted = BuildC4ArrayFromInitList(ILE, FinalType);
+        if (!HasCast) { // HasCast per sub-expr, if we track it.
+          // No per-element capacity in multi-assign; use 0 (no constraint).
+          Expr *Converted = BuildC4ArrayFromInitList(ILE, FinalType, /*Capacity=*/0);
           if (!Converted) {
             Diag(ILE->getBeginLoc(), diag::err_cannot_convert_string_to_c4);
             return StmtError();
@@ -7988,21 +8010,62 @@ NamedDecl *Sema::ActOnVariableDeclarator(
   bool IsPlaceholderVariable = false;
 
   // === C4: TYPE PREFIX TRANSFORMATION ===
-  // 1. If [] or [N] was written, convert the base type to the C4 struct.
-  if (D.getDeclSpec().isBoundsCheckedArray() &&
-      D.getDeclSpec().getTypeSpecType() != DeclSpec::TST_error) {
-    R = GetOrCreateC4ArrayType(R);
-    TInfo = Context.getTrivialTypeSourceInfo(R, D.getIdentifierLoc());
-  }
+  // The order of [] and ^ in source determines the type semantics:
+  //
+  //   [] ^T   ('[]' before '^'): right-to-left reading → '^' is an element-
+  //            type modifier, producing C4Array(T*). e.g. '[] ^char' = C4
+  //            array of char* (suitable for main argv).
+  //
+  //   ^[] T   ('^' before '[]'): right-to-left reading → '^' is an outer
+  //            pointer wrapping the array, producing C4Array(T)*. e.g.
+  //            '^[] int' = pointer to C4 array of int.
+  //
+  //   [] T    (no '^'): C4Array(T)
+  //   ^ T     (no '[]'): T*
+  {
+    const DeclSpec &DS = D.getDeclSpec();
+    bool HasArray = DS.isBoundsCheckedArray() &&
+                    DS.getTypeSpecType() != DeclSpec::TST_error;
+    unsigned PtrDepth = DS.getC4PointerDepth();
 
-  // 2. Each leading ^ wraps the current type in one pointer level.
-  //    ^int    → int*
-  //    ^^int   → int**
-  //    ^[]int  → struct{int*,size_t}*
-  if (unsigned PtrDepth = D.getDeclSpec().getC4PointerDepth()) {
-    for (unsigned i = 0; i < PtrDepth; ++i)
-      R = Context.getPointerType(R);
-    TInfo = Context.getTrivialTypeSourceInfo(R, D.getIdentifierLoc());
+    if (HasArray && PtrDepth > 0 && DS.isC4ArrayBeforeCaret()) {
+      // '[] ^T' → apply '^' (with per-level qualifiers) to base type first,
+      // then wrap in C4 array: C4Array(T*).
+      const auto &LevelQuals = DS.getC4PointerLevelQuals();
+      for (unsigned i = 0; i < PtrDepth; ++i) {
+        unsigned levelIdx = PtrDepth - 1 - i;
+        QualType PtrTy = Context.getPointerType(R);
+        if (levelIdx < LevelQuals.size()) {
+          unsigned Q = LevelQuals[levelIdx];
+          if (Q & DeclSpec::TQ_const)    PtrTy.addConst();
+          if (Q & DeclSpec::TQ_volatile) PtrTy.addVolatile();
+          if (Q & DeclSpec::TQ_restrict) PtrTy.addRestrict();
+        }
+        R = PtrTy;
+      }
+      R = GetOrCreateC4ArrayType(R);
+    } else {
+      // '^ []T' or no combination: apply [] first, then ^ (outer pointer).
+      if (HasArray)
+        R = GetOrCreateC4ArrayType(R);
+      // Apply pointer levels from innermost to outermost, attaching
+      // any per-level qualifiers declared with '^const', '^volatile', etc.
+      const auto &LevelQuals = DS.getC4PointerLevelQuals();
+      for (unsigned i = 0; i < PtrDepth; ++i) {
+        // Build from inside out: innermost = high index, outermost = 0.
+        unsigned levelIdx = PtrDepth - 1 - i;
+        QualType PtrTy = Context.getPointerType(R);
+        if (levelIdx < LevelQuals.size()) {
+          unsigned Q = LevelQuals[levelIdx];
+          if (Q & DeclSpec::TQ_const)    PtrTy.addConst();
+          if (Q & DeclSpec::TQ_volatile) PtrTy.addVolatile();
+          if (Q & DeclSpec::TQ_restrict) PtrTy.addRestrict();
+        }
+        R = PtrTy;
+      }
+    }
+    if (HasArray || PtrDepth > 0)
+      TInfo = Context.getTrivialTypeSourceInfo(R, D.getIdentifierLoc());
   }
   // ======================================
 
@@ -8116,64 +8179,95 @@ NamedDecl *Sema::ActOnVariableDeclarator(
       checkNonTrivialCUnion(NewVD->getType(), NewVD->getLocation(),
                             NonTrivialCUnionContext::AutoVar, NTCUK_Destruct);
 
-    // === C4: [N] auto-storage synthesis ===
-    // For local `[N] T var` (no explicit initializer yet, no pointer depth),
-    // synthesize an initializer: { (T[N]){}, N }.
-    // The compound literal allocates N elements on the stack with the same
-    // lifetime as the enclosing block, matching the VarDecl's scope.
+    // === C4: Evaluate [N] size and attach C4ArrayInfo metadata ===
+    // Capacity is stored on the VarDecl now so that AddInitializerToDecl can
+    // validate InitCount <= Capacity and synthesise the runtime struct.
+    // Auto-locals without an explicit initialiser are left uninitialised here
+    // to prevent constant-evaluation crashes; static/file-scope variables get
+    // a zero-initialised default synthesised below.
     if (Expr *SizeExpr = D.getDeclSpec().getC4ArraySizeExpr()) {
       if (isC4ArrayType(NewVD->getType()) &&
           D.getDeclSpec().getC4PointerDepth() == 0 &&
-          DC->isFunctionOrMethod() &&
           !NewVD->isInvalidDecl()) {
 
         QualType StructTy = NewVD->getType();
         QualType ElemTy   = getElementTypeFromC4Array(StructTy);
 
-        if (!ElemTy.isNull()) {
-          // Only handle compile-time constant sizes for now.
-          Expr::EvalResult ER;
-          if (SizeExpr->EvaluateAsInt(ER, Context)) {
-            llvm::APSInt SizeAPInt = ER.Val.getInt();
-
-            // Build T[N] constant array type.
-            QualType ArrTy = Context.getConstantArrayType(
-                ElemTy, SizeAPInt, SizeExpr, ArraySizeModifier::Normal, 0);
-            TypeSourceInfo *ArrTSI =
-                Context.getTrivialTypeSourceInfo(ArrTy, D.getIdentifierLoc());
-
-            // Build (T[N]){} — a zero-initialised compound literal.
-            InitListExpr *EmptyInit = new (Context) InitListExpr(
-                Context, D.getIdentifierLoc(), {}, D.getIdentifierLoc(),
-                /*isExplicit=*/false);
-            EmptyInit->setType(ArrTy);
-            CompoundLiteralExpr *CLit = new (Context) CompoundLiteralExpr(
-                D.getIdentifierLoc(), ArrTSI, ArrTy, VK_LValue, EmptyInit,
-                /*fileScope=*/false);
-
-            // Decay T[N] lvalue → T*.
-            QualType PtrTy = Context.getPointerType(ElemTy);
-            ImplicitCastExpr *ItemsPtr = ImplicitCastExpr::Create(
-                Context, PtrTy, CK_ArrayToPointerDecay, CLit,
-                /*BasePath=*/nullptr, VK_PRValue, FPOptionsOverride());
-
-            // Build the count as a size_t integer literal.
-            llvm::APInt CountVal =
-                SizeAPInt.zextOrTrunc(Context.getTypeSize(Context.getSizeType()));
-            IntegerLiteral *CountLit = IntegerLiteral::Create(
-                Context, CountVal, Context.getSizeType(), D.getIdentifierLoc());
-
-            // Build struct initialiser { items_ptr, count }.
-            SmallVector<Expr *, 2> Inits = {ItemsPtr, CountLit};
-            InitListExpr *StructInit = new (Context) InitListExpr(
-                Context, D.getIdentifierLoc(), Inits, D.getIdentifierLoc(),
-                /*isExplicit=*/false);
-            StructInit->setType(StructTy);
-
-            NewVD->setInit(StructInit);
-            NewVD->setInitStyle(VarDecl::CInit);
-          }
+        // Evaluate the size expression to obtain the compile-time capacity.
+        Expr::EvalResult ER;
+        unsigned Capacity = 0;
+        llvm::APSInt CapAPInt;
+        bool HasConstSize = SizeExpr->EvaluateAsInt(ER, Context);
+        if (HasConstSize) {
+          CapAPInt = ER.Val.getInt();
+          Capacity = (unsigned)CapAPInt.getZExtValue();
         }
+
+        // Attach C4ArrayInfo; AddInitializerToDecl will fill in InitCount and
+        // HasInitializer when the explicit initialiser is processed.
+        NewVD->addAttr(C4ArrayInfoAttr::CreateImplicit(
+            Context, Capacity, /*InitCount=*/0, /*HasInitializer=*/false));
+
+        // Synthesise a default struct initialiser { (T[N]){...}, N, N } for
+        // static/file-scope storage only.  Auto-locals without an explicit init
+        // are handled by ActOnUninitializedDecl, which runs after the declarator
+        // and avoids the double-init collision that causes crashes.
+        //
+        // AddInitializerToDecl will overwrite this if an explicit init follows.
+        if (!DC->isFunctionOrMethod() && !ElemTy.isNull() &&
+            HasConstSize && Capacity > 0) {
+          bool IsFileScope = true;
+
+          // Build T[N] constant array type.
+          QualType ArrTy = Context.getConstantArrayType(
+              ElemTy, CapAPInt, SizeExpr, ArraySizeModifier::Normal, 0);
+          TypeSourceInfo *ArrTSI =
+              Context.getTrivialTypeSourceInfo(ArrTy, D.getIdentifierLoc());
+
+          // Build (T[N]){0,0,...} — N ImplicitValueInitExprs so that every
+          // element index is valid in the AST (an empty ILE typed as T[N]
+          // causes isa<> null-pointer crashes in downstream Clang passes).
+          SmallVector<Expr*, 8> ZeroElems;
+          ZeroElems.reserve(Capacity);
+          for (unsigned i = 0; i < Capacity; ++i)
+            ZeroElems.push_back(new (Context) ImplicitValueInitExpr(ElemTy));
+          InitListExpr *ZeroInit = new (Context) InitListExpr(
+              Context, D.getIdentifierLoc(), ZeroElems, D.getIdentifierLoc(),
+              /*isExplicit=*/false);
+          ZeroInit->setType(ArrTy);
+          CompoundLiteralExpr *CLit = new (Context) CompoundLiteralExpr(
+              D.getIdentifierLoc(), ArrTSI, ArrTy, VK_LValue, ZeroInit,
+              IsFileScope);
+
+          // Decay T[N] lvalue → T*.
+          QualType PtrTy = Context.getPointerType(ElemTy);
+          ImplicitCastExpr *ItemsPtr = ImplicitCastExpr::Create(
+              Context, PtrTy, CK_ArrayToPointerDecay, CLit,
+              /*BasePath=*/nullptr, VK_PRValue, FPOptionsOverride());
+
+          QualType SizeTy = Context.getSizeType();
+          llvm::APInt NVal =
+              CapAPInt.zextOrTrunc(Context.getTypeSize(SizeTy));
+
+          // count = N  (all N slots are active)
+          IntegerLiteral *CountLit =
+              IntegerLiteral::Create(Context, NVal, SizeTy, D.getIdentifierLoc());
+          // capacity = N
+          IntegerLiteral *CapLit =
+              IntegerLiteral::Create(Context, NVal, SizeTy, D.getIdentifierLoc());
+
+          // Build struct initialiser { items_ptr, count, capacity }.
+          SmallVector<Expr *, 3> Inits = {ItemsPtr, CountLit, CapLit};
+          InitListExpr *StructInit = new (Context) InitListExpr(
+              Context, D.getIdentifierLoc(), Inits, D.getIdentifierLoc(),
+              /*isExplicit=*/false);
+          StructInit->setType(StructTy);
+
+          NewVD->setInit(StructInit);
+          NewVD->setInitStyle(VarDecl::CInit);
+        }
+        // If there is an explicit initialiser it will be processed by
+        // AddInitializerToDecl, which overwrites the above default.
       }
     }
     // ======================================
@@ -13088,7 +13182,7 @@ void Sema::CheckMain(FunctionDecl *FD, const DeclSpec &DS) {
   // }
 
   bool IsC4Main =
-      !getLangOpts().CPlusPlus &&
+      getLangOpts().C4() &&
       nparams == 1 &&
       IsC4ArgvType(FTP->getParamType(0), Context);
 
@@ -14268,28 +14362,68 @@ void Sema::AddInitializerToDecl(Decl *RealDecl, Expr *Init, bool DirectInit) {
 
     VarDecl *VDecl = dyn_cast<VarDecl>(RealDecl);
     // --- C4 REWRITE (pure C) ---
-    if (!getLangOpts().CPlusPlus && VDecl && VDecl->getType()->isRecordType() && Init) {
+    // --- C4: Validate element count against capacity, then synthesise the
+    //         runtime struct initialiser { items_ptr, count }. ---
+    if (getLangOpts().C4() && VDecl && VDecl->getType()->isRecordType() && Init) {
       QualType VarType = VDecl->getType();
       if (isC4ArrayType(VarType)) {
         Expr *InitExpr = Init->IgnoreImplicit();
         Expr *NewInit = nullptr;
 
-        // If already a valid InitListExpr of the struct type, keep it.
+        // Fast-path: if the initialiser is already a synthesised C4 struct
+        // (e.g., produced by the static-storage path in ActOnVariableDeclarator),
+        // keep it as-is without re-validating.
         if (auto *ILE = dyn_cast<InitListExpr>(InitExpr)) {
-          if (Context.hasSameType(ILE->getType(), VarType))
+          if (Context.hasSameType(ILE->getType(), VarType)) {
             NewInit = ILE;
+          }
         }
 
         if (!NewInit) {
-          // Unwrap compound literals to get the inner initializer.
-          if (auto *CLE = dyn_cast<CompoundLiteralExpr>(InitExpr)) {
-            InitExpr = CLE->getInitializer();
+          // ---- Count initialiser elements for capacity validation ----
+          unsigned InitCount = 0;
+          Expr *RawInit = InitExpr;
+          if (auto *CLE = dyn_cast<CompoundLiteralExpr>(RawInit))
+            RawInit = CLE->getInitializer();
+
+          if (auto *ILE = dyn_cast<InitListExpr>(RawInit))
+            InitCount = ILE->getNumInits();
+          else if (auto *SL = dyn_cast<StringLiteral>(RawInit))
+            InitCount = (unsigned)SL->getLength(); // excludes null terminator
+          else
+            InitCount = 1; // scalar or other expression
+
+          // ---- Validate against declared capacity ----
+          if (auto *InfoAttr = VDecl->getAttr<C4ArrayInfoAttr>()) {
+            unsigned Capacity = InfoAttr->getCapacity();
+            if (Capacity > 0 && InitCount > Capacity) {
+              Diag(Init->getBeginLoc(),
+                   diag::err_c4_array_init_exceeds_capacity)
+                  << InitCount << Capacity;
+              VDecl->setInvalidDecl();
+              return;
+            }
+            // Update the C4ArrayInfo with the final element count and flag.
+            VDecl->dropAttr<C4ArrayInfoAttr>();
+            VDecl->addAttr(C4ArrayInfoAttr::CreateImplicit(
+                Context, Capacity, InitCount, /*HasInitializer=*/true));
           }
 
-          if (auto *ILE = dyn_cast<InitListExpr>(InitExpr)) {
-            NewInit = BuildC4ArrayFromInitList(ILE, VarType);
-          } else if (auto *SL = dyn_cast<StringLiteral>(InitExpr)) {
-            // Direct string literal → direct C4 struct.
+          // ---- Synthesise runtime struct from the explicit initialiser ----
+          // Unwrap compound literals to reach the inner InitListExpr or StringLiteral.
+          Expr *SynthSrc = InitExpr;
+          if (auto *CLE = dyn_cast<CompoundLiteralExpr>(SynthSrc))
+            SynthSrc = CLE->getInitializer();
+
+          // Pass the declared capacity so the synthesised struct gets the
+          // correct 3rd field { items, count, capacity }.
+          unsigned SynthCapacity = 0;
+          if (auto *InfoAttr2 = VDecl->getAttr<C4ArrayInfoAttr>())
+            SynthCapacity = InfoAttr2->getCapacity();
+
+          if (auto *ILE = dyn_cast<InitListExpr>(SynthSrc)) {
+            NewInit = BuildC4ArrayFromInitList(ILE, VarType, SynthCapacity);
+          } else if (auto *SL = dyn_cast<StringLiteral>(SynthSrc)) {
             NewInit = BuildC4ArrayFromStringLiteral(SL, VarType);
           } else {
             Diag(InitExpr->getBeginLoc(), diag::err_cannot_create_c4_array);
@@ -14868,6 +15002,70 @@ void Sema::ActOnUninitializedDecl(Decl *RealDecl) {
   // If there is no declaration, there was an error parsing it. Just ignore it.
   if (!RealDecl)
     return;
+
+  // === C4: Synthesise a pre-allocated default init for auto-local [N] T x; ===
+  // This must happen before the generic InitializationSequence path below,
+  // which would otherwise overwrite or conflict with our synthesised init.
+  if (getLangOpts().C4()) {
+    if (VarDecl *Var = dyn_cast<VarDecl>(RealDecl)) {
+      if (!Var->isInvalidDecl() && Var->hasLocalStorage() &&
+          isC4ArrayType(Var->getType())) {
+        if (auto *InfoAttr = Var->getAttr<C4ArrayInfoAttr>()) {
+          unsigned N = InfoAttr->getCapacity();
+          if (N > 0) {
+            QualType StructTy = Var->getType();
+            QualType ElemTy  = getElementTypeFromC4Array(StructTy);
+            if (!ElemTy.isNull()) {
+              SourceLocation Loc = Var->getLocation();
+              QualType SizeTy = Context.getSizeType();
+              auto MakeLit = [&](uint64_t V) -> Expr* {
+                return IntegerLiteral::Create(
+                    Context, llvm::APInt(Context.getTypeSize(SizeTy), V),
+                    SizeTy, Loc);
+              };
+
+              // Build T[N] array type.
+              llvm::APInt NVal(Context.getTypeSize(SizeTy), N);
+              QualType ArrTy = Context.getConstantArrayType(
+                  ElemTy, NVal, nullptr, ArraySizeModifier::Normal, 0);
+              TypeSourceInfo *ArrTSI =
+                  Context.getTrivialTypeSourceInfo(ArrTy, Loc);
+
+              // Build (T[N]){0,...} with N ImplicitValueInitExprs.
+              SmallVector<Expr*, 8> ZeroElems;
+              ZeroElems.reserve(N);
+              for (unsigned i = 0; i < N; ++i)
+                ZeroElems.push_back(new (Context) ImplicitValueInitExpr(ElemTy));
+              InitListExpr *ZeroILE = new (Context) InitListExpr(
+                  Context, Loc, ZeroElems, Loc, /*isExplicit=*/false);
+              ZeroILE->setType(ArrTy);
+
+              CompoundLiteralExpr *CLit = new (Context) CompoundLiteralExpr(
+                  Loc, ArrTSI, ArrTy, VK_LValue, ZeroILE,
+                  /*IsFileScope=*/false);
+
+              QualType PtrTy = Context.getPointerType(ElemTy);
+              ImplicitCastExpr *ItemsPtr = ImplicitCastExpr::Create(
+                  Context, PtrTy, CK_ArrayToPointerDecay, CLit,
+                  /*BasePath=*/nullptr, VK_PRValue, FPOptionsOverride());
+
+              // Build struct { items_ptr, count=N, capacity=N }.
+              SmallVector<Expr*, 3> SInits = {ItemsPtr, MakeLit(N), MakeLit(N)};
+              InitListExpr *StructInit = new (Context) InitListExpr(
+                  Context, Loc, SInits, Loc, /*isExplicit=*/false);
+              StructInit->setType(StructTy);
+
+              Var->setInit(StructInit);
+              Var->setInitStyle(VarDecl::CInit);
+              CheckCompleteVariableDeclaration(Var);
+              return;
+            }
+          }
+        }
+      }
+    }
+  }
+  // =========================================================================
 
   if (VarDecl *Var = dyn_cast<VarDecl>(RealDecl)) {
     QualType Type = Var->getType();
@@ -16167,46 +16365,76 @@ Decl *Sema::ActOnParamDeclarator(Scope *S, Declarator &D,
       }
     }
 
-    // 2. Apply [] / [N] → C4 struct conversion first.
-    if (D.getDeclSpec().isBoundsCheckedArray() &&
-        D.getDeclSpec().getTypeSpecType() != DeclSpec::TST_error) {
+    // 2. Apply [] / [N] and ^ in source order (same right-to-left semantics as
+    //    ActOnVariableDeclarator: '[] ^T' → C4Array(T*), '^[] T' → C4Array(T)*).
+    const DeclSpec &DS = D.getDeclSpec();
+    bool HasArray = DS.isBoundsCheckedArray() &&
+                    DS.getTypeSpecType() != DeclSpec::TST_error;
+    unsigned PtrDepth = DS.getC4PointerDepth();
+
+    if (HasArray) {
       QualType ElementTy = parmDeclType;
-      QualType RecordTy = GetOrCreateC4ArrayType(ElementTy);
 
-      if (IsExplicitC4Ref) {
-        // &[] int → const pointer to the struct
-        QualType PtrTy = Context.getPointerType(RecordTy);
-        PtrTy.addConst(); // const pointer
-        parmDeclType = PtrTy;
-        // The declarator chunk is still needed for syntactic representation
-        D.AddTypeInfo(DeclaratorChunk::getPointer(
-                          /*TypeQuals=*/DeclSpec::TQ_const,
-                          D.getBeginLoc(), SourceLocation(),
-                          SourceLocation(), SourceLocation(),
-                          SourceLocation(), SourceLocation()),
-                      D.getEndLoc());
-      } else {
-        // [] int → the struct itself (value type)
+      if (PtrDepth > 0 && DS.isC4ArrayBeforeCaret()) {
+        // '[] ^T' → apply '^' (with per-level qualifiers) to element type first.
+        const auto &LevelQuals = DS.getC4PointerLevelQuals();
+        for (unsigned i = 0; i < PtrDepth; ++i) {
+          unsigned levelIdx = PtrDepth - 1 - i;
+          QualType PtrTy = Context.getPointerType(ElementTy);
+          if (levelIdx < LevelQuals.size()) {
+            unsigned Q = LevelQuals[levelIdx];
+            if (Q & DeclSpec::TQ_const)    PtrTy.addConst();
+            if (Q & DeclSpec::TQ_volatile) PtrTy.addVolatile();
+            if (Q & DeclSpec::TQ_restrict) PtrTy.addRestrict();
+          }
+          ElementTy = PtrTy;
+        }
+        QualType RecordTy = GetOrCreateC4ArrayType(ElementTy);
         parmDeclType = RecordTy;
+        PtrDepth = 0; // already consumed
+      } else {
+        QualType RecordTy = GetOrCreateC4ArrayType(ElementTy);
+        if (IsExplicitC4Ref) {
+          // &[] int → const pointer to the struct
+          QualType PtrTy = Context.getPointerType(RecordTy);
+          PtrTy.addConst();
+          parmDeclType = PtrTy;
+          D.AddTypeInfo(DeclaratorChunk::getPointer(
+                            /*TypeQuals=*/DeclSpec::TQ_const,
+                            D.getBeginLoc(), SourceLocation(),
+                            SourceLocation(), SourceLocation(),
+                            SourceLocation(), SourceLocation()),
+                        D.getEndLoc());
+        } else {
+          parmDeclType = RecordTy;
+        }
       }
-
       TInfo = Context.getTrivialTypeSourceInfo(parmDeclType, D.getIdentifierLoc());
-    }
-
-    // 3. CASE C: BASIC SCALAR PASS-BY-REFERENCE VARIABLES ONLY (&int)
-    else if (IsExplicitC4Ref) {
+    } else if (IsExplicitC4Ref) {
+      // &T → const T*
       QualType PtrTy = Context.getPointerType(parmDeclType);
       PtrTy.addConst();
       parmDeclType = PtrTy;
       TInfo = Context.getTrivialTypeSourceInfo(parmDeclType, D.getIdentifierLoc());
-
-      D.AddTypeInfo(DeclaratorChunk::getPointer(/*TypeQuals=*/DeclSpec::TQ_const, D.getBeginLoc(), SourceLocation(), SourceLocation(), SourceLocation(), SourceLocation(), SourceLocation()), D.getEndLoc());
+      D.AddTypeInfo(DeclaratorChunk::getPointer(/*TypeQuals=*/DeclSpec::TQ_const,
+          D.getBeginLoc(), SourceLocation(), SourceLocation(), SourceLocation(),
+          SourceLocation(), SourceLocation()), D.getEndLoc());
     }
 
-    // Apply ^ pointer depth (can stack on top of [] for ^[]int, ^^[]int, etc.)
-    if (unsigned PtrDepth = D.getDeclSpec().getC4PointerDepth()) {
-      for (unsigned i = 0; i < PtrDepth; ++i)
-        parmDeclType = Context.getPointerType(parmDeclType);
+    // Apply remaining ^ pointer depth with per-level qualifiers.
+    if (PtrDepth > 0) {
+      const auto &LevelQuals = DS.getC4PointerLevelQuals();
+      for (unsigned i = 0; i < PtrDepth; ++i) {
+        unsigned levelIdx = PtrDepth - 1 - i;
+        QualType PtrTy = Context.getPointerType(parmDeclType);
+        if (levelIdx < LevelQuals.size()) {
+          unsigned Q = LevelQuals[levelIdx];
+          if (Q & DeclSpec::TQ_const)    PtrTy.addConst();
+          if (Q & DeclSpec::TQ_volatile) PtrTy.addVolatile();
+          if (Q & DeclSpec::TQ_restrict) PtrTy.addRestrict();
+        }
+        parmDeclType = PtrTy;
+      }
       TInfo = Context.getTrivialTypeSourceInfo(parmDeclType, D.getIdentifierLoc());
     }
   }

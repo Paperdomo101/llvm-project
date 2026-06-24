@@ -437,6 +437,20 @@ private:
     SourceLocation C4PointerDepthLoc;
     // Size expression from [N] syntax (null for unsized [])
     Expr *C4ArraySizeExpr = nullptr;
+    // Qualifiers per ^ pointer level (index 0 = outermost / first ^ seen).
+    // Populated by ParseDeclarationSpecifiers when a qualifier token appears
+    // immediately after '^' so that '^const int' produces 'int *const'
+    // rather than 'const int *'.
+    SmallVector<unsigned, 2> C4PointerLevelQuals;
+    // True when '[]' was parsed BEFORE '^' in the source (e.g. "[] ^T").
+    // This drives right-to-left type building: '^' becomes an element-type
+    // modifier rather than an outer pointer, giving C4Array(T*) instead of
+    // C4Array(T)*.  For the opposite order ("^ []T") this is false.
+    // NOTE: Must be a plain bool with a default initialiser, NOT an unnamed
+    // bitfield.  C++ does not zero-initialise bitfields that lack an
+    // initialiser, so using 'unsigned : 1' here leaves garbage and causes
+    // every ^[] declaration to take the wrong type-building branch.
+    bool C4ArrayBeforeCaret = false;
     unsigned IsC4Reference : 1;
     SourceLocation C4ReferenceLoc;
   // ------------------------------------
@@ -475,9 +489,16 @@ public:
   void incrementC4PointerDepth(SourceLocation loc) {
     if (C4PointerDepth == 0) C4PointerDepthLoc = loc;
     ++C4PointerDepth;
+    C4PointerLevelQuals.push_back(0); // placeholder for qualifiers of this level
+    // If '[]' was already set when we see '^', caret comes AFTER the array
+    // bracket in source ("'[] ^T") – record that the array came first.
+    if (IsBoundsCheckedArray)
+      C4ArrayBeforeCaret = true;
   }
   unsigned getC4PointerDepth() const { return C4PointerDepth; }
   SourceLocation getC4PointerDepthLoc() const { return C4PointerDepthLoc; }
+  /// True when '[]' appeared before '^' in the source (e.g. "[] ^T").
+  bool isC4ArrayBeforeCaret() const { return C4ArrayBeforeCaret; }
 
   // [N] inline size expression
   void setC4ArraySizeExpr(Expr *E) { C4ArraySizeExpr = E; }
@@ -489,6 +510,15 @@ public:
   }
 
   bool isC4Reference() const { return IsC4Reference; }
+
+  /// OR-in a type-qualifier flag for the given ^ pointer level.
+  void addC4PointerLevelQual(unsigned level, unsigned qual) {
+    if (level < C4PointerLevelQuals.size())
+      C4PointerLevelQuals[level] |= qual;
+  }
+  const SmallVector<unsigned, 2> &getC4PointerLevelQuals() const {
+    return C4PointerLevelQuals;
+  }
   // ---------------------------------------
 
   static bool isDeclRep(TST T) {
@@ -687,6 +717,8 @@ public:
     C4PointerDepth = 0;
     C4PointerDepthLoc = SourceLocation();
     C4ArraySizeExpr = nullptr;
+    C4ArrayBeforeCaret = false;
+    C4PointerLevelQuals.clear();
 
     IsC4Reference = false;
     C4ReferenceLoc = SourceLocation();

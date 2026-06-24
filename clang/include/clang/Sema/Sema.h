@@ -2610,7 +2610,7 @@ public:
   QualType getElementTypeFromC4Array(QualType C4Type) const;
 
   /// Build a CompoundLiteralExpr of the C4 array struct from an InitListExpr.
-  InitListExpr* BuildC4ArrayFromInitList(InitListExpr *ILE, QualType C4Type);
+  InitListExpr* BuildC4ArrayFromInitList(InitListExpr *ILE, QualType C4Type, unsigned Capacity = 0);
 
   /// Build a CompoundLiteralExpr of the C4 array struct from a StringLiteral.
   InitListExpr* BuildC4ArrayFromStringLiteral(StringLiteral *SL, QualType C4Type);
@@ -2628,6 +2628,7 @@ public:
 
   ExprResult ActOnTypeSizeIntrinsic(ParsedType Ty, SourceLocation OpLoc);
   ExprResult ActOnArraySizeIntrinsic(Expr *SubExpr, SourceLocation HashLoc, SourceLocation PeriodLoc);
+  ExprResult ActOnC4CapacityOf(Expr *SubExpr, SourceLocation OpLoc);
 
   ExprResult ActOnCapacityOfExpr(SourceLocation OpLoc, TypeSourceInfo *TInfo);
 

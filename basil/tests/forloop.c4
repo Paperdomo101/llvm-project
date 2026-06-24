@@ -4,11 +4,12 @@
 
 main () int {
     [] bob := {5, 6, 7, 8}
-    [4] int joe = {1, 2, 3, 4}
+    [4] int joe = {1, 2, 3, 5}
 
     size_t c = #.bob-1;
 
-    printf("%zu|%zu\n", #.bob-1, c)
+    printf("%zu|%zu\n", ##.joe, c)
+    printf("%zu|%zu\n", #.bob, c)
 
     // Non‑parenthesised (your custom syntax)
     for i := 0; i < #.joe; ++i { "%d"::printf(joe[i]) }

@@ -106,8 +106,8 @@ int main( int argc, char **argv )
 #define MAX_ERRORS (10)
 // Helper structure to track expected error diagnostics
 typedef struct {
-    const char *test_name;
-    const char *file_path;
+    const char *name;
+    const char *path;
     bool is_runtime_test;
     int expected_error_count;
     const char *expected_errors[MAX_ERRORS]; // NULL if it should compile successfully
@@ -149,6 +149,10 @@ CompilerTest custom_test_suite[] = {
     {
         "Array types don't get demoted by === C4 PATCH: BOUNDS-CHECKED ARRAY PREFIX INTERCEPT ===",
         "tests/emcc.c4",
+    },
+    {
+        "For loops",
+        "tests/forloop.c4",
     },
     {
         "Postfix '->' after GNU statement-expression macro (cross-macro spelling-line false positive)",
@@ -274,16 +278,16 @@ bool run_compiler_tests(const char *compiler_path) {
     for (int i = 0; i < total; ++i) {
         CompilerTest test = custom_test_suite[i];
 
-        if (!file_exists(test.file_path)) {
-            printf("\033[31m[FAIL]\033[36m %s \033[0;2m(Missing test file: %s)\033[0m\n", test.test_name, test.file_path);
+        if (!file_exists(test.path)) {
+            printf("\033[31m[FAIL]\033[36m %s \033[0;2m(Missing test file: %s)\033[0m\n", test.name, test.path);
             continue;
         }
 
         Cmd cmd = {0};
         if (test.is_runtime_test) {
-            cmd_append(&cmd, compiler_path, "-o", temp_bin, "-O2", "-UNDEBUG", test.file_path);
+            cmd_append(&cmd, compiler_path, "-o", temp_bin, "-O2", "-UNDEBUG", test.path);
         } else {
-            cmd_append(&cmd, compiler_path, "-fsyntax-only", test.file_path);
+            cmd_append(&cmd, compiler_path, "-fsyntax-only", test.path);
         }
 
         // Capture the exit code integer status
@@ -291,15 +295,17 @@ bool run_compiler_tests(const char *compiler_path) {
         cmd_free(cmd);
 
         if (exit_code == -1) {
-            printf("\033[31m[FAIL]\033[0;2m %s (Process crashed, timed out, or encountered a signal violation)\033[0m\n", test.test_name);
+            printf("\033[31m[FAIL]\033[0;2m %s (Process crashed, timed out, or encountered a signal violation)\033[0m\n", test.name);
             continue;
         }
 
         // --- STAGE A: RUNTIME TESTS VERIFICATION ---
+        #define RUNTIME_FMT "\033[33m %s \033[37m<%s> "
+
         if (test.is_runtime_test) {
             if (!file_exists(temp_bin)) {
-                printf("\033[31m[FAIL]\033[33m %s \033[0;2m(Compilation failed to produce a binary! Compiler Output):\n%s\033[0m\n",
-                       test.test_name, compiler_log_buffer);
+                printf("\033[31m[FAIL]"RUNTIME_FMT"\033[0;2m(Compilation failed to produce a binary! Compiler Output):\n%s\033[0m\n",
+                       test.name, test.path, compiler_log_buffer);
                 continue;
             }
 
@@ -314,17 +320,19 @@ bool run_compiler_tests(const char *compiler_path) {
 
             // CRITICAL CONTRACT CHECK: A runtime test passes IF and ONLY IF it exits with exactly 0
             if (runtime_exit_code == 0) {
-                printf("\033[32m[PASS]\033[33m %s \033[0;2m(Program executed and passed assertions smoothly)\033[0m\n", test.test_name);
+                printf("\033[32m[PASS]"RUNTIME_FMT"\033[0;2m(Program executed and passed assertions smoothly)\033[0m\n", test.name, test.path);
                 passed++;
             } else {
-                printf("\033[31m[FAIL]\033[33m %s \033[0;2m(Program failed! Terminated with non-zero exit code: %d. Output):\n%s\033[0m\n",
-                       test.test_name, runtime_exit_code, run_log_buf);
+                printf("\033[31m[FAIL]"RUNTIME_FMT"\033[0;2m(Program failed! Terminated with non-zero exit code: %d. Output):\n%s\033[0m\n",
+                       test.name, test.path, runtime_exit_code, run_log_buf);
             }
             continue;
         }
 
         // --- STAGE B: COMPILE-TIME DIAGNOSTIC CHECKS ---
         // For compile-time checks, we ignore the exit code value completely and evaluate the error strings!
+        #define COMPTIME_FMT "\033[36m %s \033[37m<%s> "
+
         int total_errors_seen = 0;
         const char *search_ptr = compiler_log_buffer;
         while ((search_ptr = strstr(search_ptr, "error:")) != NULL) {
@@ -334,8 +342,8 @@ bool run_compiler_tests(const char *compiler_path) {
 
 
         if (total_errors_seen != test.expected_error_count) {
-            printf("\033[31m[FAIL]\033[37m %s \033[0;2m(Mismatched error count! Compiler reported %d errors instead of the expected %d):\n%s\033[0m\n",
-                   test.test_name, total_errors_seen, test.expected_error_count, compiler_log_buffer);
+            printf("\033[31m[FAIL]"COMPTIME_FMT"\033[0;2m(Mismatched error count! Compiler reported %d errors instead of the expected %d):\n%s\033[0m\n",
+                test.name, test.path, total_errors_seen, test.expected_error_count, compiler_log_buffer);
             continue;
         }
 
@@ -345,8 +353,8 @@ bool run_compiler_tests(const char *compiler_path) {
             if (!expected_msg) continue;
 
             if (strstr(compiler_log_buffer, expected_msg) == NULL) {
-                printf("\033[31m[FAIL]\033[37m %s \033[0;2m(Missing required diagnostic target phrase! Did not see: '%s')\n",
-                       test.test_name, expected_msg);
+                printf("\033[31m[FAIL]"COMPTIME_FMT"\033[0;2m(Missing required diagnostic target phrase! Did not see: '%s')\n",
+                    test.name, test.path, expected_msg);
                 all_expected_errors_found = false;
                 break;
             }
@@ -354,15 +362,15 @@ bool run_compiler_tests(const char *compiler_path) {
 
         if (all_expected_errors_found) {
             if (test.expected_error_count == 0) {
-                printf("\033[32m[PASS]\033[36m %s\033[0m\n", test.test_name);
+                printf("\033[32m[PASS]"COMPTIME_FMT"\033[0m\n", test.name, test.path);
             } else {
-                printf("\033[32m[PASS]\033[36m %s \033[0;2m(Compiler successfully caught all %d custom violations uniquely)\033[0m\n",
-                       test.test_name, test.expected_error_count);
+                printf("\033[32m[PASS]"COMPTIME_FMT"\033[0;2m(Compiler successfully caught all %d custom violations uniquely)\033[0m\n",
+                       test.name, test.path, test.expected_error_count);
             }
             passed++;
         } else {
-            printf("\033[31m[FAIL]\033[36m %s \033[0;2m(Error verification mismatched. Raw logs):\n%s\033[0m\n",
-                   test.test_name, compiler_log_buffer);
+            printf("\033[31m[FAIL]"COMPTIME_FMT"\033[0;2m(Error verification mismatched. Raw logs):\n%s\033[0m\n",
+                   test.name, test.path, compiler_log_buffer);
         }
     }
 

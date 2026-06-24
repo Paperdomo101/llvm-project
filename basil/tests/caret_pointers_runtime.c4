@@ -127,7 +127,7 @@ main () int {
     // SCENARIO 4: [N] — auto-storage, items non-null, count == N
     // =========================================================================
     {
-        [] int ints;
+        [32] int ints;
 
         CHECK_NOTNULL(ints.items, "S4: [32] int items != NULL");
         CHECK((int)ints.count, 32, "S4: count == 32");

@@ -796,13 +796,29 @@ class InheritableAttr : Attr {
   bit InheritEvenIfAlreadyPresent = 0;
 }
 
-/// C4: Bounds checked array attribute
+/// C4: Bounds checked array attribute (on the anonymous struct type).
+/// Kept for type identification; use C4ArrayInfo on VarDecl for per-variable metadata.
 def C4BoundsCheckedArray : Attr {
   let Spellings = [];                // No spelling; implicit only
   let Args = [TypeArgument<"ElementType">];
   let Subjects = SubjectList<[Record]>;
   let Documentation = [Undocumented];
 }
+
+/// C4: Per-variable bounds-checking metadata attached to VarDecl.
+/// Stores the compile-time capacity (from the [N] size expression), the number
+/// of initializer elements actually provided, and a flag indicating whether an
+/// explicit initializer was supplied.  Validation (InitCount > Capacity) and
+/// runtime-struct synthesis are performed in AddInitializerToDecl.
+def C4ArrayInfo : Attr {
+  let Spellings = [];  // implicit only – never written by the user
+  let Args = [UnsignedArgument<"Capacity">,
+              UnsignedArgument<"InitCount">,
+              BoolArgument<"HasInitializer">];
+  let Subjects = SubjectList<[Var]>;
+  let Documentation = [Undocumented];
+}
+
 def C4Main : InheritableAttr {
   let Spellings = [];
   let Subjects = SubjectList<[Function]>;

@@ -994,40 +994,50 @@ Parser::ParseCastExpression(CastParseKind ParseKind, bool isAddressOfOperand,
       ConsumeToken(); // Eat the '##'
       ConsumeToken(); // Eat the '.'
 
-      // Expect a parenthesised or naked type id, matching sizeof behavior
+      // ##. has two forms:
+      //   ##. TypeName         – returns the max representable value of TypeName
+      //   ##. expr             – returns the 'capacity' field of a C4 array variable
+      //
+      // Distinguish by checking whether the next token begins a type-specifier.
+      // Both forms support optional parentheses: ##.(int) and ##.(arr) are also valid.
       bool isParenthesized = Tok.is(tok::l_paren);
       BalancedDelimiterTracker T(*this, tok::l_paren);
-      if (isParenthesized) {
+      if (isParenthesized)
         T.consumeOpen();
+
+      if (isTypeSpecifierQualifier(Tok)) {
+        // ---- Type form: ##. TypeName → max value of that type ----
+        TypeResult Ty = ParseTypeName();
+        if (Ty.isInvalid()) return ExprError();
+
+        if (isParenthesized)
+          T.consumeClose();
+
+        TypeSourceInfo *TInfo = nullptr;
+        QualType QT = Actions.GetTypeFromParser(Ty.get(), &TInfo);
+        if (!TInfo && !QT.isNull())
+          TInfo = Actions.getASTContext().getTrivialTypeSourceInfo(QT, OperatorLoc);
+        if (!TInfo) return ExprError();
+
+        return Actions.ActOnCapacityOfExpr(OperatorLoc, TInfo);
+      } else {
+        // ---- Expression form: ##. expr → expr.capacity (C4 array) ----
+        // Parse the operand as a cast-expression (same pattern as the #. size
+        // operator above) to handle identifiers, member accesses, derefs, etc.
+        ExprResult SubExpr =
+            ParseCastExpression(CastParseKind::AnyCastExpr,
+                                /*isAddressOfOperand=*/false,
+                                NotCastExpr, CorrectionBehavior);
+        if (SubExpr.isInvalid()) {
+          if (isParenthesized) T.skipToEnd();
+          return ExprError();
+        }
+
+        if (isParenthesized)
+          T.consumeClose();
+
+        return Actions.ActOnC4CapacityOf(SubExpr.get(), OperatorLoc);
       }
-
-      // CRASH FIX 2: Explicitly stop execution and return ExprError() if this isn't a type.
-      // Failing to return an explicit ExprError() allows garbage memory to leak to CodeGen.
-      if (!isTypeSpecifierQualifier(Tok)) {
-        Diag(Tok, diag::err_expected_type);
-        if (isParenthesized) T.skipToEnd();
-        return ExprError();
-      }
-
-      TypeResult Ty = ParseTypeName();
-      if (Ty.isInvalid()) return ExprError();
-
-      if (isParenthesized) {
-        T.consumeClose();
-      }
-
-      // Extract the raw QualType from the parsed result
-      TypeSourceInfo *TInfo = nullptr;
-      QualType QT = Actions.GetTypeFromParser(Ty.get(), &TInfo);
-
-      if (!TInfo && !QT.isNull()) {
-        TInfo = Actions.getASTContext().getTrivialTypeSourceInfo(QT, OperatorLoc);
-      }
-
-      if (!TInfo) return ExprError();
-
-      // Forward safely to Sema using the correct pointer type layout
-      return Actions.ActOnCapacityOfExpr(OperatorLoc, TInfo);
     }
     // Fallthrough to standard handler if it isn't followed by your operator symbols
     [[fallthrough]];

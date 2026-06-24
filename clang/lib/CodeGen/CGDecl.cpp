@@ -2941,6 +2941,17 @@ void CodeGenFunction::EmitParmDecl(const VarDecl &D, ParamValue Arg,
           // 7. OVERWRITE LOCAL ADDRESS REFERENCE:
           // Overwrite the parameter's local '__data' field slot to target your fresh clone.
           EmitStoreOfScalar(NewBackingArr, DataLV, /*isInit=*/false);
+
+          // Also copy the capacity field into the cloned parameter.
+          FieldDecl *CapField = nullptr;
+          for (FieldDecl *F : RD->fields()) {
+            if (F->getName() == C4_ARRAY_CAPACITY_FIELD) { CapField = F; break; }
+          }
+          if (CapField) {
+            LValue CapLV = EmitLValueForField(ParamLV, CapField);
+            llvm::Value *CapVal = EmitLoadOfScalar(CapLV, SourceLocation());
+            EmitStoreOfScalar(CapVal, CapLV, /*isInit=*/false);
+          }
         }
       }
     }

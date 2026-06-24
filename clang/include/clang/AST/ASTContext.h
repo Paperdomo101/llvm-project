@@ -88,6 +88,7 @@ namespace clang {
   // update the entire compiler architecture simultaneously!
   constexpr llvm::StringLiteral C4_ARRAY_DATA_FIELD = "items";
   constexpr llvm::StringLiteral C4_ARRAY_SIZE_FIELD = "count";
+  constexpr llvm::StringLiteral C4_ARRAY_CAPACITY_FIELD = "capacity";
   // ============================================================
 
 class APValue;

@@ -66,11 +66,31 @@ bool Parser::ParseLHSVar(LHSVarInfo &Out, bool SuppressDiags) {
     ConsumeToken();
   }
 
-  // Optional '[]' before identifier (C4)
-  if (Tok.is(tok::l_square) && NextToken().is(tok::r_square)) {
-    Out.Kind = ArrayKind::C4;
-    ConsumeBracket(); // '['
-    ConsumeBracket(); // ']'
+  // Optional '[]' (unsized) or '[N]' (sized) before identifier (C4)
+  if (Tok.is(tok::l_square)) {
+    if (NextToken().is(tok::r_square)) {
+      // Unsized [] C4 array prefix
+      Out.Kind = ArrayKind::C4;
+      ConsumeBracket(); // '['
+      ConsumeBracket(); // ']'
+    } else if ((NextToken().is(tok::numeric_constant) || NextToken().is(tok::identifier)) &&
+               PP.LookAhead(1).is(tok::r_square)) {
+      // Sized [N] or [size] C4 array prefix: parse the size expression during real
+      // parsing; in tentative mode (SuppressDiags=true) just consume tokens.
+      Out.Kind = ArrayKind::C4;
+      ConsumeBracket(); // '['
+      if (!SuppressDiags) {
+        // Parse the size expression the same way ParseDeclarationSpecifiers
+        // does for '[N]' declarations.
+        ExprResult SizeResult = ParseAssignmentExpression();
+        if (SizeResult.isUsable())
+          Out.SizeExpr = SizeResult.get();
+      } else {
+        ConsumeToken(); // consume the numeric literal token (tentative check only)
+      }
+      if (Tok.is(tok::r_square))
+        ConsumeBracket(); // ']'
+    }
   }
 
   // Expect an identifier
@@ -368,11 +388,9 @@ Retry:
     if (NextToken().is(tok::r_square)) {
       // [] — unsized C4 array
       IsC4Decl = true;
-    } else if (NextToken().is(tok::numeric_constant) &&
+    } else if ((NextToken().is(tok::numeric_constant) || NextToken().is(tok::identifier)) &&
                PP.LookAhead(1).is(tok::r_square)) {
-      // [N] — sized C4 array; distinguish from ObjC [receiver msg] by requiring
-      // the bracket content to be a bare numeric literal followed immediately
-      // by ].  ObjC messages have an identifier as the first token inside [.
+      // [N] or [size] — sized C4 array (single-token expression).
       IsC4Decl = true;
     }
 

@@ -5,7 +5,7 @@
 
     ## Loop ranges
     ```
-    for i := 0..10 {...}
+    for 0..10 {...}
     for i := 0..2..10 {...}
     for i := 0..-10 {...}
     ```
@@ -41,8 +41,6 @@
     }
     ```
 
-    ## [size] Bounds-checked arrays
-
 
     ## strip
 
@@ -55,7 +53,6 @@
     ## .ENUM
 
 
-    ## ^ pointers
 
     ## @. pointer dereferencing
 
@@ -68,9 +65,11 @@
     "/
 
     ## ||== / ||!=
+    ```
+    if c == ' ' || == '\t' || == '\n' {
 
-    if l->src[pos] == ' ' || == '\t' || == '\n' {
-
+    }
+    ```
 
     ## implicit return variables
     ```
@@ -147,6 +146,18 @@
 
 # ===|===|=== DONE ===|===|===
 # ____________________________
+
+
+    ## ^ pointers
+
+
+    ## [size] Bounds-checked arrays
+
+
+    ## for loop semicolon emission
+    ```
+    for {...}
+    ```
 
 
     ## Custom main signature

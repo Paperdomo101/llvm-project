@@ -194,7 +194,7 @@ ExprResult Sema::decayExpr(Expr *E) {
   return R;
 }
 
-InitListExpr* Sema::BuildC4ArrayFromInitList(InitListExpr *ILE, QualType C4Type) {
+InitListExpr* Sema::BuildC4ArrayFromInitList(InitListExpr *ILE, QualType C4Type, unsigned Capacity) {
   if (!ILE || C4Type.isNull()) return nullptr;
 
   // ---- 1. Determine element type ----
@@ -212,6 +212,13 @@ InitListExpr* Sema::BuildC4ArrayFromInitList(InitListExpr *ILE, QualType C4Type)
 
   unsigned NumInits = ILE->getNumInits();
   SourceLocation Loc = ILE->getBeginLoc();
+
+  // Capacity literal builder (captures Loc by reference)
+  auto MakeCountLit = [&](uint64_t Val) -> Expr* {
+    QualType SzTy = Context.getSizeType();
+    return IntegerLiteral::Create(Context,
+        llvm::APInt(Context.getTypeSize(SzTy), Val), SzTy, Loc);
+  };
 
   // ---- 2. SPECIAL CASE: single initializer that is a string literal AND element type is character ----
   if (NumInits == 1) {
@@ -235,7 +242,7 @@ InitListExpr* Sema::BuildC4ArrayFromInitList(InitListExpr *ILE, QualType C4Type)
             Context,
             llvm::APInt(Context.getTypeSize(SizeTy), Len),
             SizeTy, Loc);
-        SmallVector<Expr*, 2> StructInits = {DataExpr, SizeExpr};
+        SmallVector<Expr*, 3> StructInits = {DataExpr, SizeExpr, MakeCountLit(Len)};
         InitListExpr *Result = new (Context) InitListExpr(Context, Loc, StructInits, Loc,
                                                           /*Synthetic=*/false);
         Result->setType(C4Type);
@@ -255,31 +262,33 @@ InitListExpr* Sema::BuildC4ArrayFromInitList(InitListExpr *ILE, QualType C4Type)
     }
   }
 
-  // ---- 4. Empty initializer ----
-  if (NumInits == 0) {
+  // ---- 4. No data, no capacity: null-pointer struct { NULL, 0, 0 } ----
+  if (NumInits == 0 && Capacity == 0) {
     QualType PtrType = Context.getPointerType(ElementType);
     QualType IntTy = Context.IntTy;
     Expr *Zero = IntegerLiteral::Create(
-        Context,
-        llvm::APInt(Context.getIntWidth(IntTy), 0),
-        IntTy, Loc);
+        Context, llvm::APInt(Context.getIntWidth(IntTy), 0), IntTy, Loc);
     Expr *NullPtr = ImplicitCastExpr::Create(
         Context, PtrType, CK_IntegralToPointer,
         Zero, nullptr, VK_PRValue, FPOptionsOverride());
-    QualType SizeTy = Context.getSizeType();
-    Expr *SizeExpr = IntegerLiteral::Create(
-        Context,
-        llvm::APInt(Context.getTypeSize(SizeTy), 0),
-        SizeTy, Loc);
-    SmallVector<Expr*, 2> StructInits = {NullPtr, SizeExpr};
+    SmallVector<Expr*, 3> StructInits = {NullPtr, MakeCountLit(0), MakeCountLit(0)};
     InitListExpr *Result = new (Context) InitListExpr(Context, Loc, StructInits, Loc,
                                                       /*Synthetic=*/false);
     Result->setType(C4Type);
     return Result;
   }
 
-  // ---- 5. General case: convert each element to ElementType (prvalue) ----
-  SmallVector<Expr*, 8> ConvertedInits;
+  // ---- 5. Build backing array of max(Capacity, NumInits) elements ----
+  // When Capacity > 0 (i.e. [N] was written), always allocate exactly N
+  // elements and set count=N.  Extra slots beyond NumInits are zero-filled
+  // via ImplicitValueInitExpr so the resulting InitListExpr is well-formed
+  // (an empty ILE typed as int[N] would cause isa<> null crashes downstream).
+  unsigned AllocSize = (Capacity > 0) ? Capacity : NumInits;
+
+  SmallVector<Expr*, 8> BackingInits;
+  BackingInits.reserve(AllocSize);
+
+  // Convert the user-supplied elements.
   for (unsigned i = 0; i < NumInits; ++i) {
     Expr *Orig = ILE->getInit(i);
     ExprResult Arg = decayExpr(Orig);
@@ -287,7 +296,7 @@ InitListExpr* Sema::BuildC4ArrayFromInitList(InitListExpr *ILE, QualType C4Type)
     QualType SrcType = Arg.get()->getType();
 
     if (Context.hasSameType(SrcType, ElementType)) {
-      ConvertedInits.push_back(Arg.get());
+      BackingInits.push_back(Arg.get());
       continue;
     }
 
@@ -305,31 +314,40 @@ InitListExpr* Sema::BuildC4ArrayFromInitList(InitListExpr *ILE, QualType C4Type)
 
     ExprResult Cast = ImpCastExprToType(Arg.get(), ElementType, CK);
     if (Cast.isInvalid()) return nullptr;
-    ConvertedInits.push_back(Cast.get());
+    BackingInits.push_back(Cast.get());
   }
 
+  // Zero-fill remaining slots with ImplicitValueInitExpr.
+  for (unsigned i = NumInits; i < AllocSize; ++i)
+    BackingInits.push_back(new (Context) ImplicitValueInitExpr(ElementType));
+
   // ---- 6. Build temporary array compound literal ----
-  llvm::APInt Size(Context.getTypeSize(Context.getSizeType()), NumInits);
-  QualType ArrayType = Context.getConstantArrayType(ElementType, Size, nullptr,
+  llvm::APInt AllocAPInt(Context.getTypeSize(Context.getSizeType()), AllocSize);
+  QualType ArrayType = Context.getConstantArrayType(ElementType, AllocAPInt, nullptr,
                                                     ArraySizeModifier::Normal, 0);
-  InitListExpr *ArrayILE = new (Context) InitListExpr(Context, Loc, ConvertedInits,
-                                                      ILE->getEndLoc(), /*Synthetic=*/false);
+  SourceLocation EndLoc = (NumInits > 0) ? ILE->getEndLoc() : Loc;
+  InitListExpr *ArrayILE = new (Context) InitListExpr(Context, Loc, BackingInits,
+                                                      EndLoc, /*Synthetic=*/false);
   ArrayILE->setType(ArrayType);
-  TypeSourceInfo *ArrayTSI = Context.getTrivialTypeSourceInfo(ArrayType);
+  TypeSourceInfo *ArrayTSI = Context.getTrivialTypeSourceInfo(ArrayType, Loc);
   CompoundLiteralExpr *ArrayCLE = new (Context) CompoundLiteralExpr(
       Loc, ArrayTSI, ArrayType, VK_LValue, ArrayILE, /*IsFileScope=*/false);
 
-  // ---- 7. Build struct initializer: { __data, __size } ----
+  // ---- 7. Build struct initializer: { items_ptr, count, capacity } ----
+  // count    = NumInits  – only the explicitly-provided elements are "active".
+  //            For '[N] T x = {a,b,c}' this is 3, not N.  The backing buffer
+  //            is AllocSize elements (zero-filled beyond NumInits), so the
+  //            programmer can safely index 0..NumInits-1 via the subscript
+  //            operator.  The capacity field records the declared bound N.
+  // capacity = EffectiveCapacity (== N for '[N]', == NumInits for '[]')
   QualType PtrType = Context.getPointerType(ElementType);
   Expr *DataExpr = ImplicitCastExpr::Create(
       Context, PtrType, CK_ArrayToPointerDecay,
       ArrayCLE, nullptr, VK_PRValue, FPOptionsOverride());
-  QualType SizeTy = Context.getSizeType();
-  Expr *SizeExpr = IntegerLiteral::Create(
-      Context,
-      llvm::APInt(Context.getTypeSize(SizeTy), NumInits),
-      SizeTy, Loc);
-  SmallVector<Expr*, 2> StructInits = {DataExpr, SizeExpr};
+  // For unsized [] arrays Capacity is 0, but capacity should equal count (AllocSize).
+  unsigned EffectiveCapacity = (Capacity > 0) ? Capacity : AllocSize;
+  SmallVector<Expr*, 3> StructInits = {DataExpr, MakeCountLit(NumInits),
+                                       MakeCountLit(EffectiveCapacity)};
   InitListExpr *Result = new (Context) InitListExpr(Context, Loc, StructInits, Loc,
                                                     /*Synthetic=*/false);
   Result->setType(C4Type);
@@ -360,8 +378,12 @@ InitListExpr* Sema::BuildC4ArrayFromStringLiteral(StringLiteral *SL, QualType C4
       llvm::APInt(Context.getTypeSize(SizeTy), Len),
       SizeTy, Loc);
 
-  // 3. Build the struct initializer: { items, count }
-  SmallVector<Expr*, 2> StructInits = {DataExpr, SizeExpr};
+  // 3. Build the struct initializer: { items, count, capacity }
+  Expr *CapacityExpr = IntegerLiteral::Create(
+      Context,
+      llvm::APInt(Context.getTypeSize(SizeTy), Len),
+      SizeTy, Loc);
+  SmallVector<Expr*, 3> StructInits = {DataExpr, SizeExpr, CapacityExpr};
   InitListExpr *Result = new (Context) InitListExpr(Context, Loc, StructInits, Loc,
                                                     /*Synthetic=*/false);
   Result->setType(C4Type);
@@ -476,6 +498,15 @@ QualType Sema::GetOrCreateC4ArrayType(QualType ElementTy) {
       nullptr, nullptr, false, ICIS_NoInit);
   SizeField->setAccess(AS_public);
   RD->addDecl(SizeField);
+
+  // __capacity field
+  FieldDecl *CapacityField = FieldDecl::Create(
+      Context, RD, SourceLocation(), SourceLocation(),
+      &Context.Idents.get(C4_ARRAY_CAPACITY_FIELD),
+      Context.getSizeType(),
+      nullptr, nullptr, false, ICIS_NoInit);
+  CapacityField->setAccess(AS_public);
+  RD->addDecl(CapacityField);
 
   RD->completeDefinition();
   // Convert ElementTy to TypeSourceInfo*

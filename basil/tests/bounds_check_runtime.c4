@@ -26,7 +26,7 @@ void verify_param_passing([] int test_arr, size_t expected_size) {
 // --- TEST FUNCTION B: Modifying elements over a reference pointer ---
 // Verifies array reference pointers override value-copy duplication mechanics
 void mutate_array(^[] int inline_arr) {
-    inline_arr.items[0] = 777;
+    inline_arr[0] = 777;
     inline_arr.items[1] = 888;
 }
 
@@ -162,6 +162,28 @@ int main() {
     assert_equal(joe[0], 897, "Grouped reference mutation verification (797 + 100)");
     assert_equal(scalar_b, 10, "Grouped scalar argument value preservation (unchanged outside)");
     printf("[PASS] Scenario 9: Grouped parameter tracking rules verified.\n");
+
+
+    // ------------------------------------------------------------
+    // SCENARIO 10: Inferred count and capacity
+    // ------------------------------------------------------------
+
+    [10] bob := {1, 2, 3}
+    assert_equal(#.bob, 3, "Inferred count (#.array)");
+    assert_equal(##.bob, 10, "Inferred capacity (##.array)");
+    printf("[PASS] Scenario 10: Inferred count and capacity must be verified.\n");
+
+
+    // ------------------------------------------------------------
+    // SCENARIO 11:
+    // ------------------------------------------------------------
+
+    const cap := 20;
+    [cap] int mem = {}
+    assert_equal(##.mem, cap, "variable assigned capacity");
+    mem[5] = 10;
+    assert_equal(mem[5], 10, "modified value in empty array");
+    printf("[PASS] Scenario 10: Inferred count and capacity must be verified.\n");
 
     printf("\n[SUCCESS] All Core Dynamic Runtime Verification Tests Passed Flawlessly!\n");
     return 0;

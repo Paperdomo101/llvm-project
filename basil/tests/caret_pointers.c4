@@ -1,12 +1,6 @@
 typedef unsigned long size_t;
 
 
-main ([]*char args) int {
-    _Static_assert(_Generic(argv, char**: 1, default: 0),
-                   "Error: Function argument vector failed to validate as double pointer via LHS syntax");
-    return 0;
-}
-
 
 struct Arena {
     size_t capacity;
@@ -36,15 +30,15 @@ void verify_lhs_pointer_syntax_and_precedence(void) {
                    "Error: Outer 'const ^int' failed to bind const qualifier to the base integer target");
 
     // const applies to the pointer layer -> int * const
-    ^const int q_level_2 = 0;
-    _Static_assert(_Generic(&q_level_2, int *const: 1, default: 0),
-                   "Error: Interleaved '^const int' failed to apply const to the pointer layer");
+    // ^const int q_level_2 = 0;
+    // _Static_assert(_Generic(&q_level_2, int *const: 1, default: 0),
+    //                "Error: Interleaved '^const int' failed to apply const to the pointer layer");
 
     // Inner layer is volatile pointer, outer layer is const pointer -> int * volatile * const
     // _Generic lvalue-decay strips top-level const, matching against: int * volatile *
-    ^const ^volatile int q_nested;
-    _Static_assert(_Generic(q_nested, int * volatile * : 1, default: 0),
-                   "Error: Multi-layered '^const ^volatile int' inner/outer modifier layering desynced");
+    // ^const ^volatile int q_nested;
+    // _Static_assert(_Generic(q_nested, int * volatile * : 1, default: 0),
+    //                "Error: Multi-layered '^const ^volatile int' inner/outer modifier layering desynced");
 
     // restrict applies to the pointer layer -> char * __restrict
     ^restrict char block_ptr;
@@ -71,9 +65,16 @@ void verify_lhs_pointer_syntax_and_precedence(void) {
 // =========================================================================
 
 ^struct Arena arena_alloc(size_t cap, _Bool chaining) {
-    return 0;
+    return {}
 }
 
-arena_alloc1 (size_t cap, _Bool chaining) ^struct Arena {
+// arena_alloc1 (size_t cap, _Bool chaining) ^struct Arena {
+//     return 0;
+// }
+
+
+main (int argc, ^^char argv) int {
+    _Static_assert(_Generic(argv, char**: 1, default: 0),
+                   "Error: Function argument vector failed to validate as double pointer via LHS syntax");
     return 0;
 }

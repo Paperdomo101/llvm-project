@@ -134,6 +134,9 @@ void LangOptions::setLangDefaults(LangOptions &Opts, Language Lang,
   Opts.NamedLoops = Std.isC2y();
 
   Opts.HLSL = Lang == Language::HLSL;
+  // C4 mode is active for all C translation units; the distinction between
+  // plain .c files and .c4/.civ/.h4/.hiv files is handled at the driver level.
+  Opts.C4Mode = (Lang == Language::C);
   if (Opts.HLSL) {
     if (Opts.IncludeDefaultHeader)
       Includes.push_back("hlsl.h");

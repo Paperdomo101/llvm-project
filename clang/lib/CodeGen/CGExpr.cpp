@@ -5014,7 +5014,7 @@ LValue CodeGenFunction::EmitArraySubscriptExpr(const ArraySubscriptExpr *E,
   if (BaseTy->isRecordType()) {
     const RecordDecl *RD = BaseTy->getAsRecordDecl();
     if (RD && RD->hasAttr<C4BoundsCheckedArrayAttr>() && RD->getIdentifier() == nullptr &&
-        RD->lookup(&CGM.getContext().Idents.get(C4_ARRAY_SIZE_FIELD)).isSingleResult()) {
+        RD->lookup(&CGM.getContext().Idents.get(C4_ARRAY_CAPACITY_FIELD)).isSingleResult()) {
 
       // 1. Emit CodeGen tracking instructions to fetch the runtime Index value.
       // Save into C4IdxVal so EmitIdxAfterBase can reuse it without re-emitting
@@ -5034,7 +5034,7 @@ LValue CodeGenFunction::EmitArraySubscriptExpr(const ArraySubscriptExpr *E,
 
       FieldDecl *SizeField = nullptr;
       for (FieldDecl *Field : RD->fields()) {
-        if (Field->getName() == C4_ARRAY_SIZE_FIELD) SizeField = Field;
+        if (Field->getName() == C4_ARRAY_CAPACITY_FIELD) SizeField = Field;
       }
 
       LValue SizeLV = EmitLValueForField(BaseLV, SizeField);

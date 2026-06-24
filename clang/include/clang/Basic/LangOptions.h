@@ -647,6 +647,10 @@ public:
   }
 #include "clang/Basic/LangOptions.def"
 
+  /// True if C4 language extensions are active (enabled for .c4/.civ/.h4/.hiv files
+  /// and for any C translation unit compiled with the C4 compiler).
+  bool C4() const { return static_cast<bool>(C4Mode); }
+
   /// Are we compiling a module?
   bool isCompilingModule() const {
     return getCompilingModule() != CMK_None;

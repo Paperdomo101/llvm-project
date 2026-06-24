@@ -5236,8 +5236,11 @@ ExprResult Sema::ActOnArraySubscriptExpr(Scope *S, Expr *base,
           if (auto *DRE = dyn_cast<DeclRefExpr>(LookupBase)) {
             if (auto *VD = dyn_cast_or_null<VarDecl>(DRE->getDecl())) {
               if (auto *StructInit = dyn_cast_or_null<InitListExpr>(VD->getInit())) {
-                if (StructInit->getNumInits() == 2) {
-                  if (auto *SizeLit = dyn_cast<IntegerLiteral>(StructInit->getInit(1)->IgnoreImplicit())) {
+                // The C4 array struct has { items, count, capacity }.
+                // 'count' is always at index 1; accept both the old 2-field
+                // and the current 3-field layouts.
+                if (StructInit->getNumInits() >= 2) {
+                  if (auto *SizeLit = dyn_cast<IntegerLiteral>(StructInit->getInit(2)->IgnoreImplicit())) {
                     ArrayCapacity = SizeLit->getValue().getZExtValue();
                     HasKnownCapacity = true;
                   }
@@ -5260,13 +5263,24 @@ ExprResult Sema::ActOnArraySubscriptExpr(Scope *S, Expr *base,
         LookupResult R(*this, DataName, lbLoc, LookupMemberName);
         LookupQualifiedName(R, RD);
 
-        // FIX: If the base is a reference pointer, we must explicitly instruct
-        // BuildMemberReferenceExpr to evaluate fields against the underlying struct
-        // type context ('BaseTy') rather than using the raw pointer expression type!
-        QualType LookupBaseType = NeedsArrowOperator ? BaseTy : UnwrappedBase->getType();
+        // When the base is a pointer-to-C4-array (NeedsArrowOperator=true)
+        // there are two requirements for the arrow member access:
+        //  1. BuildMemberReferenceExpr needs the original POINTER type (not
+        //     the already-dereferenced BaseTy) as the BaseExprType argument.
+        //  2. BuildMemberExpr (called internally) asserts that Base is a
+        //     PRVALUE pointer – an lvalue variable reference must be
+        //     lvalue-to-rvalue converted first (same pattern as
+        //     ActOnArraySizeIntrinsic does for '#.').
+        Expr *BaseForMemberRef = UnwrappedBase;
+        if (NeedsArrowOperator) {
+          ExprResult Converted = DefaultLvalueConversion(BaseForMemberRef);
+          if (Converted.isInvalid()) return ExprError();
+          BaseForMemberRef = Converted.get();
+        }
+        QualType LookupBaseType = BaseForMemberRef->getType();
 
         ExprResult DataMemberRef = BuildMemberReferenceExpr(
-            UnwrappedBase, LookupBaseType, lbLoc,
+            BaseForMemberRef, LookupBaseType, lbLoc,
             /*IsArrow=*/NeedsArrowOperator, CXXScopeSpec(),
             SourceLocation(), /*FirstQualifierInScope=*/nullptr, R,
             /*TemplateArgs=*/nullptr, S);
@@ -15991,6 +16005,71 @@ ExprResult Sema::ActOnArraySizeIntrinsic(Expr *SubExpr, SourceLocation HashDotLo
   return BuildMemberReferenceExpr(BaseExpr,
                                   BaseExpr->getType(),  // use converted type
                                   HashDotLoc,
+                                  /*IsArrow=*/NeedsArrow,
+                                  CXXScopeSpec(),
+                                  SourceLocation(),
+                                  /*FirstQualifierInScope=*/nullptr,
+                                  R,
+                                  /*TemplateArgs=*/nullptr,
+                                  /*S=*/getCurScope());
+}
+
+
+ExprResult Sema::ActOnC4CapacityOf(Expr *SubExpr, SourceLocation OpLoc) {
+  if (!SubExpr) return ExprError();
+
+  Expr *E = SubExpr->IgnoreImplicit();
+  QualType TargetTy = E->getType();
+
+  // Extract true type from variable references.
+  if (auto *DRE = dyn_cast<DeclRefExpr>(E))
+    if (auto *VD = dyn_cast_or_null<VarDecl>(DRE->getDecl()))
+      TargetTy = VD->getType();
+
+  // Peel pointer layer for explicit dereferences.
+  if (auto *UO = dyn_cast<UnaryOperator>(E))
+    if (UO->getOpcode() == UO_Deref && TargetTy->isPointerType())
+      TargetTy = TargetTy->getPointeeType();
+
+  // Fallback: peel implicit pointer layer.
+  if (TargetTy->isPointerType())
+    TargetTy = TargetTy->getPointeeType();
+
+  const RecordType *RT = TargetTy.getCanonicalType()->getAs<RecordType>();
+  if (!RT) {
+    Diag(OpLoc, diag::err_invalid_size_intrinsic_target) << SubExpr->getSourceRange();
+    return ExprError();
+  }
+
+  RecordDecl *RD = RT->getDecl();
+  if (RD->getIdentifier() != nullptr ||
+      !RD->lookup(&Context.Idents.get(C4_ARRAY_SIZE_FIELD)).isSingleResult()) {
+    Diag(OpLoc, diag::err_invalid_size_intrinsic_target) << SubExpr->getSourceRange();
+    return ExprError();
+  }
+
+  // Look up the 'capacity' field.
+  DeclarationName CapName(&Context.Idents.get(C4_ARRAY_CAPACITY_FIELD));
+  LookupResult R(*this, CapName, OpLoc, LookupMemberName);
+  LookupQualifiedName(R, RD);
+
+  if (R.empty()) {
+    Diag(OpLoc, diag::err_invalid_size_intrinsic_target) << SubExpr->getSourceRange();
+    return ExprError();
+  }
+
+  bool NeedsArrow = E->getType()->isPointerType();
+  Expr *BaseExpr = E;
+  if (NeedsArrow) {
+    ExprResult Converted = DefaultLvalueConversion(BaseExpr);
+    if (Converted.isInvalid())
+      return ExprError();
+    BaseExpr = Converted.get();
+  }
+
+  return BuildMemberReferenceExpr(BaseExpr,
+                                  BaseExpr->getType(),
+                                  OpLoc,
                                   /*IsArrow=*/NeedsArrow,
                                   CXXScopeSpec(),
                                   SourceLocation(),
