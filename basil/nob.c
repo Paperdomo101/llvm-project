@@ -1,5 +1,5 @@
 #define NOB_IMPLEMENTATION
-#include <nob.h>
+#include "nob.h"
 
 
 int cmd_run_and_capture(Cmd *cmd, char *output_buf, size_t buf_size);
@@ -68,6 +68,8 @@ int main( int argc, char **argv )
 #ifdef __APPLE__
         "-framework", "IOKit",
         "-framework", "Cocoa",
+#elif _WIN32
+    "-lwinmm", "-lgdi32",
 #endif
         "-Wno-nullability-completeness"
     );
@@ -381,51 +383,158 @@ bool run_compiler_tests(const char *compiler_path) {
 
 
 
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#include <string.h>
+#include <stdlib.h>
+#else
 #include <sys/types.h>
+#include <sys/wait.h>
 #include <unistd.h>
+#include <string.h>
+#include <stdlib.h>
+#include <errno.h>
+#endif
 
-// Runs a command silently, capturing its entire stderr output into a text buffer.
-// Returns true if the process executed (regardless of its exit code status).
-// Runs a command silently, captures output, and returns the exact process exit status code.
-// Returns -1 if the process crashed, was killed by a signal, or failed to fork.
+// Assumes 'cmd', 'nob_log', 'ERROR', and 'EXIT_FAILURE' are defined elsewhere in your project.
+// Assumes 'null' is defined, or replace with standard 'NULL'.
+
 int cmd_run_and_capture(Cmd *cmd, char *output_buf, size_t buf_size) {
     if (cmd->count == 0 || output_buf == NULL || buf_size == 0) return -1;
-
     memset(output_buf, 0, buf_size);
 
+#ifdef _WIN32
+    // =========================================================================
+    // WINDOWS IMPLEMENTATION
+    // =========================================================================
+    HANDLE h_read_pipe = NULL;
+    HANDLE h_write_pipe = NULL;
+    SECURITY_ATTRIBUTES sa_attr;
+    sa_attr.nLength = sizeof(SECURITY_ATTRIBUTES);
+    sa_attr.bInheritHandle = TRUE; 
+    sa_attr.lpSecurityDescriptor = NULL;
+
+    if (!CreatePipe(&h_read_pipe, &h_write_pipe, &sa_attr, 0)) {
+        nob_log(ERROR, "Failed to create Windows pipe for stream capture");
+        return -1;
+    }
+
+    if (!SetHandleInformation(h_read_pipe, HANDLE_FLAG_INHERIT, 0)) {
+        nob_log(ERROR, "Failed to set pipe handle information");
+        CloseHandle(h_read_pipe);
+        CloseHandle(h_write_pipe);
+        return -1;
+    }
+
+    // Flatten argv array into a single Windows command line string
+    size_t cmd_line_len = 0;
+    for (size_t i = 0; i < cmd->count; ++i) {
+        cmd_line_len += strlen(cmd->items[i]) + 4; 
+    }
+
+    char *cmd_line = (char*)malloc(cmd_line_len + 1);
+    if (cmd_line == NULL) {
+        CloseHandle(h_read_pipe);
+        CloseHandle(h_write_pipe);
+        return -1;
+    }
+    cmd_line[0] = '\0';
+
+    for (size_t i = 0; i < cmd->count; ++i) {
+        strcat(cmd_line, "\"");
+        strcat(cmd_line, cmd->items[i]);
+        strcat(cmd_line, "\"");
+        if (i < cmd->count - 1) strcat(cmd_line, " ");
+    }
+
+    STARTUPINFOA si_start_info;
+    PROCESS_INFORMATION pi_proc_info;
+    ZeroMemory(&si_start_info, sizeof(STARTUPINFOA));
+    ZeroMemory(&pi_proc_info, sizeof(PROCESS_INFORMATION));
+
+    si_start_info.cb = sizeof(STARTUPINFOA);
+    si_start_info.hStdError = h_write_pipe;   
+    si_start_info.hStdOutput = h_write_pipe;  
+    si_start_info.dwFlags |= STARTF_USESTDHANDLES;
+
+    BOOL success = CreateProcessA(
+        NULL, cmd_line, NULL, NULL, TRUE, 0, NULL, NULL, &si_start_info, &pi_proc_info
+    );
+
+    free(cmd_line);
+
+    if (!success) {
+        nob_log(ERROR, "Failed to launch Windows subprocess");
+        CloseHandle(h_read_pipe);
+        CloseHandle(h_write_pipe);
+        return -1;
+    }
+
+    // Close write end so read loop hits EOF
+    CloseHandle(h_write_pipe);
+
+    size_t total_read = 0;
+    DWORD bytes_read = 0;
+    while (total_read < buf_size - 1) {
+        size_t remaining = buf_size - 1 - total_read;
+        success = ReadFile(h_read_pipe, output_buf + total_read, (DWORD)remaining, &bytes_read, NULL);
+        if (!success || bytes_read == 0) break; 
+        total_read += bytes_read;
+    }
+    output_buf[total_read] = '\0';
+    CloseHandle(h_read_pipe);
+
+    WaitForSingleObject(pi_proc_info.hProcess, INFINITE);
+
+    DWORD exit_code = 0;
+    int result = -1;
+    if (GetExitCodeProcess(pi_proc_info.hProcess, &exit_code)) {
+        result = (int)exit_code;
+    }
+
+    CloseHandle(pi_proc_info.hProcess);
+    CloseHandle(pi_proc_info.hThread);
+    return result;
+
+#else
+    // =========================================================================
+    // POSIX IMPLEMENTATION (Linux, macOS, MSYS2 POSIX layers)
+    // =========================================================================
     int pipe_fds[2];
     if (pipe(pipe_fds) < 0) {
-        nob_log(ERROR, "Failed to create POSIX pipe for stream capture");
+        nob_log(ERROR, "failed to create posix pipe for stream capture");
         return -1;
     }
 
     pid_t pid = fork();
     if (pid < 0) {
-        nob_log(ERROR, "Failed to fork compiler test subprocess");
+        nob_log(ERROR, "failed to fork compiler test subprocess");
         close(pipe_fds[0]);
         close(pipe_fds[1]);
         return -1;
     }
 
     if (pid == 0) {
-        // --- CHILD PROCESS ---
-        close(pipe_fds[0]); // Close read end
-
+        // --- child process ---
+        close(pipe_fds[0]); 
         dup2(pipe_fds[1], 1);
         dup2(pipe_fds[1], 2);
         close(pipe_fds[1]);
-
-        da_append(cmd, NULL);
+        
+        // Ensure array is null terminated for execvp
+        da_append(cmd, NULL); 
         execvp(cmd->items[0], (char* const*)cmd->items);
         exit(EXIT_FAILURE);
     }
 
-    // --- PARENT PROCESS ---
-    close(pipe_fds[1]); // Close write end
+    // --- parent process ---
+    close(pipe_fds[1]); 
 
     size_t total_read = 0;
     ssize_t bytes_read;
-    while (total_read < buf_size - 1 && (bytes_read = read(pipe_fds[0], output_buf + total_read, buf_size - 1 - total_read)) > 0) {
+    while (total_read < buf_size - 1 && 
+          (bytes_read = read(pipe_fds[0], output_buf + total_read, buf_size - 1 - total_read)) > 0) {
         total_read += bytes_read;
     }
     output_buf[total_read] = '\0';
@@ -436,10 +545,10 @@ int cmd_run_and_capture(Cmd *cmd, char *output_buf, size_t buf_size) {
         if (errno != EINTR) return -1;
     }
 
-    // --- RETURN THE ACTUAL STATUS INTEGERS ---
     if (WIFEXITED(wait_status)) {
         return WEXITSTATUS(wait_status);
     }
-
-    return -1; // Crashed (e.g., Segfault)
+    return -1; 
+#endif
 }
+
