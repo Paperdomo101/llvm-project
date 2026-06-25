@@ -3,6 +3,16 @@
 # ===|===|=== TODO ===|===|===
 # ____________________________
 
+    ## := at root scope
+
+    ## [] bounds checked arrays at root scope
+    ```
+    source\main.c4:56:8: error: cannot compile this static initializer yet
+     56 | [] int joe = {
+        |
+    ```
+
+
     ## Loop ranges
     ```
     for 0..10 {...}
@@ -59,8 +69,8 @@
 
     ## multi-line strings
     /"
-        not_indented
             indented
+                twice_indented
         not_indented
     "/
 
@@ -92,7 +102,7 @@
 
     ## units
     ```
-    < std/io >
+    < std.io >
 
     ```
 
