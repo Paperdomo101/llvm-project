@@ -1,0 +1,43 @@
+#include "raylib.h"
+#include <stdio.h>
+
+fuhn (int a, b, c, float d, e) float {
+    return a + b * d + c / e;
+}
+
+main () int {
+    "%g\n"::printf(fuhn(1, 2, 3, 4, 5))
+
+    SetConfigFlags(FLAG_WINDOW_RESIZABLE)
+    InitWindow(800, 450, "The Window")
+
+    GetCurrentMonitor()::GetMonitorRefreshRate()::SetTargetFPS()
+
+    whateverthefuck := LoadTexture("test.png")
+
+    Vector2 pos = { 40, 40 }
+    Vector2 vel = { 40, 50 }
+
+    while (!WindowShouldClose())
+    {
+        deltatime := GetFrameTime()
+
+        BeginDrawing();
+
+        BLACK::ClearBackground()
+
+        input_x := (KEY_RIGHT::IsKeyDown() - KEY_LEFT::IsKeyDown())
+
+        speed := 600.0;
+        pos.x += input_x * deltatime * speed;
+        DrawRectangleRec( {pos.x, 30, 40, 40}, RED )
+
+        whateverthefuck::DrawTexture( pos.{x, y}, WHITE )
+
+        DrawFPS( pos.{x, y} )
+
+        EndDrawing()
+    }
+
+    CloseWindow()
+}

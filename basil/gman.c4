@@ -1,0 +1,6 @@
+/|| < std.io > one day karl ||/
+#include <stdio.h>
+
+main () int {
+    "GO FUCK YOURSELF\n"::printf()
+}
