@@ -3,6 +3,13 @@
 # ===|===|=== TODO ===|===|===
 # ____________________________
 
+    ## `::` does not work right with function pointers
+
+    ## references auto-take address of function pointer params
+    ```
+    modifiers[0].modify_str_by_ref(str, str2) // Passing '[] char ' to parameter of incompatible type 'const ^[] char '; take the address with & (fix available)
+    ```
+
     ## := at root scope
 
     ## [] bounds checked arrays at root scope
@@ -137,7 +144,7 @@
 
     // Here's the real advantage of these new enums
     DrawPixel (int x, int y, Colors color) {...}
-    DrawPixel(0, 0, Colors.RED)
+    DrawPixel(0, 0, Colors.RED) // type checked
     // can also be written
     DrawPixel(0, 0, .RED)
 

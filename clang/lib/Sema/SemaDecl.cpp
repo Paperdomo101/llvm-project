@@ -7225,8 +7225,6 @@ StmtResult Sema::ActOnMultiTypeInferredAssignment(Scope *S,
 
 // end C4
 
-
-
 NamedDecl*
 Sema::ActOnTypedefNameDecl(Scope *S, DeclContext *DC, TypedefNameDecl *NewTD,
                            LookupResult &Previous, bool &Redeclaration) {

@@ -1720,116 +1720,113 @@ Parser::ParsedCondition Parser::ParseCondition(SourceLocation StmtLoc,
 
 
   // C4: Try parenthesized form with tentative parse.
+  // C4: Parenthesized condition – no tentative parsing.
   if (Tok.is(tok::l_paren)) {
-    TentativeParsingAction TPA(*this);
+      StmtResult TmpInit;
+      SourceLocation TmpLParen, TmpRParen;
 
-    StmtResult TmpInit;
-    SourceLocation TmpLParen, TmpRParen;
+      TmpLParen = ConsumeParen(); // consume '('
 
-    TmpLParen = ConsumeParen(); // consume '('
-
-    // Parse optional init (:= or declaration) if present.
-    if (Tok.is(tok::identifier) && GetLookAheadToken(1).is(tok::colonequal)) {
-      TmpInit = ParseTypeInferredAssignment();
-      if (!TmpInit.isInvalid() && Tok.is(tok::semi)) {
-        ConsumeToken();
-      } else {
-        TPA.Revert();
-        goto Unparenthesized;
+      // Parse optional init (:= or declaration) if present.
+      if (Tok.is(tok::identifier) && GetLookAheadToken(1).is(tok::colonequal)) {
+          TmpInit = ParseTypeInferredAssignment();
+          if (TmpInit.isInvalid()) {
+              return Result;
+          }
+          // Semicolon required after assignment init.
+          if (Tok.is(tok::semi)) {
+              ConsumeToken();
+          } else {
+              Diag(Tok, diag::err_expected_semi_after_expr);
+              return Result;
+          }
+      } else if (isTypeSpecifier(Tok)) {
+          ParsedAttributes DeclAttrs(AttrFactory);
+          ParsedAttributes DeclSpecAttrs(AttrFactory);
+          SourceLocation DeclEnd;
+          DeclGroupPtrTy DG = ParseDeclaration(DeclaratorContext::SelectionInit,
+                                               DeclEnd, DeclAttrs, DeclSpecAttrs,
+                                               /*DeclSpecStart=*/nullptr);
+          if (!DG) {
+              Diag(Tok, diag::err_expected);
+              return Result;
+          }
+          TmpInit = Actions.ActOnDeclStmt(DG, DeclEnd, DeclEnd);
+          if (TmpInit.isInvalid()) {
+              return Result;
+          }
+          // Declaration parsing already consumed the ';'.
       }
-    } else if (isTypeSpecifier(Tok)) {
+
+      // Parse the condition expression.
+      ExprResult CondExpr = ParseExpression();
+      if (CondExpr.isInvalid()) {
+          return Result;
+      }
+
+      // Expect closing ')'
+      if (Tok.is(tok::r_paren)) {
+          TmpRParen = ConsumeParen();
+      } else {
+          Diag(Tok, diag::err_expected_rparen_after);
+          return Result;
+      }
+
+      // Commit – parentheses are the sole delimiter.
+      Result.HasDelimitedCondition = true;
+      Result.InitStmt = std::move(TmpInit);
+      Result.LParen = TmpLParen;
+      Result.RParen = TmpRParen;
+      Result.Cond = Actions.ActOnCondition(getCurScope(), StmtLoc,
+                                           CondExpr.get(), Kind);
+      if (Result.Cond.isInvalid())
+          return Result;
+      return Result;
+  }
+
+  // Unparenthesized condition (no '(' seen).
+  // Handle `:=` assignment as init.
+  if (Tok.is(tok::identifier) && GetLookAheadToken(1).is(tok::colonequal)) {
+      Result.InitStmt = ParseTypeInferredAssignment();
+      if (Result.InitStmt.isInvalid()) {
+          return Result;
+      }
+      if (Tok.is(tok::semi)) {
+          ConsumeToken();
+      } else {
+          Diag(Tok, diag::err_expected_semi_declaration);
+          return Result;
+      }
+  }
+  // Handle declaration init (e.g., `int c = 4;`).
+  else if (isTypeSpecifier(Tok)) {
       ParsedAttributes DeclAttrs(AttrFactory);
       ParsedAttributes DeclSpecAttrs(AttrFactory);
       SourceLocation DeclEnd;
       DeclGroupPtrTy DG = ParseDeclaration(DeclaratorContext::SelectionInit,
-                                           DeclEnd, DeclAttrs, DeclSpecAttrs,
+                                           DeclEnd,
+                                           DeclAttrs,
+                                           DeclSpecAttrs,
                                            /*DeclSpecStart=*/nullptr);
-      if (DG) {
-        TmpInit = Actions.ActOnDeclStmt(DG, DeclEnd, DeclEnd);
-        if (TmpInit.isInvalid()) {
-          TPA.Revert();
-          goto Unparenthesized;
-        }
-      } else {
-        TPA.Revert();
-        goto Unparenthesized;
+      if (!DG) {
+          Diag(Tok, diag::err_declaration_does_not_declare_param);
+          return Result;
       }
-    }
-
-    // Parse the condition expression.
-    ExprResult CondExpr = ParseExpression();
-    if (CondExpr.isInvalid()) {
-      TPA.Revert();
-      goto Unparenthesized;
-    }
-
-    // Expect closing ')'
-    if (Tok.is(tok::r_paren)) {
-      TmpRParen = ConsumeParen();
-    } else {
-      TPA.Revert();
-      goto Unparenthesized;
-    }
-
-    // Always commit – parentheses are the sole delimiter.
-    TPA.Commit();
-    Result.HasDelimitedCondition = true;
-    Result.InitStmt = std::move(TmpInit);
-    Result.LParen = TmpLParen;
-    Result.RParen = TmpRParen;
-    Result.Cond = Actions.ActOnCondition(getCurScope(), StmtLoc,
-                                         CondExpr.get(), Kind);
-    if (Result.Cond.isInvalid())
-      return Result;
-    return Result;
-  }
-
-Unparenthesized:
-  // C4: Unparenthesized condition – parse optional init, then expression.
-  // Handle `:=` assignment as init.
-  if (Tok.is(tok::identifier) && GetLookAheadToken(1).is(tok::colonequal)) {
-    Result.InitStmt = ParseTypeInferredAssignment();
-    if (Result.InitStmt.isInvalid()) {
-      // Error recovery done by caller.
-      return Result;
-    }
-    if (Tok.is(tok::semi)) {
-      ConsumeToken();
-    } else {
-      Diag(Tok, diag::err_expected_semi_declaration);
-      return Result;
-    }
-  }
-  // Handle declaration init (e.g., `int c = 4;`).
-  else if (isTypeSpecifier(Tok)) {
-    ParsedAttributes DeclAttrs(AttrFactory);
-    ParsedAttributes DeclSpecAttrs(AttrFactory);
-    SourceLocation DeclEnd;
-    DeclGroupPtrTy DG = ParseDeclaration(DeclaratorContext::SelectionInit,
-                                         DeclEnd,
-                                         DeclAttrs,
-                                         DeclSpecAttrs,
-                                         /*DeclSpecStart=*/nullptr);
-    if (!DG) {
-      Diag(Tok, diag::err_declaration_does_not_declare_param);
-      return Result;
-    }
-    Result.InitStmt = Actions.ActOnDeclStmt(DG, DeclEnd, DeclEnd);
-    if (Result.InitStmt.isInvalid())
-      return Result;
-    // Declaration parsing already consumed the ';'.
+      Result.InitStmt = Actions.ActOnDeclStmt(DG, DeclEnd, DeclEnd);
+      if (Result.InitStmt.isInvalid())
+          return Result;
+      // Declaration parsing already consumed the ';'.
   }
 
   // Parse the condition expression.
   ExprResult CondExpr = ParseExpression();
   if (CondExpr.isInvalid()) {
-    // Skip recovery done by caller.
-    return Result;
+      return Result;
   }
 
   Result.Cond = Actions.ActOnCondition(getCurScope(), StmtLoc,
                                        CondExpr.get(), Kind);
-  // Result.HasDelimitedCondition already set for `!(...)`; otherwise false.
+  // Result.HasDelimitedCondition remains false (set by default).
   return Result;
 }
 
@@ -2597,7 +2594,6 @@ StmtResult Parser::ParseForStatement(SourceLocation *TrailingElseLoc,
     }
   }
 
-  // ... (remaining code unchanged: coroutines, range‑for, OpenMP, etc.) ...
 
   // C++ Coroutines [stmt.iter]:
   if (CoawaitLoc.isValid() && !ForRangeInfo.ParsedForRangeDecl()) {
