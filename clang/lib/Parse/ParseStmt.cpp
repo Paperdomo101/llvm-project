@@ -1719,7 +1719,6 @@ Parser::ParsedCondition Parser::ParseCondition(SourceLocation StmtLoc,
   };
 
 
-  // C4: Try parenthesized form with tentative parse.
   // C4: Parenthesized condition – no tentative parsing.
   if (Tok.is(tok::l_paren)) {
       StmtResult TmpInit;
@@ -2594,6 +2593,7 @@ StmtResult Parser::ParseForStatement(SourceLocation *TrailingElseLoc,
     }
   }
 
+  // ... (remaining code unchanged: coroutines, range‑for, OpenMP, etc.) ...
 
   // C++ Coroutines [stmt.iter]:
   if (CoawaitLoc.isValid() && !ForRangeInfo.ParsedForRangeDecl()) {

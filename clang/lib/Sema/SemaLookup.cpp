@@ -4182,9 +4182,21 @@ private:
         }
 
       // Walk all lookup results in the TU for each identifier.
-      for (const auto &Ident : Idents) {
-        for (auto I = S.IdResolver.begin(Ident.getValue()),
-                  E = S.IdResolver.end();
+      // Snapshot the identifier list before iterating: IdResolver.begin()
+      // triggers readingIdentifier() which may call
+      // updateOutOfDateIdentifier(). That can deserialize PCH declarations
+      // and call IdentifierTable::get() to intern previously-unseen names
+      // (e.g. parameter names of newly-deserialized functions), inserting
+      // new entries into Idents and invalidating any live StringMap iterator.
+      // IdentifierInfo* pointers are bump-allocated and remain stable after
+      // the snapshot, so iterating the vector is safe even if Idents grows.
+      SmallVector<IdentifierInfo *, 128> IdentList;
+      IdentList.reserve(Idents.size());
+      for (const auto &Ident : Idents)
+        IdentList.push_back(Ident.getValue());
+
+      for (IdentifierInfo *II : IdentList) {
+        for (auto I = S.IdResolver.begin(II), E = S.IdResolver.end();
              I != E; ++I) {
           if (S.IdResolver.isDeclInScope(*I, Ctx)) {
             if (NamedDecl *ND = Result.getAcceptableDecl(*I)) {
