@@ -1068,7 +1068,7 @@ def Annotate : InheritableParamOrStmtAttr {
   }];
   let PragmaAttributeSupport = 1;
   let AcceptsExprPack = 1;
-  let Documentation = [Undocumented];
+  let Documentation = [AnnotateDocs];
 }
 
 def AnnotateType : TypeAttr {
@@ -1526,6 +1526,7 @@ def Common : InheritableAttr {
 
 def Const : InheritableAttr {
   let Spellings = [GCC<"const">, GCC<"__const">];
+  let Subjects = SubjectList<[Function]>;
   let Documentation = [Undocumented];
   let SimpleHandler = 1;
 }
@@ -2420,7 +2421,6 @@ def NoConvergent : InheritableAttr {
   let Spellings = [Clang<"noconvergent">, Declspec<"noconvergent">];
   let Subjects = SubjectList<[Function, Stmt], WarnDiag,
                              "functions and statements">;
-  let LangOpts = [CUDA];
   let Documentation = [NoConvergentDocs];
   let SimpleHandler = 1;
 }
@@ -3187,6 +3187,7 @@ def ArmLocallyStreaming : InheritableAttr, TargetSpecificAttr<TargetAArch64> {
 
 def Pure : InheritableAttr {
   let Spellings = [GCC<"pure">];
+  let Subjects = SubjectList<[Function]>;
   let Documentation = [Undocumented];
   let SimpleHandler = 1;
 }
