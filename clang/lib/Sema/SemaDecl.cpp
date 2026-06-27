@@ -6930,6 +6930,14 @@ Sema::ActOnTypedefDeclarator(Scope* S, Declarator& D, DeclContext* DC,
     return nullptr;
   }
 
+  // C4: apply bounds-checked array wrapping for `typedef []T Name;`
+  if (getLangOpts().C4()) {
+    const DeclSpec &DS = D.getDeclSpec();
+    if (DS.isBoundsCheckedArray() && DS.getTypeSpecType() != DeclSpec::TST_error) {
+      QualType T = GetOrCreateC4ArrayType(TInfo->getType());
+      TInfo = Context.getTrivialTypeSourceInfo(T, D.getIdentifierLoc());
+    }
+  }
   TypedefDecl *NewTD = ParseTypedefDecl(S, D, TInfo->getType(), TInfo);
   if (!NewTD) return nullptr;
 
@@ -7106,7 +7114,10 @@ StmtResult Sema::ActOnTypeInferredAssignment(Scope *S, LHSVarInfo Var, Expr *Ini
                                    Var.Ident, FinalType,
                                    Context.getTrivialTypeSourceInfo(FinalType, Var.IdentLoc),
                                    SC_None);
-  NewVD->setLocalExternDecl();
+  // setLocalExternDecl() is only appropriate for 'extern X' in local scope.
+  // At file scope, the variable should have normal external linkage.
+  if (!isa<TranslationUnitDecl>(CurContext))
+    NewVD->setLocalExternDecl();
   PushOnScopeChains(NewVD, S);
 
   // For the sized [N] id := init form, evaluate the explicit capacity and
@@ -14377,6 +14388,16 @@ void Sema::AddInitializerToDecl(Decl *RealDecl, Expr *Init, bool DirectInit) {
           }
         }
 
+        // Fast-path: if the initialiser is already a C4 array expression
+        // of the correct type (e.g., a function call returning []T or a
+        // typedef'd array type like String), use it directly — no synthesis
+        // needed.
+        if (!NewInit && isC4ArrayType(InitExpr->getType()) &&
+            Context.hasSameType(InitExpr->getType(), VarType)) {
+          VDecl->setInit(Init);
+          return;
+        }
+
         if (!NewInit) {
           // ---- Count initialiser elements for capacity validation ----
           unsigned InitCount = 0;
@@ -20006,6 +20027,29 @@ FieldDecl *Sema::HandleField(Scope *S, RecordDecl *Record,
 
   TypeSourceInfo *TInfo = GetTypeForDeclarator(D);
   QualType T = TInfo->getType();
+
+  // === C4: apply C4 pointer-depth prefix for struct fields.
+  // `^field (params) rettype;` stores depth=1 in the DeclSpec;
+  // HandleField must wrap T in a pointer just like ActOnVariableDeclarator.
+  if (getLangOpts().C4()) {
+    const DeclSpec &FieldDS = D.getDeclSpec();
+    unsigned PtrDepth = FieldDS.getC4PointerDepth();
+    if (PtrDepth > 0) {
+      const auto &LQ = FieldDS.getC4PointerLevelQuals();
+      for (unsigned i = 0; i < PtrDepth; ++i) {
+        unsigned lvl = PtrDepth - 1 - i;
+        QualType PtrTy = Context.getPointerType(T);
+        if (lvl < LQ.size()) {
+          if (LQ[lvl] & DeclSpec::TQ_const)    PtrTy.addConst();
+          if (LQ[lvl] & DeclSpec::TQ_volatile) PtrTy.addVolatile();
+          if (LQ[lvl] & DeclSpec::TQ_restrict) PtrTy.addRestrict();
+        }
+        T = PtrTy;
+      }
+      TInfo = Context.getTrivialTypeSourceInfo(T, Loc);
+    }
+  }
+
   if (getLangOpts().CPlusPlus) {
     CheckExtraCXXDefaultArguments(D);
 

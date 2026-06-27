@@ -1,0 +1,37 @@
+// tests/root_level_decl_runtime.c4
+// Runtime tests for root-level type-inferred declarations.
+// Exit 0 = all assertions passed.
+#include <stdio.h>
+#include <stdlib.h>
+
+global_int  := 42
+global_flag := 1
+[] global_arr := {10, 20, 30, 40, 50}
+
+sum_globals () int {
+    int t = 0;
+    for i := 0; i < #.global_arr; ++i { t += global_arr[i]; }
+    return t;
+}
+
+main () int {
+    if (global_int  != 42) { puts("[FAIL] global_int");   exit(1); }
+    if (global_flag != 1)  { puts("[FAIL] global_flag");  exit(1); }
+    if (#.global_arr != 5) { puts("[FAIL] arr count");    exit(1); }
+    if (global_arr[0] != 10 || global_arr[4] != 50)
+                           { puts("[FAIL] arr elements"); exit(1); }
+    if (sum_globals() != 150) { puts("[FAIL] sum");       exit(1); }
+
+    // Root-level array accessible and writable from local scope
+    global_arr[2] = 99;
+    if (global_arr[2] != 99) { puts("[FAIL] arr write"); exit(1); }
+
+    // Local := still works inside functions
+    [] local := {1, 2, 3}
+    int lsum = 0;
+    for i := 0; i < #.local; ++i { lsum += local[i]; }
+    if (lsum != 6) { puts("[FAIL] local sum"); exit(1); }
+
+    puts("[PASS] Root-level declaration tests passed.");
+    return 0;
+}

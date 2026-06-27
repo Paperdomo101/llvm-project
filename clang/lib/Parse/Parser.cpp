@@ -1126,6 +1126,19 @@ Parser::ParseExternalDeclaration(ParsedAttributes &Attrs,
         !isDeclarationStatement(/*DisambiguatingWithExpression=*/true))
       return ParseTopLevelStmtDecl();
 
+    // C4: Type-inferred assignment at file scope (x := expr, [] arr := expr)
+    if (getLangOpts().C4() &&
+        (Tok.is(tok::kw_const) || Tok.is(tok::l_square) || Tok.is(tok::identifier))) {
+      if (isTypeInferredAssignment()) {
+        StmtResult SR = ParseTypeInferredAssignment();
+        if (SR.isUsable()) {
+          if (auto *DS2 = dyn_cast<DeclStmt>(SR.get()))
+            return DeclGroupPtrTy::make(DS2->getDeclGroup());
+        }
+        return nullptr;
+      }
+    }
+
     // We can't tell whether this is a function-definition or declaration yet.
     if (!SingleDecl)
       return ParseDeclarationOrFunctionDefinition(Attrs, DeclSpecAttrs, DS);

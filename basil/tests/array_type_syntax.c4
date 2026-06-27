@@ -1,0 +1,63 @@
+// tests/array_type_syntax.c4
+// Runtime tests for:
+//   []T as a function return type  — fn() []int { ... }
+//   typedef []T Name               — typedef []char String
+// Exit 0 = all assertions passed.
+#include <stdio.h>
+#include <stdlib.h>
+
+typedef []int  IntArray;
+typedef []char String;
+
+// Function returning []int
+make_range (int n) []int {
+    [] result := {0, 0, 0, 0, 0}
+    for i := 0; i < n && i < 5; ++i { result[i] = i + 1; }
+    return result;
+}
+
+// Function taking a typedef'd array parameter
+sum_array (IntArray a) int {
+    int s = 0;
+    for (int i = 0; i < (int)a.count; ++i) s += a[i];
+    return s;
+}
+
+// Function returning typedef'd String
+make_greeting () String {
+    // Use standard C init (not :=) because "String g := {...}" would
+    // treat "String" as the variable name, not a typedef type.
+    String g = {'H', 'i', '!'}
+    return g;
+}
+
+main () int {
+    // []int return type
+    ra := make_range(5);
+    if (#.ra != 5)    { puts("[FAIL] range count");        exit(1); }
+    if (ra[0] != 1)   { puts("[FAIL] range[0]");           exit(1); }
+    if (ra[4] != 5)   { puts("[FAIL] range[4]");           exit(1); }
+
+    // typedef IntArray (infer element type from literal, same as []int)
+    ia := {10, 20, 30}
+    int s = sum_array(ia);
+    if (s != 60)      { puts("[FAIL] sum_array");          exit(1); }
+
+    // Return value passed directly to sum_array
+    if (sum_array(make_range(3)) != 6) {
+        puts("[FAIL] sum_array(make_range(3))"); exit(1);
+    }
+
+    // typedef String (standard C init syntax)
+    String greeting = {'h', 'e', 'l', 'l', 'o'}
+    if (#.greeting != 5)    { puts("[FAIL] greeting count"); exit(1); }
+    if (greeting[0] != 'h') { puts("[FAIL] greeting[0]");   exit(1); }
+
+    // []char return type
+    sg := make_greeting();
+    if (#.sg != 3)    { puts("[FAIL] sg count");           exit(1); }
+    if (sg[0] != 'H') { puts("[FAIL] sg[0]");             exit(1); }
+
+    puts("[PASS] Array type syntax tests passed.");
+    return 0;
+}

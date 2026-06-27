@@ -5786,7 +5786,35 @@ TypeSourceInfo *Sema::GetTypeForDeclarator(Declarator &D) {
   if (D.isPrototypeContext() && getLangOpts().ObjCAutoRefCount)
     inferARCWriteback(state, T);
 
-  return GetFullTypeForDeclarator(state, T, ReturnTypeInfo);
+  TypeSourceInfo *TInfo = GetFullTypeForDeclarator(state, T, ReturnTypeInfo);
+
+  // === C4: wrap a function's return type in a bounds-checked array when
+  // the DeclSpec carries isBoundsCheckedArray, e.g. `fn() []int { }`.
+  // Done here (post-GetFullTypeForDeclarator) with a fresh trivial
+  // TypeSourceInfo so we don't desync the DeclSpec TypeLoc (which still
+  // describes the element type) from the wrapped record type — doing it
+  // inside GetFullTypeForDeclarator crashes the TypeSpecLocFiller.
+  if (getLangOpts().C4() && TInfo &&
+      D.getDeclSpec().isBoundsCheckedArray() &&
+      D.getDeclSpec().getTypeSpecType() != DeclSpec::TST_error) {
+    QualType FT = TInfo->getType();
+    if (const FunctionType *Fn = FT->getAs<FunctionType>()) {
+      QualType RetTy = Fn->getReturnType();
+      if (!isC4ArrayType(RetTy)) {
+        QualType WrappedRet = GetOrCreateC4ArrayType(RetTy);
+        QualType NewFnTy;
+        if (const auto *FPT = dyn_cast<FunctionProtoType>(Fn))
+          NewFnTy = Context.getFunctionType(WrappedRet, FPT->getParamTypes(),
+                                            FPT->getExtProtoInfo());
+        else
+          NewFnTy = Context.getFunctionNoProtoType(WrappedRet,
+                                                   Fn->getExtInfo());
+        TInfo = Context.getTrivialTypeSourceInfo(NewFnTy, D.getBeginLoc());
+      }
+    }
+  }
+
+  return TInfo;
 }
 
 static void transferARCOwnershipToDeclSpec(Sema &S,

@@ -237,6 +237,26 @@ CompilerTest custom_test_suite[] = {
         "tests/bounds_check_runtime.c4", true
     },
     {
+        "Root-level := and [] arr := declarations",
+        "tests/root_level_decl_runtime.c4", true
+    },
+    {
+        "Local function pointers (cross-platform, no blocks runtime)",
+        "tests/local_fn_runtime.c4", true
+    },
+    {
+        "For-loop boolean conditions (for true {}, for (expr) {})",
+        "tests/forloop_bool_runtime.c4", true
+    },
+    {
+        "Array type syntax ([]T return type, typedef []T)",
+        "tests/array_type_syntax.c4", true
+    },
+    {
+        "Struct function pointer fields (^field (params) rettype;)",
+        "tests/struct_fn_ptr_runtime.c4", true
+    },
+    {
         "Defer Sigil Unwinding Verification",
         "tests/defer.c4", true,
     },
@@ -397,8 +417,6 @@ bool run_compiler_tests(const char *compiler_path) {
 #include <errno.h>
 #endif
 
-// Assumes 'cmd', 'nob_log', 'ERROR', and 'EXIT_FAILURE' are defined elsewhere in your project.
-// Assumes 'null' is defined, or replace with standard 'NULL'.
 
 int cmd_run_and_capture(Cmd *cmd, char *output_buf, size_t buf_size) {
     if (cmd->count == 0 || output_buf == NULL || buf_size == 0) return -1;
@@ -412,7 +430,7 @@ int cmd_run_and_capture(Cmd *cmd, char *output_buf, size_t buf_size) {
     HANDLE h_write_pipe = NULL;
     SECURITY_ATTRIBUTES sa_attr;
     sa_attr.nLength = sizeof(SECURITY_ATTRIBUTES);
-    sa_attr.bInheritHandle = TRUE; 
+    sa_attr.bInheritHandle = TRUE;
     sa_attr.lpSecurityDescriptor = NULL;
 
     if (!CreatePipe(&h_read_pipe, &h_write_pipe, &sa_attr, 0)) {
@@ -430,7 +448,7 @@ int cmd_run_and_capture(Cmd *cmd, char *output_buf, size_t buf_size) {
     // Flatten argv array into a single Windows command line string
     size_t cmd_line_len = 0;
     for (size_t i = 0; i < cmd->count; ++i) {
-        cmd_line_len += strlen(cmd->items[i]) + 4; 
+        cmd_line_len += strlen(cmd->items[i]) + 4;
     }
 
     char *cmd_line = (char*)malloc(cmd_line_len + 1);
@@ -454,8 +472,8 @@ int cmd_run_and_capture(Cmd *cmd, char *output_buf, size_t buf_size) {
     ZeroMemory(&pi_proc_info, sizeof(PROCESS_INFORMATION));
 
     si_start_info.cb = sizeof(STARTUPINFOA);
-    si_start_info.hStdError = h_write_pipe;   
-    si_start_info.hStdOutput = h_write_pipe;  
+    si_start_info.hStdError = h_write_pipe;
+    si_start_info.hStdOutput = h_write_pipe;
     si_start_info.dwFlags |= STARTF_USESTDHANDLES;
 
     BOOL success = CreateProcessA(
@@ -479,7 +497,7 @@ int cmd_run_and_capture(Cmd *cmd, char *output_buf, size_t buf_size) {
     while (total_read < buf_size - 1) {
         size_t remaining = buf_size - 1 - total_read;
         success = ReadFile(h_read_pipe, output_buf + total_read, (DWORD)remaining, &bytes_read, NULL);
-        if (!success || bytes_read == 0) break; 
+        if (!success || bytes_read == 0) break;
         total_read += bytes_read;
     }
     output_buf[total_read] = '\0';
@@ -517,23 +535,23 @@ int cmd_run_and_capture(Cmd *cmd, char *output_buf, size_t buf_size) {
 
     if (pid == 0) {
         // --- child process ---
-        close(pipe_fds[0]); 
+        close(pipe_fds[0]);
         dup2(pipe_fds[1], 1);
         dup2(pipe_fds[1], 2);
         close(pipe_fds[1]);
-        
+
         // Ensure array is null terminated for execvp
-        da_append(cmd, NULL); 
+        da_append(cmd, NULL);
         execvp(cmd->items[0], (char* const*)cmd->items);
         exit(EXIT_FAILURE);
     }
 
     // --- parent process ---
-    close(pipe_fds[1]); 
+    close(pipe_fds[1]);
 
     size_t total_read = 0;
     ssize_t bytes_read;
-    while (total_read < buf_size - 1 && 
+    while (total_read < buf_size - 1 &&
           (bytes_read = read(pipe_fds[0], output_buf + total_read, buf_size - 1 - total_read)) > 0) {
         total_read += bytes_read;
     }
@@ -548,7 +566,6 @@ int cmd_run_and_capture(Cmd *cmd, char *output_buf, size_t buf_size) {
     if (WIFEXITED(wait_status)) {
         return WEXITSTATUS(wait_status);
     }
-    return -1; 
+    return -1;
 #endif
 }
-

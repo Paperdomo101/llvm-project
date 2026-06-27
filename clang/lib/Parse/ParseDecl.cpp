@@ -5986,6 +5986,36 @@ bool Parser::isDeclarationSpecifier(
   switch (Tok.getKind()) {
   default: return false;
 
+  // === C4: '&' is the pass-by-reference prefix (e.g. &int, &[] int).
+  // Returning true allows ParseParenDeclarator to recognise block-literal
+  // parameter lists like ^(&[] int a) as function arguments, not grouping parens.
+  case tok::amp:
+    if (!getLangOpts().C4()) return false;
+    {
+      const Token &Next = NextToken();
+      if (Next.is(tok::l_square) || Next.is(tok::caret))
+        return true;
+      return Next.isOneOf(
+          tok::kw_int, tok::kw_char, tok::kw_float, tok::kw_double,
+          tok::kw_long, tok::kw_short, tok::kw_signed, tok::kw_unsigned,
+          tok::kw_void, tok::kw__Bool, tok::kw_struct, tok::kw_union,
+          tok::kw_enum, tok::kw_const, tok::kw_volatile, tok::kw_restrict,
+          tok::identifier);
+    }
+
+  // === C4: '[' starts a bounds-checked array type specifier ([] int, [N] int).
+  // Same disambiguation: ^([] int a) must be treated as a parameter list.
+  case tok::l_square:
+    if (getLangOpts().C4()) {
+      // A bare '[' is only a C4 array type when followed by ']' or a size expr.
+      // Avoid misidentifying C++11 [[attr]] attribute specifiers.
+      const Token &Next = NextToken();
+      if (Next.is(tok::r_square) || Next.is(tok::numeric_constant) ||
+          Next.is(tok::identifier))
+        return true;
+    }
+    return false;
+
   // === C4: ^ is a pointer-type prefix, but ONLY in genuine C4 type contexts.
   // Returning true unconditionally breaks Apple block-pointer syntax such as
   // (^ _Nonnull)(void) in system headers: the parser uses isDeclarationSpecifier
@@ -7656,7 +7686,16 @@ void Parser::ParseFunctionDeclarator(Declarator &D,
                 std::move(FnAttrs), EndLoc);
 
   // C4 PATCH: Handle Trailing Return Type for C (Moved after AddTypeInfo)
-  bool TypeWasOmittedOnLeft = (D.getDeclSpec().getSourceRange().getBegin() == D.getIdentifierLoc());
+  bool TypeWasOmittedOnLeft =
+      (D.getDeclSpec().getSourceRange().getBegin() == D.getIdentifierLoc()) ||
+      // C4: implicit-void path (type injected at identifier location)
+      (getLangOpts().C4() && D.getDeclSpec().getTypeSpecType() == DeclSpec::TST_void &&
+       D.getDeclSpec().getSourceRange().getBegin().isInvalid()) ||
+      // C4: struct field function pointer `^field (params) rettype;` — no type
+      //     specifier was set (void injection is suppressed in struct context)
+      //     but a ^ pointer depth is present.
+      (getLangOpts().C4() && !D.getDeclSpec().hasTypeSpecifier() &&
+       D.getDeclSpec().getC4PointerDepth() > 0);
 
   if (getLangOpts().C4() && TypeWasOmittedOnLeft &&
       (isDeclarationSpecifier(ImplicitTypenameContext::No) ||

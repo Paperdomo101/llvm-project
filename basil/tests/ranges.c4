@@ -1,0 +1,25 @@
+
+
+main () int {
+    for 0..9 { } // inclusive
+    for 0..<10 { } // exclusive
+    for 0..-10 { } // negative
+    for 0..2..10 { } // step size (2)
+
+    for i := 0..9 { } // range can be assigned
+    for i := 0..<10 { }
+    for i := 0..-10 { }
+    for i := 0..2..10 { }
+    for i := 0.. { } // count up forever starting from 0
+    for i := 0..-1.. { } // count down forever starting from 0
+
+    for b..bob {
+        // b is a copy
+    }
+    for &b..bob {
+        // b is a reference
+    }
+    for ^b..bob {
+        // b is a pointer
+    }
+}

@@ -1,5 +1,5 @@
 #include <stdio.h>
-
+#include <stdbool.h>
 
 main () int {
     [] bob := {5, 6, 7, 8}
@@ -9,6 +9,14 @@ main () int {
 
     printf("%zu|%zu\n", ##.joe, c)
     printf("%zu|%zu\n", #.bob, c)
+
+    for true { break; }
+    for (true) { break; }
+    window_should_close := true;
+
+    for !(window_should_close) {
+        break;
+    }
 
     // Non‑parenthesised (your custom syntax)
     for i := 0; i < #.joe; ++i { "%d"::printf(joe[i]) }

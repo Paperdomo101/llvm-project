@@ -330,8 +330,12 @@ InitListExpr* Sema::BuildC4ArrayFromInitList(InitListExpr *ILE, QualType C4Type,
                                                       EndLoc, /*Synthetic=*/false);
   ArrayILE->setType(ArrayType);
   TypeSourceInfo *ArrayTSI = Context.getTrivialTypeSourceInfo(ArrayType, Loc);
+  // The backing array compound literal must have IsFileScope=true when we are
+  // at file scope, so that CodeGen assigns it static storage duration and can
+  // emit the global variable initializer as a constant.
+  bool IsFileScopeCtx = isa<TranslationUnitDecl>(CurContext);
   CompoundLiteralExpr *ArrayCLE = new (Context) CompoundLiteralExpr(
-      Loc, ArrayTSI, ArrayType, VK_LValue, ArrayILE, /*IsFileScope=*/false);
+      Loc, ArrayTSI, ArrayType, VK_LValue, ArrayILE, IsFileScopeCtx);
 
   // ---- 7. Build struct initializer: { items_ptr, count, capacity } ----
   // count    = NumInits  – only the explicitly-provided elements are "active".

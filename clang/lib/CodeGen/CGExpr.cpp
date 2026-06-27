@@ -6838,8 +6838,61 @@ RValue CodeGenFunction::EmitCallExpr(const CallExpr *E,
     return EmitCXXPseudoDestructorExpr(callee.getPseudoDestructorExpr());
   }
 
-  return EmitCall(E->getCallee()->getType(), callee, E, ReturnValue,
-                  /*Chain=*/nullptr, CallOrInvoke);
+  RValue RV = EmitCall(E->getCallee()->getType(), callee, E, ReturnValue,
+                        /*Chain=*/nullptr, CallOrInvoke);
+
+  // C4: if the call returns a C4 bounds-checked array, immediately clone the
+  // backing element data into the current frame.  The callee's local backing
+  // array lives in its stack frame; that frame is dead the moment the call
+  // returns, so any subsequent call (e.g. the outer sum_array()) can overwrite
+  // it before the EmitParmDecl clone in the callee has a chance to copy it.
+  // Cloning right here — before anything else is emitted — guarantees the
+  // memcpy reads valid data.
+  if (getLangOpts().C4() && RV.isAggregate()) {
+    QualType RetTy = E->getType();
+    if (RetTy->isRecordType()) {
+      const RecordDecl *RD = RetTy->getAsRecordDecl();
+      if (RD && RD->getIdentifier() == nullptr &&
+          RD->lookup(&CGM.getContext().Idents.get(C4_ARRAY_SIZE_FIELD))
+              .isSingleResult()) {
+        FieldDecl *DataField = nullptr, *SizeField = nullptr;
+        for (FieldDecl *F : RD->fields()) {
+          if (F->getName() == C4_ARRAY_DATA_FIELD)  DataField = F;
+          else if (F->getName() == C4_ARRAY_SIZE_FIELD) SizeField = F;
+        }
+        if (DataField && SizeField) {
+          LValue RetLV = MakeAddrLValue(RV.getAggregateAddress(), RetTy);
+          LValue SizeLV = EmitLValueForField(RetLV, SizeField);
+          llvm::Value *SizeVal = EmitLoadOfScalar(SizeLV, SourceLocation());
+          LValue DataLV = EmitLValueForField(RetLV, DataField);
+          llvm::Value *OrigDataPtr = EmitLoadOfScalar(DataLV, SourceLocation());
+          QualType PointeeTy = DataField->getType()->getPointeeType();
+          llvm::Type *LLVMElemTy = ConvertTypeForMem(PointeeTy);
+          llvm::Value *NewBuf =
+              Builder.CreateAlloca(LLVMElemTy, SizeVal, "c4_ret_clone");
+          CharUnits EltAlign = getContext().getTypeAlignInChars(PointeeTy);
+          cast<llvm::AllocaInst>(NewBuf)->setAlignment(EltAlign.getAsAlign());
+          llvm::Value *ElemSize = llvm::ConstantInt::get(
+              SizeVal->getType(),
+              getContext().getTypeSizeInChars(PointeeTy).getQuantity());
+          llvm::Value *ByteCount =
+              Builder.CreateMul(SizeVal, ElemSize, "c4_clone_bytes");
+          // Use memmove rather than memcpy: the backing array now lives in
+          // static storage (see BuildC4ArrayFromInitList), so the source is
+          // always a valid global and the copy is safe at any optimisation
+          // level.  We still prefer memmove over memcpy for safety, as a
+          // variable alloca for NewBuf is placed contiguously with callee
+          // frame data on some targets (e.g. arm64), which can produce a
+          // one-element overlap that memcpy would mishandle.
+          Builder.CreateMemMove(NewBuf, EltAlign.getAsAlign(),
+                                OrigDataPtr, EltAlign.getAsAlign(), ByteCount);
+          EmitStoreOfScalar(NewBuf, DataLV, /*isInit=*/false);
+        }
+      }
+    }
+  }
+
+  return RV;
 }
 
 /// Emit a CallExpr without considering whether it might be a subclass.

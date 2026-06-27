@@ -14,7 +14,7 @@ main () int {
         "%d\n"::printf(value)
     }
 
-    escape := ^() void (^)() {
+    escape := ^() void (*)() {
         printf("escape\n")
         noob := ^() {
             printf("noob\n")

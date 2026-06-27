@@ -693,6 +693,40 @@ ExprResult Parser::ParseMethodDispatch(
     if (Callee.isInvalid())
         return ExprError();
 
+    // Consume postfix suffixes (subscript, member access) but NOT function calls.
+    // This handles chains like: arr[0].method(args)  or  ptr->field(args)
+    while (Callee.isUsable()) {
+        if (Tok.is(tok::l_square)) {
+            // Array subscript: callee[idx]
+            SourceLocation LBracketLoc = ConsumeBracket();
+            ExprResult Idx = ParseExpression();
+            if (Idx.isInvalid()) return ExprError();
+            SourceLocation RBracketLoc = Tok.getLocation();
+            if (!Tok.is(tok::r_square)) return ExprError();
+            ConsumeBracket();
+            Expr *IdxExpr = Idx.get();
+            Callee = Actions.ActOnArraySubscriptExpr(
+                getCurScope(), Callee.get(), LBracketLoc, IdxExpr, RBracketLoc);
+        } else if (Tok.is(tok::period) || Tok.is(tok::arrow)) {
+            // Member access: callee.field or callee->field
+            tok::TokenKind OpKind = Tok.getKind();
+            SourceLocation OpLoc = ConsumeToken();
+            if (Tok.isNot(tok::identifier)) return ExprError();
+            IdentifierInfo *MemberII = Tok.getIdentifierInfo();
+            SourceLocation MemberLoc = ConsumeToken();
+            CXXScopeSpec MemberSS;
+            SourceLocation MemberTemplateKWLoc;
+            UnqualifiedId MemberId;
+            MemberId.setIdentifier(MemberII, MemberLoc);
+            Callee = Actions.ActOnMemberAccessExpr(
+                getCurScope(), Callee.get(), OpLoc, OpKind,
+                MemberSS, MemberTemplateKWLoc, MemberId, nullptr);
+        } else {
+            break; // Stop at '(' or anything else
+        }
+        if (Callee.isInvalid()) return ExprError();
+    }
+
     if (Tok.isNot(tok::l_paren)) {
         Diag(Tok, diag::err_expected) << tok::l_paren;
         return ExprError();
@@ -2050,6 +2084,13 @@ Parser::ParsePostfixExpressionSuffix(ExprResult LHS) {
       // expression and recover by pretending there is no suffix.
       if (getLangOpts().ObjC && Tok.isAtStartOfLine() &&
           isSimpleObjCMessageExpression())
+        return LHS;
+
+      // C4: A '[' at the start of a new line that begins a type-inferred
+      // declaration ([] id := ...) is not a subscript on the previous
+      // expression. Treat it as the end of the current expression.
+      if (getLangOpts().C4() && Tok.isAtStartOfLine() &&
+          isTypeInferredAssignment())
         return LHS;
 
       // Reject array indices starting with a lambda-expression. '[[' is

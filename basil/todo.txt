@@ -3,22 +3,6 @@
 # ===|===|=== TODO ===|===|===
 # ____________________________
 
-    ## `::` does not work right with function pointers
-
-    ## references auto-take address of function pointer params
-    ```
-    modifiers[0].modify_str_by_ref(str, str2) // Passing '[] char ' to parameter of incompatible type 'const ^[] char '; take the address with & (fix available)
-    ```
-
-    ## := at root scope
-
-    ## [] bounds checked arrays at root scope
-    ```
-    source\main.c4:56:8: error: cannot compile this static initializer yet
-     56 | [] int joe = {
-        |
-    ```
-
 
     ## Loop ranges
     ```
@@ -163,6 +147,28 @@
 
 # ===|===|=== DONE ===|===|===
 # ____________________________
+
+
+		## while-like for-loops
+		```
+		for !window_should_close() {...}
+		```
+
+    ## `::` does not work right with function pointers
+
+    ## references auto-take address of function pointer params
+    ```
+    modifiers[0].modify_str_by_ref(str, str2) // Passing '[] char ' to parameter of incompatible type 'const ^[] char '; take the address with & (fix available)
+    ```
+
+    ## := at root scope
+
+    ## [] bounds checked arrays at root scope
+    ```
+    source\main.c4:56:8: error: cannot compile this static initializer yet
+     56 | [] int joe = {
+        |
+    ```
 
 
     ## ^ pointers

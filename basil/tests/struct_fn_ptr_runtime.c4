@@ -1,0 +1,54 @@
+// tests/struct_fn_ptr_runtime.c4
+// Runtime tests for struct fields declared as function pointers using the
+// C4 caret prefix:
+//   struct { ^field_name (params) rettype; } var;
+// which is equivalent to C's:
+//   struct { rettype (*field_name)(params); } var;
+//
+// Also tests :: dispatch on such fields.
+// Exit 0 = all assertions passed.
+#include <stdio.h>
+#include <stdlib.h>
+
+static void chk(int a, int e, const char *m) {
+    if (a != e) { printf("[FAIL] %s (got %d, want %d)\n", m, a, e); exit(1); }
+}
+
+// Plain functions to assign to the struct fields
+add_fn (int a, int b) int { return a + b; }
+mul_fn (int a, int b) int { return a * b; }
+sub_fn (int a, int b) int { return a - b; }
+
+// Struct whose fields are function pointers declared with ^ prefix
+struct BinOp {
+    int (*add) (int a, int b);
+    int (*mul) (int a, int b);
+};
+
+main () int {
+    // Assign functions to the pointer fields
+    struct BinOp op;
+    op.add = add_fn;
+    op.mul = mul_fn;
+
+    // Direct field call
+    chk(op.add(3, 4),  7,  "op.add(3,4)");
+    chk(op.mul(6, 7),  42, "op.mul(6,7)");
+
+    // :: dispatch: receiver::struct.field(args)
+    chk(10::op.add(5), 15, "10::op.add(5)");
+    chk(6::op.mul(7),  42, "6::op.mul(7)");
+
+    // Array of structs, :: dispatch with arr[i].field
+    struct BinOp ops[2] = { {add_fn, mul_fn}, {sub_fn, add_fn} };
+    chk(3::ops[0].add(4),   7,  "3::ops[0].add(4)");
+    chk(5::ops[0].mul(9),   45, "5::ops[0].mul(9)");
+    chk(10::ops[1].add(3),  7,  "10::ops[1].sub(3)");   // ops[1].add = sub_fn
+
+    // Swap the function pointer and re-call
+    op.add = sub_fn;
+    chk(op.add(10, 3), 7, "op.add=sub_fn, 10-3=7");
+
+    puts("[PASS] Struct function pointer tests passed.");
+    return 0;
+}

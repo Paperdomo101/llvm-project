@@ -46,7 +46,7 @@ int main() {
     +accumulator_var;
 
     int bitwise_anchor = (200)
-    &bitwise_anchor;
+    -bitwise_anchor;
 
     assert_equal(accumulator_var, 100, "Test 3: High-fidelity statement boundaries for bracket closures followed by operators")
 

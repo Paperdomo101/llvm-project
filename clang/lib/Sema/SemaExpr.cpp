@@ -6538,6 +6538,23 @@ bool Sema::GatherArgumentsForCall(SourceLocation CallLoc, FunctionDecl *FDecl,
           }
         }
       }
+      // === C4: Auto-address injection for function pointer calls (no FDecl available) ===
+      // When calling via function pointer, Param is null. Detect C4 reference parameters
+      // by checking if the proto param type is a const pointer to a C4 array struct.
+      if (!Param && getLangOpts().C4() && ProtoArgType->isPointerType()) {
+        if (ProtoArgType.isLocalConstQualified() || ProtoArgType.isConstQualified()) {
+          QualType PointeeTy = ProtoArgType->getPointeeType();
+          if (PointeeTy->isRecordType() &&
+              isC4ArrayType(PointeeTy) &&
+              Arg && Arg->isGLValue() && !Arg->getType()->isPointerType() &&
+              isC4ArrayType(Arg->getType())) {
+            ExprResult InjectedAddress = CreateBuiltinUnaryOp(
+                Arg->getBeginLoc(), UO_AddrOf, Arg);
+            if (!InjectedAddress.isInvalid())
+              Arg = InjectedAddress.get();
+          }
+        }
+      }
       // ============================================================================
 
 
@@ -18038,7 +18055,9 @@ void Sema::ActOnBlockError(SourceLocation CaretLoc, Scope *CurScope) {
 ExprResult Sema::ActOnBlockStmtExpr(SourceLocation CaretLoc,
                                     Stmt *Body, Scope *CurScope) {
   // If blocks are disabled, emit an error.
-  if (!LangOpts.Blocks)
+  // In C4 mode we convert block literals to plain static function pointers,
+  // so the blocks runtime is not required.
+  if (!LangOpts.Blocks && !LangOpts.C4())
     Diag(CaretLoc, diag::err_blocks_disable) << LangOpts.OpenCL;
 
   // Leave the expression-evaluation context.
@@ -18099,6 +18118,72 @@ ExprResult Sema::ActOnBlockStmtExpr(SourceLocation CaretLoc,
   }
 
   DiagnoseUnusedParameters(BD->parameters());
+
+  // === C4: Convert non-capturing block literal to a plain static function pointer ===
+  // This avoids the Apple blocks runtime (_NSConcreteGlobalBlock) for
+  // cross-platform portability. C4 does not support closures, so all C4
+  // block literals ("local functions") are non-capturing.
+  if (getLangOpts().C4() && !getLangOpts().CPlusPlus) {
+    bool HasCaptures = false;
+    for (const auto &Cap : BSI->Captures) {
+      if (!Cap.isInvalid() && !Cap.isThisCapture()) {
+        HasCaptures = true;
+        break;
+      }
+    }
+    if (!HasCaptures && !BSI->CXXThisCaptureIndex) {
+      // Generate a unique internal function name.
+      static unsigned C4LocalFnIdx = 0;
+      SmallString<64> FnNameBuf;
+      llvm::raw_svector_ostream OS(FnNameBuf);
+      OS << "__c4_localfn_" << C4LocalFnIdx++;
+      IdentifierInfo &FnII = Context.Idents.get(FnNameBuf.str());
+
+      // Create a static FunctionDecl at TU level with the function type.
+      // At this point BlockTy is the plain function type (not yet wrapped
+      // in a block pointer), which is exactly what we want.
+      DeclContext *TU = Context.getTranslationUnitDecl();
+      FunctionDecl *FD = FunctionDecl::Create(
+          Context, TU, CaretLoc, CaretLoc,
+          DeclarationName(&FnII), BlockTy,
+          Context.getTrivialTypeSourceInfo(BlockTy, CaretLoc),
+          SC_Static);
+
+      // Reparent BD's parameters to FD so DeclRefExprs in the body stay valid.
+      SmallVector<ParmVarDecl *, 8> NewParams;
+      for (ParmVarDecl *P : BD->parameters()) {
+        P->setDeclContext(FD);
+        NewParams.push_back(P);
+      }
+      FD->setParams(NewParams);
+
+      // Transfer the parsed body to FD.
+      FD->setBody(cast<CompoundStmt>(Body));
+
+      // Register the new function with the translation unit.
+      TU->addDecl(FD);
+
+      // Pop the block's decl context (mirrors what the normal path does).
+      PopDeclContext();
+
+      // Pop the block function scope, using FD (which has the body) so that
+      // analysis-based warnings run against the real function, not the empty BD.
+      AnalysisBasedWarnings::Policy WP =
+          AnalysisWarnings.getPolicyInEffectAt(Body->getEndLoc());
+      PopFunctionScopeInfo(&WP, FD, QualType());
+
+      // Notify the AST consumer so the function gets emitted.
+      Consumer.HandleTopLevelDecl(DeclGroupRef(FD));
+
+      // Build a DeclRefExpr for FD and decay it to a function pointer.
+      DeclRefExpr *DRE = BuildDeclRefExpr(FD, BlockTy, VK_LValue, CaretLoc);
+      if (!DRE)
+        return ExprError();
+      return DefaultFunctionArrayConversion(DRE);
+    }
+  }
+  // === end C4 ===
+
   BlockTy = Context.getBlockPointerType(BlockTy);
 
   // If needed, diagnose invalid gotos and switches in the block.

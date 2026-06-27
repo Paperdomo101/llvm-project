@@ -1,0 +1,76 @@
+// tests/local_fn_runtime.c4
+// Runtime tests for C4 local function pointers (cross-platform, no blocks
+// runtime), :: dispatch on complex callees, and C4-array ref auto-address
+// through function pointer calls.
+// Exit 0 = all assertions passed.
+#include <stdio.h>
+#include <stdlib.h>
+
+static void chk(int a, int e, const char *m) {
+    if (a != e) { printf("[FAIL] %s (got %d, want %d)\n", m, a, e); exit(1); }
+}
+
+struct MathOps { int (*add)(int,int); int (*mul)(int,int); };
+
+main () int {
+    // 1. Basic local function
+    add := ^(int a, int b) int { return a + b; }
+    chk(add(3,4),   7,  "add(3,4)");
+    chk(add(-5,15), 10, "add(-5,15)");
+
+    // 2. Local function with C4-array ref parameter (no capture)
+    fill := ^(&[] int buf, int v) {
+        for (int i = 0; i < (int)buf.count; ++i) buf[i] = v + i;
+    }
+    [] arr := {0, 0, 0}
+    fill(arr, 10);
+    chk(arr[0], 10, "arr[0]");
+    chk(arr[1], 11, "arr[1]");
+    chk(arr[2], 12, "arr[2]");
+
+    // 3. Nested local functions (parameters only, zero captures)
+    outer := ^(int x) int {
+        dbl := ^(int n) int { return n * 2; }
+        return dbl(x) + 1;
+    }
+    chk(outer(5), 11, "outer(5)");
+    chk(outer(0),  1, "outer(0)");
+
+    // 4. Copying a local function pointer
+    mul := ^(int a, int b) int { return a * b; }
+    fn  := mul;
+    chk(fn(6,7), 42, "fn_copy(6,7)");
+
+    // 5. Local fn returned from another local fn
+    mk := ^() int (*)(int,int) {
+        inner := ^(int a, int b) int { return a + b; }
+        return inner;
+    }
+    chk(mk()(100, 23), 123, "mk()(100,23)");
+
+    // 6. :: dispatch on plain struct field
+    struct MathOps ops = { add, mul };
+    chk(10::ops.add(5), 15, "10::ops.add(5)");
+    chk(6::ops.mul(7),  42, "6::ops.mul(7)");
+
+    // 7. :: dispatch on arr[i].field (complex callee — post-fix chain)
+    struct MathOps op_arr[2] = { {add, mul}, {add, mul} };
+    chk(3::op_arr[0].add(4),  7,  "3::op_arr[0].add(4)");
+    chk(5::op_arr[1].mul(9),  45, "5::op_arr[1].mul(9)");
+    chk(7::op_arr[0].mul(8),  56, "7::op_arr[0].mul(8)");
+
+    // 8. C4-array passed to &[] ref param via fn-ptr (auto-address injection)
+    summer := ^(&[] int a) int {
+        int s = 0;
+        for (int i = 0; i < (int)a.count; ++i) s += a[i];
+        return s;
+    }
+    [] nums := {1, 2, 3, 4, 5}
+    chk(summer(nums), 15, "summer(nums)");
+
+    // 9. :: dispatch passes receiver as first arg to fn-ptr chain
+    chk(99::op_arr[0].add(1), 100, "99::op_arr[0].add(1)");
+
+    puts("[PASS] Local function pointer tests passed.");
+    return 0;
+}

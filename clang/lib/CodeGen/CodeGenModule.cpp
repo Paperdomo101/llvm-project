@@ -30,6 +30,7 @@
 #include "TargetInfo.h"
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/ASTLambda.h"
+#include "clang/AST/Attr.h"
 #include "clang/AST/CharUnits.h"
 #include "clang/AST/Decl.h"
 #include "clang/AST/DeclCXX.h"
@@ -7024,6 +7025,32 @@ void CodeGenModule::EmitGlobalFunctionDefinition(GlobalDecl GD,
   }
 
   SetLLVMFunctionAttributesForDefinition(D, Fn);
+
+  // C4: Functions that return a C4 bounds-checked array need two attributes:
+  //
+  //  noinline – When the callee is inlined multiple times into a caller, LLVM's
+  //   inliner attaches distinct !noalias scope metadata to each clone's stores
+  //   into the shared stack alloca that backs the C4 array.  Alias-scope
+  //   reasoning can then let the optimizer hoist our memmove clone above the
+  //   very stores it is meant to copy.
+  //
+  //  optnone – Even without inlining, the dead-store-elimination pass removes
+  //   the zero-initialisation of trailing slots in the backing alloca (e.g.
+  //   %.compoundliteral[n..4] for make_range(n<5)), because those slots are
+  //   not read *within* the callee.  optnone prevents DSE and preserves the
+  //   full initialisation so the call-site memmove clone reads correct data.
+  //   (optnone implies noinline, but we keep both for clarity.)
+  if (getLangOpts().C4()) {
+    QualType RetTy = D->getReturnType();
+    if (RetTy->isRecordType()) {
+      if (const RecordDecl *RD = RetTy->getAsRecordDecl()) {
+        if (RD->hasAttr<C4BoundsCheckedArrayAttr>()) {
+          Fn->addFnAttr(llvm::Attribute::NoInline);
+          Fn->addFnAttr(llvm::Attribute::OptimizeNone);
+        }
+      }
+    }
+  }
 
   // EGPR (R16-R31) requires V3 unwind info on Windows x64 because V1/V2 cannot
   // encode extended register numbers. Check per-function so that `target`

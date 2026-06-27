@@ -2452,12 +2452,21 @@ StmtResult Parser::ParseForStatement(SourceLocation *TrailingElseLoc,
       ForEach = isTokIdentifier_in();
 
       if (!Value.isInvalid()) {
-        if (ForEach)
+        if (ForEach) {
           FirstPart = Actions.ActOnForEachLValueExpr(Value.get());
-        else {
+        } else {
           bool IsRangeBasedFor =
               getLangOpts().CPlusPlus11 && !ForEach && Tok.is(tok::colon);
-          FirstPart = Actions.ActOnExprStmt(Value, !IsRangeBasedFor);
+          // C4: bare expression immediately at the terminator (no ';') is a
+          // while-like condition, NOT the loop init.  e.g. `for i > 0 { }`
+          if (!IsRangeBasedFor && !ForEach && AtTerminator()) {
+            SecondPart = Actions.ActOnCondition(getCurScope(), ForLoc,
+                                                Value.get(),
+                                                Sema::ConditionKind::Boolean,
+                                                /*MissingOK=*/true);
+          } else {
+            FirstPart = Actions.ActOnExprStmt(Value, !IsRangeBasedFor);
+          }
         }
       }
 
