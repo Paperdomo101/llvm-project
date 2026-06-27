@@ -15,10 +15,24 @@ void modify_by_ref(&int r1, r2) {
     r2 *= r1;
 }
 
+
+other (&int ref) {
+    ref += 4;
+}
+
+something (&int ref) {
+    other(ref) // old error: Cannot take the address of pass-by-reference parameter 'ref'; doing so violates language safety guarantees
+}
+
+
 int main() {
     printf("==================================================\n");
     printf("Executing Pass-By-Reference Variable Verification...\n");
     printf("==================================================\n");
+
+    _ := 10;
+    something(_)
+    assert_equal(_, 14, "Pass reference through multiple functions")
 
     int a = 20;
     int b = 3;

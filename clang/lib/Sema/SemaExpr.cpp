@@ -6471,8 +6471,12 @@ Sema::ConvertArgumentsForCall(CallExpr *Call, Expr *Fn,
           // If the caller passed an un-aliased, bare glvalue scalar expression (like variable 'a')
           if (Arg && Arg->isGLValue() && !Arg->getType()->isPointerType()) {
 
-            // Programmatically wrap the expression inside an implicit Address-Of (&) operator node
-            ExprResult InjectedAddress = CreateBuiltinUnaryOp(Arg->getBeginLoc(), UO_AddrOf, Arg);
+            // Programmatically wrap the expression inside an implicit Address-Of (&) operator node.
+            // Use SourceLocation() (invalid) so the reference-guard in CreateBuiltinUnaryOp
+            // knows this & was compiler-synthesised, not user-written.  This allows a
+            // reference parameter to be forwarded to another reference parameter
+            // (e.g. other(ref)) without hitting the "cannot take address of &T param" error.
+            ExprResult InjectedAddress = CreateBuiltinUnaryOp(SourceLocation(), UO_AddrOf, Arg);
             if (!InjectedAddress.isInvalid()) {
               AllArgs[i] = InjectedAddress.get(); // Commits the address node into the final CallExpr array!
             }
@@ -6532,7 +6536,10 @@ bool Sema::GatherArgumentsForCall(SourceLocation CallLoc, FunctionDecl *FDecl,
 
         // 2. If it is a reference parameter, convert the incoming integer to an address pointer!
         if (IsTargetC4Reference && Arg && Arg->isGLValue() && !Arg->getType()->isPointerType()) {
-          ExprResult InjectedAddress = CreateBuiltinUnaryOp(Arg->getBeginLoc(), UO_AddrOf, Arg);
+          // Use SourceLocation() so CreateBuiltinUnaryOp's reference-guard (which
+          // checks OpLoc.isValid()) recognises this & as compiler-synthesised and
+          // does not block forwarding a &T param to another &T param.
+          ExprResult InjectedAddress = CreateBuiltinUnaryOp(SourceLocation(), UO_AddrOf, Arg);
           if (!InjectedAddress.isInvalid()) {
             Arg = InjectedAddress.get(); // Rewrites 'a' to '&a' cleanly before copy initialization!
           }
