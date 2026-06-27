@@ -6434,11 +6434,54 @@ Sema::ConvertArgumentsForCall(CallExpr *Call, Expr *Fn,
 
   // =======================================================================
   // C4 LANGUAGE EXTENSION: AUTOMATIC CALL-SITE ADDRESS-OF INJECTION (&int)
+  // AND ENUM TYPE-SAFETY CHECK
   // =======================================================================
   for (unsigned i = 0; i < TotalNumArgs; ++i) {
     if (!FDecl || i >= FDecl->getNumParams()) continue;
 
     ParmVarDecl *Param = FDecl->getParamDecl(i);
+
+    // C4 enum type-safety: reject plain integer literals and non-enum values
+    // when the parameter type is a C4 (fixed-underlying) enum type.
+    if (getLangOpts().C4() && Param) {
+      QualType ParamTy = Param->getType();
+      if (ParamTy->isEnumeralType()) {
+        const EnumDecl *ED = ParamTy->castAs<EnumType>()->getDecl();
+        if (ED && ED->isFixed()) {
+          // Helper lambda: recursively decide if Expr came from this enum.
+          std::function<bool(const Expr *)> isEnumArg = [&](const Expr *E) -> bool {
+            if (!E) return false;
+            E = E->IgnoreImplicit();
+            // Direct enum constant from this enum
+            if (const auto *DRE = dyn_cast<DeclRefExpr>(E)) {
+              if (const auto *ECD = dyn_cast<EnumConstantDecl>(DRE->getDecl()))
+                return ECD->getDeclContext() == ED;
+              // Variable of the enum type
+              if (DRE->getType()->isEnumeralType())
+                if (DRE->getType()->castAs<EnumType>()->getDecl() == ED)
+                  return true;
+            }
+            // OR-combination of enum members (.{X, Y})
+            if (const auto *BO = dyn_cast<BinaryOperator>(E))
+              if (BO->getOpcode() == BO_Or)
+                return isEnumArg(BO->getLHS()) && isEnumArg(BO->getRHS());
+            // Expression already typed as this enum (e.g., cast from enum access)
+            if (E->getType()->isEnumeralType())
+              if (E->getType()->castAs<EnumType>()->getDecl() == ED)
+                return true;
+            return false;
+          };
+
+          if (i < AllArgs.size() && !isEnumArg(AllArgs[i])) {
+            // Show the original (pre-implicit-cast) argument type.
+            QualType OrigArgTy = AllArgs[i]->IgnoreImplicit()->getType();
+            Diag(AllArgs[i]->getBeginLoc(), diag::err_c4_invalid_enum_arg)
+                << OrigArgTy << ParamTy;
+            Invalid = true;
+          }
+        }
+      }
+    }
     if (Param) {
       // ROBUST COMPILER ENTRY GATE:
       // Check if the parameter's start location points to a valid user-space block,
@@ -10093,6 +10136,26 @@ AssignConvertType Sema::CheckAssignmentConstraints(QualType LHSType,
     }
   }
   // ==============================================================================
+
+  // C4: bare brace-init on the RHS of an assignment to a struct/union.
+  // `pos = {4, 5}` is sugar for `pos = (Vector2){4, 5}`.
+  // When the LHS is a record type and the RHS is an InitListExpr, synthesise a
+  // compound literal of the LHS type so that normal struct assignment works.
+  if (getLangOpts().C4() && LHSType->isRecordType() &&
+      !isC4ArrayType(LHSType) && !RHS.isInvalid() && RHS.isUsable()) {
+    Expr *RHSExpr = RHS.get()->IgnoreParenNoopCasts(Context);
+    if (isa<InitListExpr>(RHSExpr)) {
+      SourceLocation Loc = RHSExpr->getBeginLoc();
+      TypeSourceInfo *TInfo = Context.getTrivialTypeSourceInfo(LHSType, Loc);
+      ExprResult CL = BuildCompoundLiteralExpr(Loc, TInfo, Loc, RHS.get());
+      if (!CL.isInvalid()) {
+        RHS = CL;
+        Kind = CK_NoOp;
+        return AssignConvertType::Compatible;
+      }
+    }
+  }
+  // ============================================================================
 
   QualType RHSType = RHS.get()->getType();
 
@@ -16204,6 +16267,194 @@ ExprResult Sema::ActOnCapacityOfExpr(SourceLocation OpLoc, TypeSourceInfo *TInfo
 }
 // ============ end C4 =============
 
+// ============ C4 new features =============
+
+// $$.identifier → string literal "identifier"
+ExprResult Sema::ActOnC4SymbolOf(StringRef Name, SourceLocation DollarLoc,
+                                  SourceLocation NameLoc) {
+  // Build a char-array type for the string literal.
+  llvm::APInt LengthI(32, Name.size() + 1);
+  QualType StrTy = Context.adjustStringLiteralBaseType(
+      Context.CharTy.withConst());
+  StrTy = Context.getConstantArrayType(StrTy, LengthI, nullptr,
+                                       ArraySizeModifier::Normal,
+                                       /*IndexTypeQuals=*/0);
+  SmallVector<SourceLocation, 1> TokLocs;
+  TokLocs.push_back(DollarLoc);
+  return StringLiteral::Create(Context, Name, StringLiteralKind::Ordinary,
+                               /*Pascal=*/false, StrTy, TokLocs);
+}
+
+// .MemberName → look up enum constant in current scope
+ExprResult Sema::ActOnC4ImplicitDot(SourceLocation DotLoc,
+                                     IdentifierInfo *MemberII,
+                                     SourceLocation MemberLoc) {
+  // Unqualified lookup of the identifier as an ordinary name.
+  LookupResult R(*this, MemberII, MemberLoc, LookupOrdinaryName);
+  LookupName(R, getCurScope());
+  if (R.empty()) {
+    Diag(MemberLoc, diag::err_undeclared_use) << MemberII->getName();
+    return ExprError();
+  }
+  return BuildDeclarationNameExpr(CXXScopeSpec(), R, /*NeedsADL=*/false);
+}
+
+// .{M1, M2} → bitwise OR of enum members
+ExprResult Sema::ActOnC4DotOrGroup(SourceLocation DotLoc,
+                                    ArrayRef<IdentifierInfo *> Members,
+                                    ArrayRef<SourceLocation> MemberLocs) {
+  if (Members.empty()) {
+    Diag(DotLoc, diag::err_expected_expression);
+    return ExprError();
+  }
+
+  // Look up the first member.
+  ExprResult Result = ActOnC4ImplicitDot(DotLoc, Members[0], MemberLocs[0]);
+  if (Result.isInvalid()) return ExprError();
+
+  // OR in remaining members.
+  for (unsigned i = 1, e = Members.size(); i < e; ++i) {
+    ExprResult Rhs = ActOnC4ImplicitDot(DotLoc, Members[i], MemberLocs[i]);
+    if (Rhs.isInvalid()) return ExprError();
+    Result = CreateBuiltinBinOp(MemberLocs[i], BO_Or, Result.get(), Rhs.get());
+    if (Result.isInvalid()) return ExprError();
+  }
+  return Result;
+}
+
+// expr as Type  →  (Type)expr
+ExprResult Sema::ActOnC4AsCast(ExprResult LHS, ParsedType DestType,
+                                SourceLocation AsLoc) {
+  TypeSourceInfo *TInfo = nullptr;
+  QualType Ty = GetTypeFromParser(DestType, &TInfo);
+  if (Ty.isNull()) return ExprError();
+  if (!TInfo) TInfo = Context.getTrivialTypeSourceInfo(Ty, AsLoc);
+  return BuildCStyleCastExpr(AsLoc, TInfo, AsLoc, LHS.get());
+}
+
+ExprResult Sema::ActOnC4EnumMemberAccess(SourceLocation EnumLoc,
+                                          IdentifierInfo *EnumII,
+                                          SourceLocation MemberLoc,
+                                          IdentifierInfo *MemberII) {
+  // Look up the enum by tag name.
+  LookupResult R(*this, EnumII, EnumLoc, LookupTagName);
+  LookupName(R, getCurScope());
+  if (!R.isSingleResult() || !isa<EnumDecl>(R.getFoundDecl())) {
+    Diag(EnumLoc, diag::err_undeclared_use) << EnumII->getName();
+    return ExprError();
+  }
+  EnumDecl *ED = cast<EnumDecl>(R.getFoundDecl());
+
+  // Search the enum's constants for the requested member.
+  for (Decl *D : ED->decls()) {
+    if (auto *ECD = dyn_cast<EnumConstantDecl>(D)) {
+      if (ECD->getIdentifier() == MemberII) {
+        return BuildDeclRefExpr(ECD, ECD->getType(), VK_PRValue, MemberLoc);
+      }
+    }
+  }
+
+  Diag(MemberLoc, diag::err_undeclared_use) << MemberII->getName();
+  return ExprError();
+}
+
+// # in enum body → integer literal of iota counter
+ExprResult Sema::ActOnC4EnumHashValue(SourceLocation HashLoc, int Counter) {
+  llvm::APInt Val(32, (uint64_t)Counter);
+  return IntegerLiteral::Create(Context, Val, Context.IntTy, HashLoc);
+}
+
+// Returns true if II is declared as an EnumDecl (used by parser lookahead)
+bool Sema::IsC4EnumName(IdentifierInfo *II) {
+  LookupResult R(*this, II, SourceLocation(), LookupTagName);
+  LookupName(R, getCurScope());
+  if (R.isSingleResult())
+    return isa<EnumDecl>(R.getFoundDecl());
+  return false;
+}
+
+// C4 enum declaration: Name ':' [Type] '{' M ['=' E] ... '}'
+OpaquePtr<DeclGroupRef> Sema::ActOnC4EnumDeclaration(
+    Scope *S, SourceLocation NameLoc, IdentifierInfo *EnumName,
+    ParsedType UnderlyingType, SourceLocation LBraceLoc,
+    SmallVectorImpl<C4EnumElement> &Elems, SourceLocation RBraceLoc) {
+
+  // Resolve underlying type (default: unsigned int)
+  QualType UnderlyTy = Context.UnsignedIntTy;
+  TypeSourceInfo *UnderlyTSI = nullptr;
+  if (UnderlyingType) {
+    UnderlyTy = GetTypeFromParser(UnderlyingType, &UnderlyTSI);
+    if (UnderlyTy.isNull()) UnderlyTy = Context.UnsignedIntTy;
+  }
+  if (!UnderlyTSI)
+    UnderlyTSI = Context.getTrivialTypeSourceInfo(UnderlyTy, NameLoc);
+
+  // Create the EnumDecl in the current (enclosing) context.
+  EnumDecl *ED = EnumDecl::Create(Context, CurContext, NameLoc, NameLoc,
+                                   EnumName, /*PrevDecl=*/nullptr,
+                                   /*Scoped=*/false,
+                                   /*ScopedUsingClassTag=*/false,
+                                   /*Fixed=*/true);
+  ED->setIntegerTypeSourceInfo(UnderlyTSI);
+  ED->setIntegerType(UnderlyTy);
+
+  // Add the enum tag to the enclosing context/scope so it is visible as a type.
+  // AddToContext=true: placed in CurContext (file/function scope).
+  PushOnScopeChains(ED, S, /*AddToContext=*/true);
+
+  // Enum constants in C live in the ENCLOSING scope (not a nested enum scope),
+  // but their lexical DeclContext is the EnumDecl.  PushOnScopeChains asserts
+  // that CurContext == D->getLexicalDeclContext(), so we must point CurContext
+  // at the EnumDecl while we add constants.
+  //
+  // We do NOT use PushDeclContext() because that also mutates the Scope's
+  // entity pointer, which corrupts subsequent parsing.  A direct swap is safe.
+  DeclContext *SavedContext = CurContext;
+  CurContext = ED;
+
+  // Build enum constants
+  SmallVector<Decl *, 8> ConstDecls;
+  Decl *LastConst = nullptr;
+  ParsedAttributesView EmptyAttrs;
+
+  for (auto &Elem : Elems) {
+    Expr *ValExpr = Elem.Value.isUsable() ? Elem.Value.get() : nullptr;
+    Decl *ECD = ActOnEnumConstant(S, ED, LastConst, Elem.NameLoc, Elem.Name,
+                                   EmptyAttrs,
+                                   ValExpr ? Elem.NameLoc : SourceLocation(),
+                                   ValExpr);
+    if (ECD) {
+      ConstDecls.push_back(ECD);
+      LastConst = ECD;
+    }
+  }
+
+  // Finalize the enum body while still inside the enum context.
+  ActOnEnumBody(NameLoc, SourceRange(LBraceLoc, RBraceLoc), ED, ConstDecls, S,
+                EmptyAttrs);
+
+  // Restore the enclosing context.
+  CurContext = SavedContext;
+
+  // Create a C4 typedef: typedef enum Flags Flags;
+  // This makes 'Flags' usable as a type name without the 'enum' keyword,
+  // consistent with C4 enum convention.
+  {
+    QualType EnumTy = Context.getTagType(ElaboratedTypeKeyword::None,
+                                          /*Qualifier=*/std::nullopt, ED,
+                                          /*OwnsTag=*/false);
+    TypeSourceInfo *TInfo = Context.getTrivialTypeSourceInfo(EnumTy, NameLoc);
+    TypedefDecl *TD = TypedefDecl::Create(Context, SavedContext, NameLoc,
+                                           NameLoc, EnumName, TInfo);
+    // Push into scope so 'Flags' resolves as a type name in unqualified lookup.
+    PushOnScopeChains(TD, S, /*AddToContext=*/true);
+  }
+
+  return OpaquePtr<DeclGroupRef>::make(DeclGroupRef(ED));
+}
+
+// ============ end C4 new features =============
+
 
 
 
@@ -16216,11 +16467,36 @@ ExprResult Sema::CheckStructArithmeticOperands(ExprResult &LHS, ExprResult &RHS,
   Expr *LHSExpr = LHS.get();
   Expr *RHSExpr = RHS.get();
 
+  // Determine whether RHS is a scalar (arithmetic) or a same-type struct.
+  bool RHSIsScalar = !RHSExpr->getType()->isRecordType();
+
+  // Helper: cast a scalar expression to a target arithmetic type.
+  // This ensures e.g. a double literal 1.5 is correctly narrowed to float
+  // when operating on float struct fields.
+  auto castScalarToField = [&](Expr *E, QualType FieldTy) -> ExprResult {
+    QualType SrcTy = E->getType();
+    if (Context.hasSameUnqualifiedType(SrcTy, FieldTy))
+      return ExprResult(E);
+    CastKind CK = CK_NoOp;
+    if (FieldTy->isFloatingType() && SrcTy->isFloatingType())
+      CK = CK_FloatingCast;
+    else if (FieldTy->isFloatingType() && SrcTy->isIntegerType())
+      CK = CK_IntegralToFloating;
+    else if (FieldTy->isIntegerType() && SrcTy->isFloatingType())
+      CK = CK_FloatingToIntegral;
+    else if (FieldTy->isIntegerType() && SrcTy->isIntegerType())
+      CK = CK_IntegralCast;
+    if (CK != CK_NoOp)
+      return ImpCastExprToType(E, FieldTy, CK);
+    return ExprResult(E);
+  };
+
   // Extract every nested child property element sequentially
   for (const FieldDecl *Field : RD->fields()) {
     DeclarationName Name = Field->getDeclName();
+    QualType FieldTy = Field->getType();
 
-    // 1. Set up a local LookupResult container for the LHS member access
+    // 1. LHS member access (always a struct)
     LookupResult LHSR(*this, Name, OpLoc, Sema::LookupMemberName);
     LHSR.addDecl(const_cast<FieldDecl *>(Field));
     LHSR.resolveKind();
@@ -16230,22 +16506,31 @@ ExprResult Sema::CheckStructArithmeticOperands(ExprResult &LHS, ExprResult &RHS,
         SourceLocation(), nullptr, LHSR, /*TemplateArgs=*/nullptr,
         /*S=*/nullptr, /*SuppressQualifierCheck=*/true, /*ExtraArgs=*/nullptr);
 
-    // 2. Set up a local LookupResult container for the RHS member access
-    LookupResult RHSR(*this, Name, OpLoc, Sema::LookupMemberName);
-    RHSR.addDecl(const_cast<FieldDecl *>(Field));
-    RHSR.resolveKind();
-
-    ExprResult RHSMember = BuildMemberReferenceExpr(
-        RHSExpr, StructTy, OpLoc, /*IsArrow=*/false, CXXScopeSpec(),
-        SourceLocation(), nullptr, RHSR, /*TemplateArgs=*/nullptr,
-        /*S=*/nullptr, /*SuppressQualifierCheck=*/true, /*ExtraArgs=*/nullptr);
-
-    if (LHSMember.isInvalid() || RHSMember.isInvalid())
+    if (LHSMember.isInvalid())
       return ExprError();
 
-    // 3. Create a brand-new binary operation node combining the field elements: 'LHS.field + RHS.field'
+    // 2. RHS operand: either struct field access or the scalar itself (cast to field type)
+    ExprResult RHSOp;
+    if (RHSIsScalar) {
+      // struct OP scalar: broadcast scalar across all fields, cast to field type
+      RHSOp = castScalarToField(RHSExpr, FieldTy);
+    } else {
+      // struct OP struct: access matching field on RHS
+      LookupResult RHSR(*this, Name, OpLoc, Sema::LookupMemberName);
+      RHSR.addDecl(const_cast<FieldDecl *>(Field));
+      RHSR.resolveKind();
+      RHSOp = BuildMemberReferenceExpr(
+          RHSExpr, StructTy, OpLoc, /*IsArrow=*/false, CXXScopeSpec(),
+          SourceLocation(), nullptr, RHSR, /*TemplateArgs=*/nullptr,
+          /*S=*/nullptr, /*SuppressQualifierCheck=*/true, /*ExtraArgs=*/nullptr);
+    }
+
+    if (RHSOp.isInvalid())
+      return ExprError();
+
+    // 3. Build the per-field binary operation: LHS.field OP RHS_operand
     ExprResult FieldOpResult = BuildBinOp(/*S=*/nullptr, OpLoc, Opc,
-                                          LHSMember.get(), RHSMember.get());
+                                          LHSMember.get(), RHSOp.get());
     if (FieldOpResult.isInvalid())
       return ExprError();
 
@@ -16371,9 +16656,14 @@ ExprResult Sema::CreateBuiltinBinOp(SourceLocation OpLoc,
     QualType LHSType = LHS.get()->getType();
     QualType RHSType = RHS.get()->getType();
 
-    // 1. Isolate operations running on matching Record (Struct) layouts
-    if (LHSType->isRecordType() && RHSType->isRecordType() &&
-        Context.hasSameUnqualifiedType(LHSType, RHSType)) {
+    // 1. Isolate operations running on struct layouts.
+    // Allow both struct-struct (same type) and struct-scalar (arithmetic RHS).
+    bool LHSIsNumericStruct = LHSType->isRecordType();
+    bool RHSIsSameStruct    = RHSType->isRecordType() &&
+                              Context.hasSameUnqualifiedType(LHSType, RHSType);
+    bool RHSIsScalar        = RHSType->isArithmeticType();
+
+    if (LHSIsNumericStruct && (RHSIsSameStruct || RHSIsScalar)) {
 
       // 2. Explicitly validate that the opcode is one of our supported math or math-assignment targets
       bool IsBaseMath = BinaryOperator::isMultiplicativeOp(Opc) || BinaryOperator::isAdditiveOp(Opc);

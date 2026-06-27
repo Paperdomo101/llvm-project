@@ -976,7 +976,90 @@ Parser::ParseCastExpression(CastParseKind ParseKind, bool isAddressOfOperand,
   // break out of the switch;  at the end we call ParsePostfixExpressionSuffix
   // to handle the postfix expression suffixes.  Cases that cannot be followed
   // by postfix exprs should set AllowSuffix to false.
+  // C4: Qualified enum member access — Flags.X
+  // Must be intercepted before the switch so that 'Flags' (a typedef/type name)
+  // is not rejected as an invalid expression before we can consume the '.X'.
+  if (getLangOpts().C4() && SavedKind == tok::identifier &&
+      NextToken().is(tok::period) &&
+      GetLookAheadToken(2).is(tok::identifier)) {
+    if (Actions.IsC4EnumName(Tok.getIdentifierInfo())) {
+      IdentifierInfo *EnumII = Tok.getIdentifierInfo();
+      SourceLocation EnumLoc = ConsumeToken();  // consume enum name
+      ConsumeToken();                            // consume '.'
+      IdentifierInfo *MemberII = Tok.getIdentifierInfo();
+      SourceLocation MemberLoc = ConsumeToken(); // consume member name
+      Res = Actions.ActOnC4EnumMemberAccess(EnumLoc, EnumII, MemberLoc, MemberII);
+      // Res is set; fall through to ParsePostfixExpressionSuffix below.
+      goto C4EnumAccessDone;
+    }
+  }
+
   switch (SavedKind) {
+
+  // === C4: SYMBOL-OF OPERATOR ($$.identifier → "identifier") ===
+  case tok::cashcashdot: {
+    SourceLocation DollarLoc = ConsumeToken(); // consume '$$.'
+    if (Tok.isNot(tok::identifier)) {
+      Diag(Tok, diag::err_expected) << tok::identifier;
+      return ExprError();
+    }
+    StringRef Name = Tok.getIdentifierInfo()->getName();
+    SourceLocation NameLoc = ConsumeToken(); // consume identifier
+    return Actions.ActOnC4SymbolOf(Name, DollarLoc, NameLoc);
+  }
+  // ============================================================
+
+  // === C4: IMPLICIT ENUM DOT (.Member or .{M1, M2}) ===
+  case tok::period: {
+    if (getLangOpts().C4()) {
+      SourceLocation DotLoc = ConsumeToken(); // consume '.'
+
+      if (Tok.is(tok::l_brace)) {
+        // .{M1, M2} → bitwise OR of enum members
+        ConsumeBrace(); // consume '{'
+        SmallVector<IdentifierInfo *, 4> Members;
+        SmallVector<SourceLocation, 4> MemberLocs;
+        while (Tok.is(tok::identifier)) {
+          Members.push_back(Tok.getIdentifierInfo());
+          MemberLocs.push_back(ConsumeToken());
+          if (Tok.is(tok::comma)) ConsumeToken();
+          else break;
+        }
+        if (Tok.isNot(tok::r_brace)) {
+          Diag(Tok, diag::err_expected) << tok::r_brace;
+          return ExprError();
+        }
+        ConsumeBrace();
+        return Actions.ActOnC4DotOrGroup(DotLoc, Members, MemberLocs);
+      }
+
+      if (Tok.is(tok::identifier)) {
+        IdentifierInfo *MemberII = Tok.getIdentifierInfo();
+        SourceLocation MemberLoc = ConsumeToken();
+        return Actions.ActOnC4ImplicitDot(DotLoc, MemberII, MemberLoc);
+      }
+
+      // Not a valid implicit dot
+      Diag(DotLoc, diag::err_expected_expression);
+      return ExprError();
+    }
+    // Non-C4: '.' is not a primary expression
+    NotCastExpr = true;
+    return ExprError();
+  }
+  // ============================================================
+
+  // === C4: # IOTA COUNTER IN ENUM BODIES ===
+  case tok::hash: {
+    if (getLangOpts().C4() && C4EnumHashCounter >= 0) {
+      SourceLocation HashLoc = ConsumeToken();
+      return Actions.ActOnC4EnumHashValue(HashLoc, C4EnumHashCounter++);
+    }
+    // Not in an enum body
+    NotCastExpr = true;
+    return ExprError();
+  }
+  // ============================================================
 
   // === C4 LANGUAGE EXTENSION: UNIVERSAL SIZE OPERATOR (#.) ===
   case tok::hashdot: {
@@ -1939,6 +2022,8 @@ Parser::ParseCastExpression(CastParseKind ParseKind, bool isAddressOfOperand,
     return ExprError();
   }
 
+  C4EnumAccessDone:;
+
   // Check to see whether Res is a function designator only. If it is and we
   // are compiling for OpenCL, we need to return an error as this implies
   // that the address of the function is being taken, which is illegal in CL.
@@ -2060,7 +2145,29 @@ Parser::ParsePostfixExpressionSuffix(ExprResult LHS) {
           getCurScope(), LHS, PreferredType.get(Tok.getLocation()));
       return ExprError();
 
-    case tok::identifier:
+    case tok::identifier: {
+      // C4: 'as' cast operator — expr as Type  |  expr as(Type)
+      if (getLangOpts().C4() && !LHS.isInvalid() &&
+          Tok.getIdentifierInfo() &&
+          Tok.getIdentifierInfo()->getName() == "as") {
+        SourceLocation AsLoc = ConsumeToken(); // consume 'as'
+
+        bool HasParen = Tok.is(tok::l_paren);
+        if (HasParen) ConsumeParen();
+
+        TypeResult TR = ParseTypeName();
+
+        if (HasParen) {
+          if (Tok.is(tok::r_paren))
+            ConsumeParen();
+          else
+            Diag(Tok, diag::err_expected) << tok::r_paren;
+        }
+
+        if (!TR.isInvalid() && !LHS.isInvalid())
+          LHS = Actions.ActOnC4AsCast(LHS, TR.get(), AsLoc);
+        break;
+      }
       // If we see identifier: after an expression, and we're not already in a
       // message send, then this is probably a message send with a missing
       // opening bracket '['.
@@ -2072,6 +2179,7 @@ Parser::ParsePostfixExpressionSuffix(ExprResult LHS) {
       }
       // Fall through; this isn't a message send.
       [[fallthrough]];
+    }
 
     default:  // Not a postfix-expression suffix.
       return LHS;

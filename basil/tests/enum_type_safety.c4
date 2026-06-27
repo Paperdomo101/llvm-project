@@ -1,0 +1,15 @@
+// tests/enum_type_safety.c4
+// Compile-time test: a plain integer must not be implicitly accepted where a
+// C4 enum parameter is expected.  The compiler must emit one error.
+Flags : unsigned char {
+    X = 1,
+    Y = 2,
+    Z = 4,
+}
+
+takes_flags (Flags f) int { return f; }
+
+main () int {
+    takes_flags(10);   // should fail: plain int is not a Flags value
+    return 0;
+}

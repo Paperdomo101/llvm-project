@@ -488,6 +488,11 @@ static QualType getPreferredTypeOfBinaryRHS(Sema &S, Expr *LHS,
     return QualType();
 
   QualType LHSType = LHS->getType();
+  // C4: ParenListExpr (produced by the .{x,y} member-group swizzle) carries a
+  // null QualType.  Accessing it would assert in getCommonPtr().  Return early
+  // so code-completion gracefully degrades instead of crashing.
+  if (LHSType.isNull())
+    return QualType();
   if (LHSType->isPointerType()) {
     if (Op == tok::plus || Op == tok::plusequal || Op == tok::minusequal)
       return S.getASTContext().getPointerDiffType();

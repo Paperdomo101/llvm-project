@@ -225,6 +225,23 @@ StmtResult Parser::ParseStatementOrDeclaration(StmtVector &Stmts,
   // Look ahead to see if this statement starts an inferred assignment.
   // We check if it's an identifier followed immediately by ':=' OR a comma ','
 
+  // C4: Check for enum declaration before type-inferred assignment
+  if (getLangOpts().C4() && Tok.is(tok::identifier)) {
+    if (isC4EnumDeclaration()) {
+      SourceLocation DeclEnd;
+      OpaquePtr<DeclGroupRef> DG = ParseC4EnumDeclaration(&DeclEnd);
+      if (DG) {
+        StmtResult S = Actions.ActOnDeclStmt(DG, Tok.getLocation(), DeclEnd);
+        if (S.isUsable()) {
+          Stmts.push_back(S.get());
+          return StmtResult();
+        }
+      }
+      SkipUntil(tok::semi, StopAtSemi);
+      return StmtError();
+    }
+  }
+
   if (Tok.is(tok::kw_const) || Tok.is(tok::l_square) || Tok.is(tok::identifier)) {
       if (isTypeInferredAssignment()) {
         StmtResult AssignmentRes = ParseTypeInferredAssignment();
@@ -1747,7 +1764,7 @@ Parser::ParsedCondition Parser::ParseCondition(SourceLocation StmtLoc,
                                                DeclEnd, DeclAttrs, DeclSpecAttrs,
                                                /*DeclSpecStart=*/nullptr);
           if (!DG) {
-              Diag(Tok, diag::err_expected);
+              Diag(Tok, diag::err_expected) << tok::semi;
               return Result;
           }
           TmpInit = Actions.ActOnDeclStmt(DG, DeclEnd, DeclEnd);
@@ -1767,7 +1784,9 @@ Parser::ParsedCondition Parser::ParseCondition(SourceLocation StmtLoc,
       if (Tok.is(tok::r_paren)) {
           TmpRParen = ConsumeParen();
       } else {
-          Diag(Tok, diag::err_expected_rparen_after);
+          // err_expected_rparen_after requires a %0 argument; use err_expected
+          // with r_paren to avoid a format-argument assertion in clangd.
+          Diag(Tok, diag::err_expected) << tok::r_paren;
           return Result;
       }
 
@@ -1857,9 +1876,17 @@ StmtResult Parser::ParseIfStatement(SourceLocation *TrailingElseLoc) {
       IsConsteval = true;
       ConstevalLoc = ConsumeToken();
     } else if (Tok.is(tok::code_completion)) {
-      cutOffParsing();
-      Actions.CodeCompletion().CodeCompleteKeywordAfterIf(NotLocation.isValid());
-      return StmtError();
+      // In C4 mode the if-condition is an expression, not necessarily wrapped
+      // in parens.  CodeCompleteKeywordAfterIf only suggests constexpr/consteval
+      // which are irrelevant in C4.  Skip the early return so that
+      // ParseCondition → ParseExpression → code_completion fires expression-level
+      // completions (variables, functions, etc.) just like `if (` does.
+      if (!getLangOpts().C4()) {
+        cutOffParsing();
+        Actions.CodeCompletion().CodeCompleteKeywordAfterIf(NotLocation.isValid());
+        return StmtError();
+      }
+      // C4: fall through — ParseCondition below handles the completion token.
     }
   }
 

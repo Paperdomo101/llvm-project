@@ -4167,6 +4167,21 @@ LexStart:
     MIOpt.ReadToken();
     return LexIdentifierContinue(Result, CurPtr);
   case '$':   // $ in identifiers.
+    // C4: $$. is the symbol-of operator ($$.foo → "foo")
+    if (LangOpts.C4Mode) {
+      Char = getCharAndSize(CurPtr, SizeTmp);
+      if (Char == '$') {
+        unsigned SizeTmp2;
+        char Char2 = getCharAndSize(CurPtr + SizeTmp, SizeTmp2);
+        if (Char2 == '.') {
+          Kind = tok::cashcashdot;
+          CurPtr = ConsumeChar(CurPtr, SizeTmp, Result);   // consume 2nd '$'
+          CurPtr = ConsumeChar(CurPtr, SizeTmp2, Result);  // consume '.'
+          MIOpt.ReadToken();
+          break;
+        }
+      }
+    }
     if (LangOpts.DollarIdents) {
       if (!isLexingRawMode())
         Diag(CurPtr-1, diag::ext_dollar_in_identifier);

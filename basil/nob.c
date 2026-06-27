@@ -221,9 +221,24 @@ CompilerTest custom_test_suite[] = {
             "expected a type",
         }
     },
+    {
+        "C4 Enum Type Safety (plain int rejected for enum param)",
+        "tests/enum_type_safety.c4",
+        false, 1, {
+            "cannot be implicitly converted to C4 enum type"
+        }
+    },
+    {
+        "If-condition unclosed paren: clean error, no crash",
+        "tests/if_unclosed_paren.c4",
+        false, 2, {
+            "expected ')'",
+            "expected '{'"
+        }
+    },
     /// --------------
     ///  RUNTIME
-    /// --------------
+    /// ---------------
     {
         "Semicolon Omission Lookahead",
         "tests/semicolons.c4", true
@@ -283,6 +298,22 @@ CompilerTest custom_test_suite[] = {
     {
         "Pointer Syntax & Sized Arrays (^T, ^^T, [N]T, ^expr, ^[]T)",
         "tests/caret_pointers_runtime.c4", true
+    },
+    {
+        "`as` cast operator (int as float, char, chain)",
+        "tests/as_cast_runtime.c4", true
+    },
+    {
+        "Symbol-of operator ($$.ident -> string literal)",
+        "tests/symbol_of_runtime.c4", true
+    },
+    {
+        "C4 enum declarations (unqualified, qualified, iota, implicit dot, OR group, switch)",
+        "tests/enums_c4_runtime.c4", true
+    },
+    {
+        "Struct brace-init assignment (pos = {4, 5})",
+        "tests/struct_brace_assign_runtime.c4", true
     },
 };
 

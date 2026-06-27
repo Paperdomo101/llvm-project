@@ -1,0 +1,114 @@
+// tests/enums_c4_runtime.c4
+// Runtime tests for C4 enum declarations.
+//   Name : UnderlyingType { Member = value, ... }
+//   # iota counter, .Member implicit dot, .{M1,M2} OR group,
+//   Qualified Name.Member access, switch, type-inferred := from enum member.
+// Exit 0 = all assertions passed.
+#include <stdio.h>
+#include <stdlib.h>
+
+// ── Enum declarations ────────────────────────────────────────────────────────
+
+// Basic bitflag enum with explicit underlying type
+Flags : unsigned char {
+    X = 1 << 0,
+    Y = 1 << 1,
+    Z = 1 << 2,
+    W = 1 << 3,
+}
+
+// Iota (#) auto-incrementing counter starts at 0 and advances each use
+Direction : int {
+    NORTH = #,
+    SOUTH = #,
+    EAST  = #,
+    WEST  = #,
+}
+
+// Bit-shift iota
+Power : int {
+    P1 = 1 << #,
+    P2 = 1 << #,
+    P4 = 1 << #,
+}
+
+// Integer enum (explicit underlying type)
+ExitStatus : int {
+    OK    = 0,
+    ERR   = 1,
+    FATAL = 2,
+}
+
+// ── Helper functions that take enum parameters ────────────────────────────────
+
+check_flags (Flags f) int { return (int)f; }
+
+describe_dir (Direction d) int { return (int)d; }
+
+// ── main ─────────────────────────────────────────────────────────────────────
+main () int {
+
+    // ── Unqualified member access ─────────────────────────────────────────────
+    if (X != 1) { puts("[FAIL] X");  exit(1); }
+    if (Y != 2) { puts("[FAIL] Y");  exit(1); }
+    if (Z != 4) { puts("[FAIL] Z");  exit(1); }
+    if (W != 8) { puts("[FAIL] W");  exit(1); }
+
+    // ── Qualified member access (Enum.Member) ─────────────────────────────────
+    if (Flags.X != 1) { puts("[FAIL] Flags.X"); exit(1); }
+    if (Flags.Y != 2) { puts("[FAIL] Flags.Y"); exit(1); }
+    if (Flags.Z != 4) { puts("[FAIL] Flags.Z"); exit(1); }
+    if (Flags.W != 8) { puts("[FAIL] Flags.W"); exit(1); }
+
+    // ── Iota counter ──────────────────────────────────────────────────────────
+    if (NORTH != 0) { puts("[FAIL] NORTH"); exit(1); }
+    if (SOUTH != 1) { puts("[FAIL] SOUTH"); exit(1); }
+    if (EAST  != 2) { puts("[FAIL] EAST");  exit(1); }
+    if (WEST  != 3) { puts("[FAIL] WEST");  exit(1); }
+
+    // ── Bit-shift iota ────────────────────────────────────────────────────────
+    if (P1 != 1) { puts("[FAIL] P1"); exit(1); }
+    if (P2 != 2) { puts("[FAIL] P2"); exit(1); }
+    if (P4 != 4) { puts("[FAIL] P4"); exit(1); }
+
+    // ── Implicit dot in function call: .Member ────────────────────────────────
+    if (check_flags(.X) != 1) { puts("[FAIL] .X"); exit(1); }
+    if (check_flags(.Y) != 2) { puts("[FAIL] .Y"); exit(1); }
+    if (check_flags(.Z) != 4) { puts("[FAIL] .Z"); exit(1); }
+    if (check_flags(.W) != 8) { puts("[FAIL] .W"); exit(1); }
+
+    // ── .{M1, M2} bitwise-OR group ───────────────────────────────────────────
+    if (check_flags(.{X, Y})    != 3)  { puts("[FAIL] .{X,Y}");    exit(1); }
+    if (check_flags(.{X, Y, Z}) != 7)  { puts("[FAIL] .{X,Y,Z}");  exit(1); }
+    if (check_flags(.{X, W})    != 9)  { puts("[FAIL] .{X,W}");    exit(1); }
+    if (check_flags(.{W})       != 8)  { puts("[FAIL] .{W}");       exit(1); }
+    if (check_flags(.{X,Y,Z,W}) != 15) { puts("[FAIL] all flags");  exit(1); }
+
+    // ── Type-inferred variable from enum member ───────────────────────────────
+    d := NORTH;
+    if (d != 0) { puts("[FAIL] d := NORTH"); exit(1); }
+
+    b := Flags.X;
+    if (b != 1) { puts("[FAIL] b := Flags.X"); exit(1); }
+
+    // ── switch on enum value ──────────────────────────────────────────────────
+    switch (d) {
+        case NORTH: break;
+        default:    puts("[FAIL] switch NORTH"); exit(1);
+    }
+
+    dir := EAST;
+    switch (dir) {
+        case NORTH: puts("[FAIL] switch EAST got NORTH"); exit(1); break;
+        case EAST:  break;
+        default:    puts("[FAIL] switch EAST default");   exit(1); break;
+    }
+
+    // ── ExitStatus enum ───────────────────────────────────────────────────────
+    if (OK    != 0) { puts("[FAIL] OK");    exit(1); }
+    if (ERR   != 1) { puts("[FAIL] ERR");   exit(1); }
+    if (FATAL != 2) { puts("[FAIL] FATAL"); exit(1); }
+
+    puts("[PASS] C4 enum tests passed.");
+    return 0;
+}

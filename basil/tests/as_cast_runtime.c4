@@ -1,0 +1,45 @@
+// tests/as_cast_runtime.c4
+// Runtime tests for the `as` cast operator.
+//   expr as Type        — postfix cast
+//   expr as(Type)       — parenthesised form
+// Exit 0 = all assertions passed.
+#include <stdio.h>
+#include <stdlib.h>
+
+main () int {
+    // ── int → float ──────────────────────────────────────────────────────────
+    f := 10 as float;
+    if (f < 9.9f || f > 10.1f) { puts("[FAIL] int as float"); exit(1); }
+
+    // ── int → char ───────────────────────────────────────────────────────────
+    c := 65 as char;
+    if (c != 'A') { puts("[FAIL] int as char"); exit(1); }
+
+    // ── float → int (truncation toward zero) ─────────────────────────────────
+    i := 3.9f as int;
+    if (i != 3) { puts("[FAIL] float as int"); exit(1); }
+
+    // ── char literal → int ───────────────────────────────────────────────────
+    n := 'Z' as int;
+    if (n != 90) { puts("[FAIL] char as int"); exit(1); }
+
+    // ── Parenthesised form: expr as(Type) ────────────────────────────────────
+    g := 42 as(float);
+    if (g < 41.9f || g > 42.1f) { puts("[FAIL] int as(float)"); exit(1); }
+
+    // ── Chained casts: int → float → int ─────────────────────────────────────
+    d := 7 as float as int;
+    if (d != 7) { puts("[FAIL] chained cast"); exit(1); }
+
+    // ── as inside an array literal ────────────────────────────────────────────
+    arr[] := {'A' as char, 'Z' as char}
+    if (arr[0] != 'A') { puts("[FAIL] as in array literal [0]"); exit(1); }
+    if (arr[1] != 'Z') { puts("[FAIL] as in array literal [1]"); exit(1); }
+
+    // ── as inside an expression ───────────────────────────────────────────────
+    sum := 1 as float + 2 as float;
+    if (sum < 2.9f || sum > 3.1f) { puts("[FAIL] as in expr"); exit(1); }
+
+    puts("[PASS] `as` cast tests passed.");
+    return 0;
+}

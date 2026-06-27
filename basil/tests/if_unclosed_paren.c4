@@ -1,0 +1,10 @@
+// tests/if_unclosed_paren.c4
+// Regression / compile-time error test.
+// An unclosed '(' in an if-condition previously caused an assertion failure in
+// the diagnostic formatter (clangd LSP crash).  The compiler must emit a clean
+// "expected ')'" diagnostic instead of crashing.
+main () int {
+    if (1 > 0
+        return 0;
+    return 1;
+}

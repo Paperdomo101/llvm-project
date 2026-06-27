@@ -1,0 +1,55 @@
+// tests/struct_brace_assign_runtime.c4
+// Runtime tests for bare brace-initializer on the RHS of a struct assignment:
+//   pos = {4, 5}   is sugar for   pos = (Vector2){4, 5}
+// Exit 0 = all assertions passed.
+#include <stdio.h>
+#include <stdlib.h>
+
+typedef struct { float x, y;       } Vector2;
+typedef struct { float x, y, z;    } Vector3;
+typedef struct { int   r, g, b, a; } Color;
+
+main () int {
+    // ── Vector2 ───────────────────────────────────────────────────────────────
+    pos := (Vector2){0, 0};
+    if (pos.x != 0 || pos.y != 0) { puts("[FAIL] initial zero"); exit(1); }
+
+    pos = {4, 5};
+    if (pos.x != 4 || pos.y != 5) { puts("[FAIL] pos = {4,5}"); exit(1); }
+
+    pos = {-1, 99};
+    if (pos.x != -1 || pos.y != 99) { puts("[FAIL] pos = {-1,99}"); exit(1); }
+
+    pos = {0, 0};
+    if (pos.x != 0 || pos.y != 0) { puts("[FAIL] pos = {0,0} reset"); exit(1); }
+
+    // ── Vector3 ───────────────────────────────────────────────────────────────
+    v := (Vector3){1, 2, 3};
+    if (v.x != 1 || v.y != 2 || v.z != 3) { puts("[FAIL] v initial"); exit(1); }
+
+    v = {10, 20, 30};
+    if (v.x != 10 || v.y != 20 || v.z != 30) { puts("[FAIL] v = {10,20,30}"); exit(1); }
+
+    // ── Color ─────────────────────────────────────────────────────────────────
+    c := (Color){0, 0, 0, 255};
+    c = {255, 128, 0, 255};
+    if (c.r != 255 || c.g != 128 || c.b != 0 || c.a != 255) {
+        puts("[FAIL] color brace assign");
+        exit(1);
+    }
+
+    c = {0, 0, 0, 0};
+    if (c.r != 0 || c.g != 0 || c.b != 0 || c.a != 0) {
+        puts("[FAIL] color reset");
+        exit(1);
+    }
+
+    // ── Mixed: compound literal and brace-assign interop ─────────────────────
+    a := (Vector2){7, 8};
+    b := (Vector2){0, 0};
+    b = {a.x + 1, a.y + 1};
+    if (b.x != 8 || b.y != 9) { puts("[FAIL] expr brace assign"); exit(1); }
+
+    puts("[PASS] struct brace-assign tests passed.");
+    return 0;
+}

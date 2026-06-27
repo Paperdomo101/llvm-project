@@ -2632,6 +2632,38 @@ public:
 
   ExprResult ActOnCapacityOfExpr(SourceLocation OpLoc, TypeSourceInfo *TInfo);
 
+  ExprResult ActOnC4EnumMemberAccess(SourceLocation EnumLoc, IdentifierInfo *EnumII,
+                                      SourceLocation MemberLoc, IdentifierInfo *MemberII);
+
+  // C4: symbol-of, implicit dot, as cast, iota, enum declaration
+  ExprResult ActOnC4SymbolOf(StringRef Name, SourceLocation DollarLoc,
+                             SourceLocation NameLoc);
+
+  ExprResult ActOnC4ImplicitDot(SourceLocation DotLoc, IdentifierInfo *MemberII,
+                                SourceLocation MemberLoc);
+
+  ExprResult ActOnC4DotOrGroup(SourceLocation DotLoc,
+                               ArrayRef<IdentifierInfo *> Members,
+                               ArrayRef<SourceLocation> MemberLocs);
+
+  ExprResult ActOnC4AsCast(ExprResult LHS, ParsedType DestType,
+                           SourceLocation AsLoc);
+
+  ExprResult ActOnC4EnumHashValue(SourceLocation HashLoc, int Counter);
+
+  bool IsC4EnumName(IdentifierInfo *II);
+
+  struct C4EnumElement {
+    IdentifierInfo *Name;
+    SourceLocation NameLoc;
+    ExprResult Value; // invalid = no explicit initializer
+  };
+
+  OpaquePtr<DeclGroupRef> ActOnC4EnumDeclaration(
+      Scope *S, SourceLocation NameLoc, IdentifierInfo *EnumName,
+      ParsedType UnderlyingType, SourceLocation LBraceLoc,
+      SmallVectorImpl<C4EnumElement> &Elems, SourceLocation RBraceLoc);
+
 
   ExprResult CheckStructArithmeticOperands(ExprResult &LHS, ExprResult &RHS,
                                                SourceLocation OpLoc,

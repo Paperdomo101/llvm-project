@@ -1,0 +1,28 @@
+// tests/symbol_of_runtime.c4
+// Runtime tests for the $$.identifier symbol-of operator.
+// $$.foo produces the compile-time string literal "foo".
+// Exit 0 = all assertions passed.
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+main () int {
+    // Direct use in strcmp — $$.ident decays to const char * like any string literal
+    if (strcmp($$.hello,       "hello")       != 0) { puts("[FAIL] $$.hello");       exit(1); }
+    if (strcmp($$.world,       "world")       != 0) { puts("[FAIL] $$.world");       exit(1); }
+    if (strcmp($$.abc,         "abc")         != 0) { puts("[FAIL] $$.abc");         exit(1); }
+    if (strcmp($$.foo_bar_baz, "foo_bar_baz") != 0) { puts("[FAIL] $$.foo_bar_baz"); exit(1); }
+
+    // String length via strlen
+    if (strlen($$.hello)       != 5)  { puts("[FAIL] strlen($$.hello)");       exit(1); }
+    if (strlen($$.world)       != 5)  { puts("[FAIL] strlen($$.world)");       exit(1); }
+    if (strlen($$.foo_bar_baz) != 11) { puts("[FAIL] strlen($$.foo_bar_baz)"); exit(1); }
+    if (strlen($$.x)           != 1)  { puts("[FAIL] strlen($$.x)");           exit(1); }
+
+    // Use as printf argument
+    const char *name = $$.greeting;
+    if (strcmp(name, "greeting") != 0) { puts("[FAIL] assigned to const char*"); exit(1); }
+
+    puts("[PASS] symbol-of ($$.) tests passed.");
+    return 0;
+}

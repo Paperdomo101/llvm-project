@@ -297,6 +297,140 @@ bool Parser::TryConsumeOptionalSemi() {
 
 
 
+// C4: isC4EnumDeclaration
+// Returns true if the token stream looks like: Identifier ':' (not '::')
+// followed by a type specifier or '{', indicating a C4 enum declaration.
+bool Parser::isC4EnumDeclaration() {
+  if (!Tok.is(tok::identifier)) return false;
+
+  TentativeParsingAction TPA(*this);
+
+  ConsumeToken(); // skip name
+
+  // Must see ':' but NOT '::'
+  if (!Tok.is(tok::colon)) {
+    TPA.Revert();
+    return false;
+  }
+  ConsumeToken(); // skip ':'
+
+  // ':=' is type-inferred assignment, not enum
+  if (Tok.is(tok::equal)) {
+    TPA.Revert();
+    return false;
+  }
+
+  // Next must be '{' (bare enum with default type) or a type specifier
+  bool ok = Tok.is(tok::l_brace) ||
+            isTypeSpecifierQualifier(Tok) ||
+            (Tok.is(tok::identifier) &&
+             Actions.IsC4EnumName(Tok.getIdentifierInfo()));
+
+  TPA.Revert();
+  return ok;
+}
+
+// C4 enum element storage (local to this TU)
+struct C4ParsedEnumElement {
+  IdentifierInfo *Name;
+  SourceLocation NameLoc;
+  ExprResult Value;
+  bool HasValue;
+};
+
+// C4: ParseC4EnumDeclaration
+// Syntax:  Name ':' [Type] '{' Member ['=' Expr] [',' ...] '}'
+OpaquePtr<DeclGroupRef> Parser::ParseC4EnumDeclaration(SourceLocation *DeclEnd) {
+  assert(Tok.is(tok::identifier) && "expected identifier for enum name");
+
+  IdentifierInfo *EnumName = Tok.getIdentifierInfo();
+  SourceLocation NameLoc = ConsumeToken(); // consume name
+
+  // Consume ':'
+  assert(Tok.is(tok::colon));
+  ConsumeToken();
+
+  // Parse optional underlying type (default: unsigned int)
+  ParsedType UnderlyingType;
+  if (!Tok.is(tok::l_brace)) {
+    TypeResult TR = ParseTypeName();
+    if (TR.isInvalid()) {
+      SkipUntil(tok::l_brace, StopBeforeMatch);
+    } else {
+      UnderlyingType = TR.get();
+    }
+  }
+
+  if (Tok.isNot(tok::l_brace)) {
+    Diag(Tok, diag::err_expected) << tok::l_brace;
+    return OpaquePtr<DeclGroupRef>();
+  }
+  SourceLocation LBraceLoc = ConsumeBrace(); // consume '{'
+
+  // Enable # iota counter
+  C4EnumHashCounter = 0;
+
+  SmallVector<C4ParsedEnumElement, 8> Elements;
+
+  while (Tok.isNot(tok::r_brace) && Tok.isNot(tok::eof)) {
+    if (!Tok.is(tok::identifier)) {
+      Diag(Tok, diag::err_expected) << tok::identifier;
+      SkipUntil(tok::r_brace, StopBeforeMatch);
+      break;
+    }
+
+    C4ParsedEnumElement Elem;
+    Elem.Name = Tok.getIdentifierInfo();
+    Elem.NameLoc = ConsumeToken(); // consume member name
+    Elem.HasValue = false;
+
+    if (Tok.is(tok::equal)) {
+      ConsumeToken(); // consume '='
+      Elem.Value = ParseAssignmentExpression();
+      Elem.HasValue = true;
+      if (Elem.Value.isInvalid()) {
+        SkipUntil({tok::comma, tok::r_brace}, StopBeforeMatch);
+      }
+    }
+
+    Elements.push_back(std::move(Elem));
+
+    if (Tok.is(tok::comma)) {
+      ConsumeToken();
+    } else {
+      break;
+    }
+  }
+
+  // Disable # iota counter
+  C4EnumHashCounter = -1;
+
+  SourceLocation RBraceLoc;
+  if (Tok.is(tok::r_brace)) {
+    RBraceLoc = ConsumeBrace();
+  } else {
+    Diag(Tok, diag::err_expected) << tok::r_brace;
+  }
+
+  if (DeclEnd) *DeclEnd = RBraceLoc;
+
+  TryConsumeOptionalSemi();
+
+  // Build Sema element list
+  SmallVector<Sema::C4EnumElement, 8> SemaElems;
+  for (auto &E : Elements) {
+    Sema::C4EnumElement SE;
+    SE.Name = E.Name;
+    SE.NameLoc = E.NameLoc;
+    SE.Value = E.HasValue ? E.Value : ExprResult();
+    SemaElems.push_back(std::move(SE));
+  }
+
+  return Actions.ActOnC4EnumDeclaration(getCurScope(), NameLoc, EnumName,
+                                        UnderlyingType, LBraceLoc, SemaElems,
+                                        RBraceLoc);
+}
+
 /////----------------- END C4 CODE -----------------/////
 
 
@@ -1125,6 +1259,16 @@ Parser::ParseExternalDeclaration(ParsedAttributes &Attrs,
     if (getLangOpts().IncrementalExtensions &&
         !isDeclarationStatement(/*DisambiguatingWithExpression=*/true))
       return ParseTopLevelStmtDecl();
+
+    // C4: Enum declaration at file scope
+    if (getLangOpts().C4() && Tok.is(tok::identifier)) {
+      if (isC4EnumDeclaration()) {
+        SourceLocation DeclEnd;
+        OpaquePtr<DeclGroupRef> DG = ParseC4EnumDeclaration(&DeclEnd);
+        if (DG) return DG;
+        return nullptr;
+      }
+    }
 
     // C4: Type-inferred assignment at file scope (x := expr, [] arr := expr)
     if (getLangOpts().C4() &&

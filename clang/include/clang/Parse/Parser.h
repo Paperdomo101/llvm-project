@@ -6046,6 +6046,11 @@ private:
   // C4
   bool isTypeInferredAssignment();
   StmtResult ParseTypeInferredAssignment();
+  bool isC4EnumDeclaration();
+  OpaquePtr<DeclGroupRef> ParseC4EnumDeclaration(SourceLocation *DeclEnd = nullptr);
+
+  // Counter for # iota in enum bodies; -1 = not in enum body
+  int C4EnumHashCounter = -1;
 
   /// \verbatim
   ///  objc-try-catch-statement:

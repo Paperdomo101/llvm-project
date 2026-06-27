@@ -289,6 +289,9 @@ def err_cannot_create_c4_array : Error<
   "failed to create a C4 bounds‑checked array type">;
 def err_c4_to_c_conversion : Error<
   "cannot implicitly convert C4 array to raw C array; use explicit cast">;
+def err_c4_invalid_enum_arg : Error<
+  "argument of type %0 cannot be implicitly converted to C4 enum type %1; "
+  "use a member of %1 (e.g. .MemberName or .{A, B}) or a variable of that type">;
 def err_expected_identifier_after_qualifier : Error<
   "expected identifier after array qualifier">;
 def err_typecheck_missing_array_element_type : Error<
