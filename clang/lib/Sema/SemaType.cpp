@@ -5788,6 +5788,19 @@ TypeSourceInfo *Sema::GetTypeForDeclarator(Declarator &D) {
 
   TypeSourceInfo *TInfo = GetFullTypeForDeclarator(state, T, ReturnTypeInfo);
 
+  if (getLangOpts().C4() && TInfo) {
+    QualType Type = TInfo->getType();
+    if (!Type->isFunctionType() && Type->isIncompleteArrayType() &&
+        (D.getContext() == DeclaratorContext::File ||
+         D.getContext() == DeclaratorContext::Block ||
+         D.getContext() == DeclaratorContext::ForInit ||
+         D.getContext() == DeclaratorContext::SelectionInit)) {
+      QualType ElemTy = Context.getAsArrayType(Type)->getElementType();
+      QualType C4ArrayTy = GetOrCreateC4ArrayType(ElemTy);
+      TInfo = Context.getTrivialTypeSourceInfo(C4ArrayTy, D.getIdentifierLoc());
+    }
+  }
+
   // === C4: wrap a function's return type in a bounds-checked array when
   // the DeclSpec carries isBoundsCheckedArray, e.g. `fn() []int { }`.
   // Done here (post-GetFullTypeForDeclarator) with a fresh trivial

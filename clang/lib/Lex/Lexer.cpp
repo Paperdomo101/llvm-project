@@ -3820,6 +3820,7 @@ bool Lexer::SkipBookshelfComment(Token &Result, const char *CurPtr) {
     if (CurPtr >= BufferEnd) {
       if (!isLexingRawMode())
         Diag(StartPtr, diag::err_unterminated_block_comment);
+      BufferPtr = CurPtr;
       return false;
     }
 
@@ -3852,6 +3853,9 @@ bool Lexer::SkipBookshelfComment(Token &Result, const char *CurPtr) {
   // wrap it up as a legitimate comment token. Otherwise, skip it.
   if (inKeepCommentMode()) {
     FormTokenWithChars(Result, CurPtr, tok::comment);
+    // C4 fix: Ensure the lexer cursor is synchronized even when keeping comments,
+    // otherwise the next lex iteration will re-read the comment area from the old BufferPtr!
+    BufferPtr = CurPtr;
     return true;
   }
 

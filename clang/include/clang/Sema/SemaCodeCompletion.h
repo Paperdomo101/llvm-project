@@ -112,6 +112,7 @@ public:
                                        QualType PreferredType);
   void CodeCompletePostfixExpression(Scope *S, ExprResult LHS,
                                      QualType PreferredType);
+  void CodeCompleteC4MethodDispatch(Scope *S, Expr *Receiver);
   void CodeCompleteTag(Scope *S, unsigned TagSpec);
   void CodeCompleteTypeQualifiers(DeclSpec &DS);
   void CodeCompleteFunctionQualifiers(DeclSpec &DS, Declarator &D,

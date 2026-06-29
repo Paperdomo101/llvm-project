@@ -1793,6 +1793,8 @@ def warn_ext_int_deprecated : Warning<
 def ext_bit_int : Extension<
   "'_BitInt' in %select{C17 and earlier|C++}0 is a Clang extension">,
   InGroup<BitIntExtension>;
+def err_c4_postfix_qualifier_disallowed : Error<
+  "qualifiers cannot appear after the base type in C4">;
 } // end of Parse Issue category.
 
 let CategoryName = "Modules Issue" in {

@@ -71,6 +71,15 @@ main () int {
     // 9. :: dispatch passes receiver as first arg to fn-ptr chain
     chk(99::op_arr[0].add(1), 100, "99::op_arr[0].add(1)");
 
+    // 10. C4-style function pointer syntax (^() T)
+    typedef ^(int, int) int C4MathFn;
+    C4MathFn my_add_ptr = add;
+    chk(my_add_ptr(12, 13), 25, "C4MathFn typedef call");
+
+    // Casting directly to ^(int, int) int
+    C4MathFn my_add_ptr2 = (C4MathFn)add;
+    chk(my_add_ptr2(20, 30), 50, "C4MathFn direct cast call");
+
     puts("[PASS] Local function pointer tests passed.");
     return 0;
 }

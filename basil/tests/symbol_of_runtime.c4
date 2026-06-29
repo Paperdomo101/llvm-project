@@ -23,6 +23,12 @@ main () int {
     const char *name = $$.greeting;
     if (strcmp(name, "greeting") != 0) { puts("[FAIL] assigned to const char*"); exit(1); }
 
+    // Universal #. size operator tests (sizeof fallback)
+    int size_x = 42;
+    if (#.size_x != sizeof(int)) { puts("[FAIL] #. on standard variable"); exit(1); }
+    char size_arr[25];
+    if (#.size_arr != 25) { puts("[FAIL] #. on standard C array"); exit(1); }
+
     puts("[PASS] symbol-of ($$.) tests passed.");
     return 0;
 }

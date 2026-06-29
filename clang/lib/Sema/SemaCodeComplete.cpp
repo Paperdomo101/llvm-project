@@ -6890,6 +6890,72 @@ void SemaCodeCompletion::CodeCompleteOffsetOfDesignator(QualType BaseType,
                             Results.size());
 }
 
+void SemaCodeCompletion::CodeCompleteC4MethodDispatch(Scope *S, Expr *Receiver) {
+  if (!Receiver) {
+    CodeCompleteOrdinaryName(S, PCC_Expression);
+    return;
+  }
+
+  QualType RecType = Receiver->getType();
+  if (RecType.isNull()) {
+    CodeCompleteOrdinaryName(S, PCC_Expression);
+    return;
+  }
+
+  CodeCompletionContext CCC(CodeCompletionContext::CCC_Expression);
+  ResultBuilder Results(SemaRef, CodeCompleter->getAllocator(),
+                        CodeCompleter->getCodeCompletionTUInfo(), CCC);
+  Results.EnterNewScope();
+
+  CodeCompletionDeclConsumer Consumer(Results, SemaRef.CurContext);
+  SemaRef.LookupVisibleDecls(S, SemaRef.LookupOrdinaryName, Consumer,
+                             CodeCompleter->includeGlobals(),
+                             CodeCompleter->loadExternal());
+
+  // Prioritize (boost) results:
+  // If the suggestion is a function/function template, and its first parameter type
+  // matches RecType (ignoring qualifiers) or is a pointer/reference to RecType,
+  // we increase its priority (decrease the priority value).
+  auto MatchesReceiver = [&](QualType ParamType) -> bool {
+    if (ParamType.isNull()) return false;
+    QualType CanonicalRec = SemaRef.Context.getCanonicalType(RecType).getUnqualifiedType();
+    QualType CanonicalParam = SemaRef.Context.getCanonicalType(ParamType).getUnqualifiedType();
+    if (CanonicalRec == CanonicalParam) return true;
+    if (CanonicalParam->isPointerType()) {
+      QualType Pointee = CanonicalParam->castAs<PointerType>()->getPointeeType().getUnqualifiedType();
+      if (Pointee == CanonicalRec) return true;
+    }
+    return false;
+  };
+
+  ResultBuilder::Result *Data = Results.data();
+  for (unsigned i = 0, n = Results.size(); i < n; ++i) {
+    ResultBuilder::Result &R = Data[i];
+    if (R.Kind != CodeCompletionResult::RK_Declaration) continue;
+    const FunctionDecl *FD = dyn_cast<FunctionDecl>(R.Declaration);
+    if (!FD) {
+      if (const FunctionTemplateDecl *FTD = dyn_cast<FunctionTemplateDecl>(R.Declaration)) {
+        FD = FTD->getTemplatedDecl();
+      }
+    }
+    if (FD && FD->getNumParams() > 0) {
+      QualType FirstParamType = FD->getParamDecl(0)->getType();
+      if (MatchesReceiver(FirstParamType)) {
+        // Boost priority! (Sema priority works such that smaller numbers are preferred/shown first.
+        // Standard priority values are around 10-50, dividing by 2 or subtracting a constant works).
+        R.Priority /= 4;
+        if (R.Priority < 1) R.Priority = 1;
+      }
+    }
+  }
+
+  Results.ExitScope();
+
+  HandleCodeCompleteResults(&SemaRef, CodeCompleter,
+                            Results.getCompletionContext(), Results.data(),
+                            Results.size());
+}
+
 void SemaCodeCompletion::CodeCompleteInitializer(Scope *S, Decl *D) {
   ValueDecl *VD = dyn_cast_or_null<ValueDecl>(D);
   if (!VD) {

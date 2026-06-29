@@ -16061,21 +16061,26 @@ ExprResult Sema::ActOnArraySizeIntrinsic(Expr *SubExpr, SourceLocation HashDotLo
     TargetTy = TargetTy->getPointeeType();
   }
 
-  // STAGE 4: Ensure it's our custom record type
+  // STAGE 4: If it is not a C4 array, fall back to evaluating its size (sizeof equivalent)
+  bool IsC4Array = false;
+  if (const RecordType *RT = TargetTy.getCanonicalType()->getAs<RecordType>()) {
+    RecordDecl *RD = RT->getDecl();
+    if (RD->getIdentifier() == nullptr &&
+        RD->lookup(&Context.Idents.get(C4_ARRAY_SIZE_FIELD)).isSingleResult()) {
+      IsC4Array = true;
+    }
+  }
+
+  if (!IsC4Array) {
+    // Treat as sizeof(SubExpr)
+    return ActOnUnaryExprOrTypeTraitExpr(HashDotLoc, UETT_SizeOf,
+                                         /*IsType=*/false,
+                                         /*TyOrExpr=*/SubExpr,
+                                         SourceRange(HashDotLoc, EndLoc));
+  }
+
   const RecordType *RT = TargetTy.getCanonicalType()->getAs<RecordType>();
-  if (!RT) {
-    Diag(HashDotLoc, diag::err_invalid_size_intrinsic_target) << SubExpr->getSourceRange();
-    return ExprError();
-  }
-
   RecordDecl *RD = RT->getDecl();
-
-  // Ensure it's our unnamed struct with the size field
-  if (RD->getIdentifier() != nullptr ||
-      !RD->lookup(&Context.Idents.get(C4_ARRAY_SIZE_FIELD)).isSingleResult()) {
-    Diag(HashDotLoc, diag::err_invalid_size_intrinsic_target) << SubExpr->getSourceRange();
-    return ExprError();
-  }
 
   // Look up the size field
   DeclarationName SizeName(&Context.Idents.get(C4_ARRAY_SIZE_FIELD));

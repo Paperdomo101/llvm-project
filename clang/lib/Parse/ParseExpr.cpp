@@ -846,6 +846,16 @@ ExprResult Parser::ParseMethodDispatch(
     Token OpToken)
 {
 
+    if (Tok.is(tok::code_completion)) {
+        cutOffParsing();
+        if (!Receiver.isInvalid() && Receiver.isUsable()) {
+            Actions.CodeCompletion().CodeCompleteC4MethodDispatch(getCurScope(), Receiver.get());
+        } else {
+            Actions.CodeCompletion().CodeCompleteOrdinaryName(getCurScope(), SemaCodeCompletion::PCC_Expression);
+        }
+        return ExprError();
+    }
+
     if (Tok.isNot(tok::identifier))
         return ExprError();
 
@@ -2340,8 +2350,19 @@ Parser::ParsePostfixExpressionSuffix(ExprResult LHS) {
 
             // If the next active token is on a completely new line,
             // FORCE the postfix operator builder to stop chewing tokens immediately!
+            // BUT: Do not stop if the next token is C4's 'as' keyword, allowing successive 'as' casts.
             if (CurrentLine > PrevLine) {
-              return LHS;
+              bool IsAsKeyword = false;
+              if (getLangOpts().C4() && Tok.is(tok::identifier)) {
+                if (IdentifierInfo *II = Tok.getIdentifierInfo()) {
+                  if (II->getName() == "as") {
+                    IsAsKeyword = true;
+                  }
+                }
+              }
+              if (!IsAsKeyword) {
+                return LHS;
+              }
             }
           }
         }

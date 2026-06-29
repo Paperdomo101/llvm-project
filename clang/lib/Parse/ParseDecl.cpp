@@ -3423,10 +3423,6 @@ void Parser::ParseDeclarationSpecifiers(
   ParsedAttributes attrs(AttrFactory);
   // We use Sema's policy to get bool macros right.
   PrintingPolicy Policy = Actions.getPrintingPolicy();
-  // C4: index of the '^' level whose qualifiers we are currently collecting
-  // (-1 = not in caret-qual phase; >= 0 = redirect const/volatile/restrict
-  // to DS.C4PointerLevelQuals[C4CaretQualLevel]).
-  int C4CaretQualLevel = -1;
 
 
   while (true) {
@@ -3453,22 +3449,70 @@ void Parser::ParseDeclarationSpecifiers(
 
     SourceLocation Loc = Tok.getLocation();
 
-    // C4: once a base type specifier is established, qualifiers no longer
-    // belong to a preceding '^' level – they qualify the base type instead.
-    if (DS.hasTypeSpecifier() && C4CaretQualLevel >= 0)
-      C4CaretQualLevel = -1;
-
     if (getLangOpts().C4()) {
+        // === C4: Function Pointer Type Specifier (e.g. ^() int) ===
+        if (Tok.is(tok::caret)) {
+          unsigned Carets = 0;
+          while (GetLookAheadToken(Carets).is(tok::caret)) {
+            Carets++;
+          }
+          if (GetLookAheadToken(Carets).is(tok::l_paren)) {
+            SourceLocation CaretLoc = Tok.getLocation();
+            for (unsigned i = 0; i < Carets; ++i) {
+              ConsumeToken(); // consume carets
+            }
+            ConsumeParen(); // consume '('
+            SmallVector<ParsedType, 8> ParamTypes;
+            if (Tok.isNot(tok::r_paren)) {
+              while (true) {
+                TypeResult ParamTy = ParseTypeName();
+                if (ParamTy.isUsable()) {
+                  ParamTypes.push_back(ParamTy.get());
+                }
+                if (Tok.is(tok::comma)) {
+                  ConsumeToken();
+                } else {
+                  break;
+                }
+              }
+            }
+            if (Tok.is(tok::r_paren)) {
+              ConsumeParen(); // consume ')'
+            } else {
+              Diag(Tok, diag::err_expected) << tok::r_paren;
+            }
+            TypeResult RetTy = ParseTypeName();
+            if (RetTy.isInvalid() || !RetTy.isUsable()) {
+              Diag(Tok, diag::err_expected_type);
+              return;
+            }
+            ParsedType FnPtrTy = Actions.ActOnC4FunctionPointerType(
+                CaretLoc, Carets, ParamTypes, RetTy.get());
+            const char *PrevSpec = nullptr;
+            unsigned DiagID = 0;
+            DS.SetTypeSpecType(DeclSpec::TST_typename, CaretLoc, PrevSpec, DiagID,
+                               FnPtrTy, Actions.getASTContext().getPrintingPolicy());
+            continue;
+          }
+        }
+
         // === C4: ^ pointer-depth prefix (can stack: ^, ^^, ^^^, …) ===
         // Each ^ increments the pointer depth; the type is wrapped that many times
         // in pointer indirection by Sema.  Block literals (^( or ^{) are never
         // reached here because they only appear in expression context.
         if (Tok.is(tok::caret)) {
+            unsigned Quals = DS.getTypeQualifiers();
             DS.incrementC4PointerDepth(Loc);
-            // Track which ^ level qualifiers after this caret belong to.
-            C4CaretQualLevel = (int)DS.getC4PointerDepth() - 1;
+            unsigned level = DS.getC4PointerDepth() - 1;
+            if (Quals & DeclSpec::TQ_const)
+                DS.addC4PointerLevelQual(level, DeclSpec::TQ_const);
+            if (Quals & DeclSpec::TQ_volatile)
+                DS.addC4PointerLevelQual(level, DeclSpec::TQ_volatile);
+            if (Quals & DeclSpec::TQ_restrict)
+                DS.addC4PointerLevelQual(level, DeclSpec::TQ_restrict);
+            DS.ClearTypeQualifiers();
             ConsumeToken(); // consume '^'
-        continue;
+            continue;
         }
 
         // === C4: [N] or [] bounds-checked array prefix ===
@@ -4670,17 +4714,17 @@ void Parser::ParseDeclarationSpecifiers(
 
     // cv-qualifier:
     case tok::kw_const:
-      if (getLangOpts().C4() && C4CaretQualLevel >= 0) {
-        DS.addC4PointerLevelQual(C4CaretQualLevel, DeclSpec::TQ_const);
+      if (getLangOpts().C4() && DS.hasTypeSpecifier()) {
+        // Diag(Tok, diag::err_c4_postfix_qualifier_disallowed);
         Loc = ConsumeToken();
-        continue; // skip normal qualifier processing
+        continue;
       }
       isInvalid = DS.SetTypeQual(DeclSpec::TQ_const, Loc, PrevSpec, DiagID,
                                  getLangOpts());
       break;
     case tok::kw_volatile:
-      if (getLangOpts().C4() && C4CaretQualLevel >= 0) {
-        DS.addC4PointerLevelQual(C4CaretQualLevel, DeclSpec::TQ_volatile);
+      if (getLangOpts().C4() && DS.hasTypeSpecifier()) {
+        // Diag(Tok, diag::err_c4_postfix_qualifier_disallowed);
         Loc = ConsumeToken();
         continue;
       }
@@ -4688,8 +4732,8 @@ void Parser::ParseDeclarationSpecifiers(
                                  getLangOpts());
       break;
     case tok::kw_restrict:
-      if (getLangOpts().C4() && C4CaretQualLevel >= 0) {
-        DS.addC4PointerLevelQual(C4CaretQualLevel, DeclSpec::TQ_restrict);
+      if (getLangOpts().C4() && DS.hasTypeSpecifier()) {
+        // Diag(Tok, diag::err_c4_postfix_qualifier_disallowed);
         Loc = ConsumeToken();
         continue;
       }
@@ -7697,7 +7741,12 @@ void Parser::ParseFunctionDeclarator(Declarator &D,
       //     specifier was set (void injection is suppressed in struct context)
       //     but a ^ pointer depth is present.
       (getLangOpts().C4() && !D.getDeclSpec().hasTypeSpecifier() &&
-       D.getDeclSpec().getC4PointerDepth() > 0);
+       D.getDeclSpec().getC4PointerDepth() > 0) ||
+      // C4: abstract declarator / type-id context (where identifier loc is invalid)
+      //     and we have a function declarator chunk with a trailing return type
+      (getLangOpts().C4() && D.getIdentifierLoc().isInvalid() &&
+       D.getNumTypeObjects() > 0 &&
+       D.getTypeObject(D.getNumTypeObjects() - 1).Kind == DeclaratorChunk::Function);
 
   if (getLangOpts().C4() && TypeWasOmittedOnLeft &&
       (isDeclarationSpecifier(ImplicitTypenameContext::No) ||

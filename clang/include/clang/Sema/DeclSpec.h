@@ -709,19 +709,6 @@ public:
     TQ_pipeLoc = SourceLocation();
     OB_state = static_cast<unsigned>(OverflowBehaviorState::Unspecified);
     OB_Loc = SourceLocation();
-
-    // --- Reset C4 Custom Fields ---
-    IsBoundsCheckedArray = false;
-    BoundsCheckedArrayLoc = SourceLocation();
-
-    C4PointerDepth = 0;
-    C4PointerDepthLoc = SourceLocation();
-    C4ArraySizeExpr = nullptr;
-    C4ArrayBeforeCaret = false;
-    C4PointerLevelQuals.clear();
-
-    IsC4Reference = false;
-    C4ReferenceLoc = SourceLocation();
   }
 
   // function-specifier

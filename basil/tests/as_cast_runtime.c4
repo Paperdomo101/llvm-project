@@ -31,6 +31,12 @@ main () int {
     d := 7 as float as int;
     if (d != 7) { puts("[FAIL] chained cast"); exit(1); }
 
+    // ── Successive casts in succession (e.g., void* to uintptr_t to function pointer) ──
+    typedef int (*HelperFn)(int);
+    void *func_ptr = (void*)exit;
+    fn_addr := func_ptr as unsigned long as HelperFn;
+    if (fn_addr != (HelperFn)exit) { puts("[FAIL] successive as cast"); exit(1); }
+
     // ── as inside an array literal ────────────────────────────────────────────
     arr[] := {'A' as char, 'Z' as char}
     if (arr[0] != 'A') { puts("[FAIL] as in array literal [0]"); exit(1); }

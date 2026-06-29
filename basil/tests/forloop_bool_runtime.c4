@@ -9,6 +9,8 @@
 #include <stdlib.h>
 #include <stdbool.h>
 
+int read_helper(char *err) { (void)err; return 0; }
+
 main () int {
     int count;
 
@@ -36,6 +38,17 @@ main () int {
     i = 3;
     for (i > 0) { i--; }
     if (i != 0) { printf("[FAIL] for (i>0): i=%d\n", i); exit(1); }
+
+    // C4 [] / ^ syntax in if / for loop declarations
+    if char err[]; read_helper(err.items) == 0 {
+        if (#.err != 0) { printf("[FAIL] if char err[] count\n"); exit(1); }
+    }
+    if ^char p_err = NULL; p_err == NULL {
+        // ok
+    }
+    for char err[]; read_helper(err.items) == 0; {
+        break;
+    }
 
     puts("[PASS] For-loop boolean condition tests passed.");
     return 0;

@@ -2605,6 +2605,9 @@ public:
 
   /// Check if a type is a C4 bounds‑checked array (struct with C4BoundsCheckedArray attr).
   bool isC4ArrayType(QualType T) const;
+  ParsedType ActOnC4FunctionPointerType(SourceLocation CaretLoc, unsigned Carets,
+                                        ArrayRef<ParsedType> ParamTypes,
+                                        ParsedType RetType);
 
   /// Extract the element type from a C4 array struct (by looking at __data field).
   QualType getElementTypeFromC4Array(QualType C4Type) const;

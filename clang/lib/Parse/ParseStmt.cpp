@@ -1730,7 +1730,22 @@ Parser::ParsedCondition Parser::ParseCondition(SourceLocation StmtLoc,
     Result.HasDelimitedCondition = true;
 
   // Helper to check if a token is a type specifier.
+  // IMPORTANT: This must be side-effect-free – it must NOT call
+  // TryAnnotateTypeOrScopeToken or any function that mutates the token stream,
+  // because it is called during clangd code-completion where the preprocessor
+  // runs in CachingLex mode and token-stream mutation causes crashes.
   auto isTypeSpecifier = [&](const Token &Tok) -> bool {
+    // C4-specific unambiguous declaration prefix tokens.
+    // ^  -> caret pointer declaration (e.g. `if ^char p = 0; ...`)
+    // [] -> C4 bounds-checked array (e.g. `if []char arr; ...`)
+    // Neither can appear as the start of an expression.
+    if (getLangOpts().C4()) {
+      if (Tok.is(tok::caret))
+        return true;
+      if (Tok.is(tok::l_square) && NextToken().is(tok::r_square))
+        return true;
+    }
+    // Standard C/C4 type keyword specifiers.
     return Tok.is(tok::kw_int) || Tok.is(tok::kw_float) || Tok.is(tok::kw_double) ||
            Tok.is(tok::kw_char) || Tok.is(tok::kw_void) || Tok.is(tok::kw_short) ||
            Tok.is(tok::kw_long) || Tok.is(tok::kw_signed) || Tok.is(tok::kw_unsigned) ||

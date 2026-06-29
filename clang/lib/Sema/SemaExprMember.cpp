@@ -690,7 +690,20 @@ ExprResult Sema::BuildMemberReferenceExpr(
     NamedDecl *FirstQualifierInScope, const DeclarationNameInfo &NameInfo,
     const TemplateArgumentListInfo *TemplateArgs, const Scope *S,
     ActOnMemberAccessExtraArgs *ExtraArgs) {
-  LookupResult R(*this, NameInfo, LookupMemberName);
+  DeclarationNameInfo UpdatedNameInfo = NameInfo;
+  if (getLangOpts().C4()) {
+    QualType CheckTy = BaseType;
+    if (IsArrow && CheckTy->isPointerType())
+      CheckTy = CheckTy->castAs<PointerType>()->getPointeeType();
+    if (isC4ArrayType(CheckTy)) {
+      if (IdentifierInfo *II = NameInfo.getName().getAsIdentifierInfo()) {
+        if (II->isStr("data")) {
+          UpdatedNameInfo.setName(DeclarationName(&Context.Idents.get(C4_ARRAY_DATA_FIELD)));
+        }
+      }
+    }
+  }
+  LookupResult R(*this, UpdatedNameInfo, LookupMemberName);
 
   // Implicit member accesses.
   if (!Base) {

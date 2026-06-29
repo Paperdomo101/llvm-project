@@ -162,6 +162,28 @@ bool Sema::isC4ArrayType(QualType T) const {
   return RD->hasAttr<C4BoundsCheckedArrayAttr>();
 }
 
+ParsedType Sema::ActOnC4FunctionPointerType(SourceLocation CaretLoc, unsigned Carets,
+                                      ArrayRef<ParsedType> ParamTypes,
+                                      ParsedType RetType) {
+  QualType QualRet = GetTypeFromParser(RetType);
+  if (QualRet.isNull()) QualRet = Context.VoidTy;
+
+  SmallVector<QualType, 8> QualParams;
+  for (ParsedType PT : ParamTypes) {
+    QualType QT = GetTypeFromParser(PT);
+    if (!QT.isNull()) QualParams.push_back(QT);
+  }
+
+  FunctionProtoType::ExtProtoInfo EPI;
+  QualType FnTy = Context.getFunctionType(QualRet, QualParams, EPI);
+
+  for (unsigned i = 0; i < Carets; ++i) {
+    FnTy = Context.getPointerType(FnTy);
+  }
+
+  return ParsedType::make(FnTy);
+}
+
 
 QualType Sema::getElementTypeFromC4Array(QualType C4Type) const {
   if (!isC4ArrayType(C4Type)) return QualType();
@@ -212,6 +234,85 @@ InitListExpr* Sema::BuildC4ArrayFromInitList(InitListExpr *ILE, QualType C4Type,
 
   unsigned NumInits = ILE->getNumInits();
   SourceLocation Loc = ILE->getBeginLoc();
+
+  // ---- 1b. Handle designated initializers [expr] = val -----------------
+  // When the ILE contains DesignatedInitExpr entries (e.g. [.one]=1 from
+  // enum-indexed C4 array syntax), resolve their index expressions and build
+  // a positional C4 initializer.
+  //
+  // We detect this by checking if the first initializer is a DesignatedInitExpr.
+  // If so, we collect all (index, value) pairs and build a fresh ILE.
+  if (NumInits > 0) {
+    bool HasDesignated = false;
+    for (unsigned i = 0; i < NumInits; ++i) {
+      if (isa<DesignatedInitExpr>(ILE->getInit(i))) {
+        HasDesignated = true;
+        break;
+      }
+    }
+
+    if (HasDesignated) {
+      // Determine the backing array size: use Capacity if declared, else NumInits.
+      unsigned BackSize = (Capacity > 0) ? Capacity : NumInits;
+
+      // Build a flat array of BackSize ImplicitValueInitExpr, then overwrite at
+      // the designated positions.
+      SmallVector<Expr*, 8> Slots(BackSize,
+          static_cast<Expr*>(new (Context) ImplicitValueInitExpr(ElementType)));
+
+      for (unsigned i = 0; i < NumInits; ++i) {
+        auto *DIE = dyn_cast<DesignatedInitExpr>(ILE->getInit(i));
+        if (!DIE) continue; // skip non-designated (mixed init is unusual)
+
+        // We only support single-level array designators [idx_expr] = val.
+        if (DIE->size() == 1 &&
+            DIE->getDesignator(0)->isArrayDesignator()) {
+          Expr *IdxExpr = DIE->getArrayIndex(*DIE->getDesignator(0));
+          Expr::EvalResult ER;
+          if (IdxExpr && IdxExpr->EvaluateAsInt(ER, Context)) {
+            unsigned Idx = (unsigned)ER.Val.getInt().getZExtValue();
+            if (Idx < BackSize) {
+              Expr *Val = DIE->getInit();
+              ExprResult Decayed = decayExpr(Val);
+              Slots[Idx] = Decayed.isUsable() ? Decayed.get() : Val;
+            }
+          }
+        }
+      }
+
+      // Build a fresh InitListExpr from the resolved slots.
+      llvm::APInt BackAPInt(Context.getTypeSize(Context.getSizeType()), BackSize);
+      QualType ArrTy = Context.getConstantArrayType(ElementType, BackAPInt, nullptr,
+                                                    ArraySizeModifier::Normal, 0);
+      SourceLocation EndLoc = ILE->getEndLoc();
+      InitListExpr *FlatILE = new (Context) InitListExpr(
+          Context, Loc, Slots, EndLoc, /*Synthetic=*/false);
+      FlatILE->setType(ArrTy);
+      TypeSourceInfo *ArrTSI = Context.getTrivialTypeSourceInfo(ArrTy, Loc);
+
+      bool IsFileScopeCtx = isa<TranslationUnitDecl>(CurContext);
+      CompoundLiteralExpr *ArrayCLE = new (Context) CompoundLiteralExpr(
+          Loc, ArrTSI, ArrTy, VK_LValue, FlatILE, IsFileScopeCtx);
+
+      QualType PtrType = Context.getPointerType(ElementType);
+      Expr *DataExpr = ImplicitCastExpr::Create(
+          Context, PtrType, CK_ArrayToPointerDecay,
+          ArrayCLE, nullptr, VK_PRValue, FPOptionsOverride());
+
+      QualType SizeTy = Context.getSizeType();
+      unsigned EffCap = (Capacity > 0) ? Capacity : BackSize;
+      auto MakeSzLit = [&](uint64_t V) -> Expr* {
+        return IntegerLiteral::Create(
+            Context, llvm::APInt(Context.getTypeSize(SizeTy), V), SizeTy, Loc);
+      };
+      SmallVector<Expr*, 3> StructInits = {DataExpr, MakeSzLit(NumInits),
+                                           MakeSzLit(EffCap)};
+      InitListExpr *Result = new (Context) InitListExpr(
+          Context, Loc, StructInits, Loc, /*Synthetic=*/false);
+      Result->setType(C4Type);
+      return Result;
+    }
+  }
 
   // Capacity literal builder (captures Loc by reference)
   auto MakeCountLit = [&](uint64_t Val) -> Expr* {

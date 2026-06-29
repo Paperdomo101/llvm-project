@@ -271,6 +271,39 @@ main () int {
         printf("[PASS] Scenario 10: nested [N] scopes — independent storage\n");
     }
 
+    // =========================================================================
+    // SCENARIO 11: Right-associative pointer qualifiers (const ^)
+    // =========================================================================
+    {
+        int x = 42;
+        const ^int p = &x; // p is a const pointer to int (int *const)
+        *p = 100; // Allowed because the pointee is not const
+        CHECK(x, 100, "S11: value modified through const ^int");
+
+        ^const int q = &x; // q is a pointer to const int (const int *)
+        CHECK(*q, 100, "S11: value read through ^const int");
+        // *q = 200; // Under C type rules, this would error if uncommented
+
+        printf("[PASS] Scenario 11: Right-associative pointer qualifiers\n");
+    }
+
+    // =========================================================================
+    // SCENARIO 12: C4 array .data member alias
+    // =========================================================================
+    {
+        []int arr = {11, 22, 33};
+        // Verify .data works identically to .items
+        CHECK(arr.data[0], 11, "S12: arr.data[0] == 11");
+        CHECK(arr.data[1], 22, "S12: arr.data[1] == 22");
+        CHECK(arr.data[2], 33, "S12: arr.data[2] == 33");
+
+        // Can modify through .data
+        arr.data[1] = 99;
+        CHECK(arr.items[1], 99, "S12: modification reflected in .items");
+
+        printf("[PASS] Scenario 12: C4 array .data member alias\n");
+    }
+
     printf("\n[SUCCESS] All pointer-syntax and sized-array tests passed!\n");
     return 0;
 }
