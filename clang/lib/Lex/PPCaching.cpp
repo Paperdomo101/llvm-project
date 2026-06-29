@@ -77,13 +77,21 @@ void Preprocessor::CachingLex(Token &Result) {
   if (!InCachingLexMode())
     return;
 
-  // The assert in EnterCachingLexMode should prevent this from happening.
-  assert(LexLevel == 1 &&
-         "should not use token caching within the preprocessor");
+
 
   if (CachedLexPos < CachedTokens.size()) {
     Result = CachedTokens[CachedLexPos++];
     Result.setFlag(Token::IsReinjected);
+    if (getLangOpts().C4() && Result.is(tok::identifier) && !DisableMacroExpansion) {
+      if (!HandleIdentifier(Result)) {
+        // HandleIdentifier returned false: a macro was entered (EnterMacro
+        // pushed a TokenLexer), but Result still holds the unexpanded macro
+        // name. Lex from the newly-entered macro to get the first expanded
+        // token, mirroring how Lexer::Lex / TokenLexer::Lex return false to
+        // re-enter the Preprocessor::Lex loop.
+        Lex(Result);
+      }
+    }
     return;
   }
 

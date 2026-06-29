@@ -219,7 +219,6 @@ StmtResult Parser::ParseStatementOrDeclaration(StmtVector &Stmts,
                                                ParsedStmtContext StmtCtx,
                                                SourceLocation *TrailingElseLoc,
                                                LabelDecl *PrecedingLabel) {
-
   ParenBraceBracketBalancer BalancerRAIIObj(*this);
 
   // Look ahead to see if this statement starts an inferred assignment.
@@ -512,7 +511,12 @@ Retry:
 
         // We look ahead up to 1 token past the matching closing brace
         // to see if a '::' (tok::coloncolon) immediately follows it.
-        if (GetLookAheadToken(1).isNot(tok::eof)) {
+        // Skip this lookahead if the '{' comes from a macro expansion — a
+        // macro-body '{' can't start a {expr}::method() dispatch, and the TPA
+        // would push any active TokenLexer onto the stack, breaking the
+        // expansion.
+        if (Tok.getLocation().isFileID() &&
+            GetLookAheadToken(1).isNot(tok::eof)) {
             // Create a tentative parsing guard so we can safely roll back the token stream
             TentativeParsingAction TPA(*this);
 

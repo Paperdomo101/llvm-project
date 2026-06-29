@@ -482,7 +482,7 @@ public:
     IsBoundsCheckedArray = val;
     BoundsCheckedArrayLoc = loc;
   }
-  bool isBoundsCheckedArray() const { return IsBoundsCheckedArray; }
+  bool isC4BoundsCheckedArray() const { return IsBoundsCheckedArray; }
   SourceLocation getBoundsCheckedArrayLoc() const { return BoundsCheckedArrayLoc; }
 
   // ^ pointer depth (one per leading caret)

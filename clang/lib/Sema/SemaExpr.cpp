@@ -23293,6 +23293,10 @@ static ExprResult diagnoseUnknownAnyExpr(Sema &S, Expr *E) {
 }
 
 ExprResult Sema::CheckPlaceholderExpr(Expr *E) {
+  // ParenListExpr (e.g. from C4 swizzle braces) has a null QualType.
+  // Bail out early to avoid dereferencing a null type pointer.
+  if (E->getType().isNull()) return E;
+
   const BuiltinType *placeholderType = E->getType()->getAsPlaceholderType();
   if (!placeholderType) return E;
 

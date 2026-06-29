@@ -7526,6 +7526,11 @@ static void MaybeDecrementCount(
 /// Perform the conversions required for an expression used in a
 /// context that ignores the result.
 ExprResult Sema::IgnoredValueConversions(Expr *E) {
+  // ParenListExpr (e.g. from C4 swizzle braces) has a null QualType.
+  // Bail out early to avoid dereferencing a null type pointer in
+  // hasPlaceholderType() and downstream callers.
+  if (E->getType().isNull()) return E;
+
   MaybeDecrementCount(E, RefsMinusAssignments);
 
   if (E->hasPlaceholderType()) {
@@ -7746,6 +7751,13 @@ ExprResult Sema::ActOnFinishFullExpr(Expr *FE, SourceLocation CC,
 
   if (!FullExpr.get())
     return ExprError();
+
+  // ParenListExpr (e.g. from C4 swizzle braces like `obj.{a, b}`) has a
+  // null QualType. Many downstream helpers (CheckPlaceholderExpr,
+  // IgnoredValueConversions, DiagnoseUnusedExprResult, …) dereference
+  // getType(), so bail out early to avoid assertion failures.
+  if (FullExpr.get()->getType().isNull())
+    return FullExpr;
 
   if (!IsTemplateArgument && DiagnoseUnexpandedParameterPack(FullExpr.get()))
     return ExprError();

@@ -5995,6 +5995,8 @@ bool Parser::isDeclarationSpecifier(
       const Token &Next = NextToken();
       if (Next.is(tok::l_square) || Next.is(tok::caret))
         return true;
+      if (Next.is(tok::identifier) && PP.LookAhead(1).is(tok::coloncolon))
+        return false;
       return Next.isOneOf(
           tok::kw_int, tok::kw_char, tok::kw_float, tok::kw_double,
           tok::kw_long, tok::kw_short, tok::kw_signed, tok::kw_unsigned,

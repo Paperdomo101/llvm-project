@@ -5795,7 +5795,7 @@ TypeSourceInfo *Sema::GetTypeForDeclarator(Declarator &D) {
   // describes the element type) from the wrapped record type — doing it
   // inside GetFullTypeForDeclarator crashes the TypeSpecLocFiller.
   if (getLangOpts().C4() && TInfo &&
-      D.getDeclSpec().isBoundsCheckedArray() &&
+      D.getDeclSpec().isC4BoundsCheckedArray() &&
       D.getDeclSpec().getTypeSpecType() != DeclSpec::TST_error) {
     QualType FT = TInfo->getType();
     if (const FunctionType *Fn = FT->getAs<FunctionType>()) {

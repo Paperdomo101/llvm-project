@@ -385,7 +385,17 @@ Parser::ParseRHSOfBinaryExpression(ExprResult LHS, prec::Level MinPrec) {
 
     // Consume the operator, saving the operator token for error reporting.
     Token OpToken = Tok;
-    ConsumeToken();
+    // C4: When consuming '::', fetch the NEXT token WITHOUT macro expansion.
+    // A function-like macro on the RHS (e.g. obj::some_macro(args)) would
+    // otherwise be expanded by the preprocessor immediately upon ConsumeToken(),
+    // before ParseMethodDispatch has a chance to prepend the receiver as the
+    // first argument. LexUnexpandedToken lets us see the raw identifier first.
+    if (OpToken.is(tok::coloncolon) && getLangOpts().C4()) {
+        PrevTokLocation = Tok.getLocation();
+        PP.LexUnexpandedToken(Tok);  // Tok is now the unexpanded identifier (or next raw token)
+    } else {
+        ConsumeToken();
+    }
 
 
     if (OpToken.is(tok::coloncolon)) {
@@ -658,6 +668,178 @@ Parser::ParseRHSOfBinaryExpression(ExprResult LHS, prec::Level MinPrec) {
 }
 
 
+// C4 — helper for method dispatch where the RHS is a function-like macro.
+ExprResult
+Parser::ParseC4MacroMethodDispatch(ExprResult Receiver,
+                                   IdentifierInfo *MacroII,
+                                   SourceLocation MacroLoc,
+                                   const MacroInfo *TargetMI) {
+    // ── Step 1: get the receiver's source text ────────────────────────────
+    SourceManager &SM = PP.getSourceManager();
+    SourceRange RecvRange = Receiver.get()->getSourceRange();
+    CharSourceRange CharRange =
+        Lexer::makeFileCharRange(CharSourceRange::getTokenRange(RecvRange),
+                                 SM, getLangOpts());
+    StringRef ReceiverText =
+        Lexer::getSourceText(CharRange, SM, getLangOpts());
+
+    // ── Step 2: consume the macro identifier from the token stream ────────
+    // Tok is currently the unexpanded identifier.  We now need to advance
+    // PAST it to read '(' and the arg list — still without expansion.
+    PrevTokLocation = Tok.getLocation();
+    PP.LexUnexpandedToken(Tok);  // Tok = '(' (next raw token after macro name)
+
+    if (Tok.isNot(tok::l_paren)) {
+        Diag(Tok, diag::err_expected) << tok::l_paren;
+        return ExprError();
+    }
+    SourceLocation OpenParenLoc = Tok.getLocation();
+
+    // ── Step 3: collect raw arg tokens (balanced, expansion disabled) ─────
+    // We keep everything between the outer '(' … ')' verbatim so that we can
+    // pass it unchanged to the new synthetic call.
+    SmallVector<Token, 32> RawArgToks;
+    SourceLocation CloseParenLoc;
+    int Depth = 1;
+    while (true) {
+        Token T;
+        PP.LexUnexpandedToken(T);
+        if (T.is(tok::eof)) {
+            Diag(T, diag::err_expected) << tok::r_paren;
+            return ExprError();
+        }
+        if (T.is(tok::l_paren)) ++Depth;
+        if (T.is(tok::r_paren)) {
+            --Depth;
+            if (Depth == 0) {
+                CloseParenLoc = T.getLocation();
+                break;  // matched the opening '(' — don't push
+            }
+        }
+        RawArgToks.push_back(T);
+    }
+
+    // ── Step 4: Lex the receiver's source text into raw tokens ────────────
+    std::string NullTerminatedReceiver(ReceiverText);
+    SmallVector<Token, 16> ReceiverToks;
+    {
+        // Copy the receiver text to a null-terminated string to satisfy the
+        // Lexer's assumption that the end of the buffer is null-terminated.
+        Lexer RawLex(CharRange.getBegin(), getLangOpts(),
+                     NullTerminatedReceiver.data(), NullTerminatedReceiver.data(),
+                     NullTerminatedReceiver.data() + NullTerminatedReceiver.size());
+        while (true) {
+            Token T;
+            RawLex.LexFromRawLexer(T);
+            if (T.is(tok::eof))
+                break;
+            if (T.is(tok::raw_identifier))
+                PP.LookUpIdentifierInfo(T);
+            ReceiverToks.push_back(T);
+        }
+    }
+
+    // ── Step 5: Assemble the synthetic token stream ───────────────────────
+    bool IsStatementMacro = false;
+    if (TargetMI && TargetMI->getNumTokens() > 0) {
+        tok::TokenKind FirstKind = TargetMI->getReplacementToken(0).getKind();
+        if (FirstKind == tok::kw_do || FirstKind == tok::kw_if ||
+            FirstKind == tok::kw_while || FirstKind == tok::kw_for ||
+            FirstKind == tok::kw_switch || FirstKind == tok::kw_goto ||
+            FirstKind == tok::kw_return || FirstKind == tok::l_brace) {
+            IsStatementMacro = true;
+        }
+    }
+
+    SmallVector<Token, 32> SyntheticToks;
+
+    if (IsStatementMacro) {
+        Token OpenParen;
+        OpenParen.startToken();
+        OpenParen.setKind(tok::l_paren);
+        OpenParen.setLocation(MacroLoc);
+        SyntheticToks.push_back(OpenParen);
+
+        Token OpenBrace;
+        OpenBrace.startToken();
+        OpenBrace.setKind(tok::l_brace);
+        OpenBrace.setLocation(MacroLoc);
+        SyntheticToks.push_back(OpenBrace);
+    }
+
+    // 1. Macro identifier token
+    Token MacroTok;
+    MacroTok.startToken();
+    MacroTok.setKind(tok::identifier);
+    MacroTok.setIdentifierInfo(MacroII);
+    MacroTok.setLocation(MacroLoc);
+    SyntheticToks.push_back(MacroTok);
+
+    // 2. Open parenthesis token
+    Token OpenParenTok;
+    OpenParenTok.startToken();
+    OpenParenTok.setKind(tok::l_paren);
+    OpenParenTok.setLocation(OpenParenLoc);
+    SyntheticToks.push_back(OpenParenTok);
+
+    // 3. Receiver tokens
+    SyntheticToks.append(ReceiverToks.begin(), ReceiverToks.end());
+
+    // 4. Comma & argument tokens
+    if (!RawArgToks.empty()) {
+        Token CommaTok;
+        CommaTok.startToken();
+        CommaTok.setKind(tok::comma);
+        CommaTok.setLocation(CloseParenLoc);
+        SyntheticToks.push_back(CommaTok);
+
+        SyntheticToks.append(RawArgToks.begin(), RawArgToks.end());
+    }
+
+    // 5. Close parenthesis token
+    Token CloseParenTok;
+    CloseParenTok.startToken();
+    CloseParenTok.setKind(tok::r_paren);
+    CloseParenTok.setLocation(CloseParenLoc);
+    SyntheticToks.push_back(CloseParenTok);
+
+    if (IsStatementMacro) {
+        Token Semi;
+        Semi.startToken();
+        Semi.setKind(tok::semi);
+        Semi.setLocation(CloseParenLoc);
+        SyntheticToks.push_back(Semi);
+
+        Token CloseBrace;
+        CloseBrace.startToken();
+        CloseBrace.setKind(tok::r_brace);
+        CloseBrace.setLocation(CloseParenLoc);
+        SyntheticToks.push_back(CloseBrace);
+
+        Token CloseParen;
+        CloseParen.startToken();
+        CloseParen.setKind(tok::r_paren);
+        CloseParen.setLocation(CloseParenLoc);
+        SyntheticToks.push_back(CloseParen);
+    }
+
+    // ── Step 6: Inject the synthetic tokens for macro expansion ───────────
+
+    auto Toks = std::make_unique<Token[]>(SyntheticToks.size());
+    std::copy(SyntheticToks.begin(), SyntheticToks.end(), Toks.get());
+    bool IsReinject = PP.isInCachingLexMode();
+    PP.EnterTokenStream(std::move(Toks), SyntheticToks.size(),
+                        /*DisableMacroExpansion=*/false, IsReinject);
+
+    // Advance Tok to the first synthetic token (or open paren of statement expr).
+    PP.Lex(Tok);
+
+    // ── Step 7: Parse the expanded call expression ────────────────────────
+    ExprResult Result = ParseAssignmentExpression();
+    return Result;
+}
+
+
 // C4
 ExprResult Parser::ParseMethodDispatch(
     ExprResult Receiver,
@@ -670,14 +852,48 @@ ExprResult Parser::ParseMethodDispatch(
     // llvm::errs() << "Receiver AST:\n";
     // Receiver.get()->dump();
 
-    IdentifierInfo &II = *Tok.getIdentifierInfo();
-    SourceLocation ILoc = ConsumeToken();
+    IdentifierInfo *II = Tok.getIdentifierInfo();
+    SourceLocation ILoc = Tok.getLocation();
+
+    // C4: function-like macro on the RHS — handle the arg-prepend before
+    // expansion so the macro sees the receiver as its first argument.
+    // Also resolve macro alias chains (e.g. #define push push_int).
+    IdentifierInfo *CurrII = II;
+    const MacroInfo *TargetMI = nullptr;
+    while (CurrII) {
+        if (const MacroInfo *MI = PP.getMacroInfo(CurrII)) {
+            if (MI->isFunctionLike()) {
+                TargetMI = MI;
+                break;
+            }
+            if (MI->isObjectLike() && MI->getNumTokens() == 1) {
+                const Token &Repl = MI->getReplacementToken(0);
+                if (Repl.is(tok::identifier)) {
+                    CurrII = Repl.getIdentifierInfo();
+                    continue;
+                }
+            }
+        }
+        break;
+    }
+
+    if (TargetMI) {
+        return ParseC4MacroMethodDispatch(Receiver, II, ILoc, TargetMI);
+    }
+
+    // ── Normal (non-macro) path ───────────────────────────────────────────
+    ConsumeToken();
+
+    // If we walked an alias chain (e.g. sb_appendf → nob_sb_appendf) but
+    // the target was not a function-like macro, use the resolved name so
+    // Sema can find the actual function declaration.
+    IdentifierInfo *ResolvedII = (CurrII && CurrII != II) ? CurrII : II;
 
     UnqualifiedId Name;
     CXXScopeSpec ScopeSpec;
     SourceLocation TemplateKWLoc;
 
-    Name.setIdentifier(&II, ILoc);
+    Name.setIdentifier(ResolvedII, ILoc);
 
     ExprResult Callee =
         Actions.ActOnIdExpression(

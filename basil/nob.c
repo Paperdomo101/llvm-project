@@ -62,14 +62,13 @@ int main( int argc, char **argv )
         "-O2",
         temp_sprintf( SV_Fmt"%s", SV_Arg(filename), inferred_extension ),
         "-lraylib",
-        "-I.",
-        "-L.",
+        "-I.", "-L.",
         "-I/usr/local/include",
 #ifdef __APPLE__
         "-framework", "IOKit",
         "-framework", "Cocoa",
 #elif _WIN32
-    "-lwinmm", "-lgdi32",
+        "-lwinmm", "-lgdi32",
 #endif
         "-Wno-nullability-completeness"
     );
@@ -274,6 +273,10 @@ CompilerTest custom_test_suite[] = {
     {
         "Defer Sigil Unwinding Verification",
         "tests/defer.c4", true,
+    },
+    {
+        ":: on C macros",
+        "tests/macro_test.c4", true,
     },
     {
         "Default Parameter Extraction Pipeline",

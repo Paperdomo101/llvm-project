@@ -4,6 +4,60 @@
 # ____________________________
 
 
+    ## Fix const ^
+    ```
+    // const char *, should be char *const
+    [] const ^char llvm_config_args = {
+        llvm_config_path, "--link-static", "--libs",
+        "core", "irreader", "analysis", "analysis",
+        NULL
+    }
+
+    // const char *, should ERROR
+    [] ^char const llvm_config_args = {
+        llvm_config_path, "--link-static", "--libs",
+        "core", "irreader", "analysis", "analysis",
+        NULL
+    }
+
+    // char *const, should be const char *
+    [] ^const char llvm_config_args = {
+        llvm_config_path, "--link-static", "--libs",
+        "core", "irreader", "analysis", "analysis",
+        NULL
+    }
+    ```
+
+    ## C4 [] / ^ syntax in if / for loop declarations
+	```
+	if char err[]; read(err) {...}
+	if ^char err; read(err) {...}
+	```
+
+
+	## Using custom enums / arrays at root
+	```
+	ThingTypes : { one, four, six }
+
+	int thing_values[#.ThingTypes] = {
+	    [.one] = 1,
+		[.four] = 4,
+		[.six] = 6
+	}
+	[#.ThingTypes] int c4_thing_values = {
+	    [.one] = 1,
+		[.four] = 4,
+		[.six] = 6
+	}
+	[#.ThingTypes] c4_thing_values := {
+	    [.one] = 1,
+		[.four] = 4,
+		[.six] = 6
+	}
+	```
+
+    ## alias array.items as array.data
+
     ## Loop ranges
     ```
     for 0..10 {...}
@@ -22,6 +76,25 @@
     $.bob // "5"
     ```
 
+    ## Comma separated struct members
+    ```
+    struct {
+        size_t count, capacity,
+        ^int items,
+    }
+    ```
+
+    ## Trailing comma in function header
+    ```
+    LLVM_parse_ir
+    (
+        LLVM_buffer buffer,
+        ^LLVM_module module,
+        ^char *err_msg,
+        LLVM_ctx ctx = LLVM__implicit_ctx, // allowed
+    )
+    LLVM_bool
+    ```
 
     ## ##. association
     ```

@@ -1,0 +1,28 @@
+// Minimal test: single function-like macro method dispatch
+#include <stdio.h>
+
+#define push_int(vec, val)  ((vec)->items[(vec)->count++] = (val))
+
+#define push push_int
+
+typedef struct { int items[32]; int count; } IntVec;
+
+int main() {
+    IntVec v = {0};
+
+    // Baseline: regular call
+    push_int(&v, 10);
+    printf("count=%d items[0]=%d\n", v.count, v.items[0]);
+
+    // Method dispatch call
+    (&v)::push_int(20);
+    printf("count=%d items[1]=%d\n", v.count, v.items[1]);
+
+    &v::push_int(20);
+
+    push(&v, 10);
+    &v::push(10);
+    printf("count=%d items[0]=%d\n", v.count, v.items[0]);
+
+    return 0;
+}

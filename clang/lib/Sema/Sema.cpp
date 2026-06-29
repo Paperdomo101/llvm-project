@@ -485,7 +485,7 @@ QualType Sema::GetOrCreateC4ArrayType(QualType ElementTy) {
       nullptr);
   RD->startDefinition();
 
-  // __data field
+  // C4 Array ITEMS field
   FieldDecl *DataField = FieldDecl::Create(
       Context, RD, SourceLocation(), SourceLocation(),
       &Context.Idents.get(C4_ARRAY_DATA_FIELD),
@@ -494,7 +494,7 @@ QualType Sema::GetOrCreateC4ArrayType(QualType ElementTy) {
   DataField->setAccess(AS_public);
   RD->addDecl(DataField);
 
-  // __size field
+  // C4 Array COUNT field
   FieldDecl *SizeField = FieldDecl::Create(
       Context, RD, SourceLocation(), SourceLocation(),
       &Context.Idents.get(C4_ARRAY_SIZE_FIELD),
@@ -503,7 +503,7 @@ QualType Sema::GetOrCreateC4ArrayType(QualType ElementTy) {
   SizeField->setAccess(AS_public);
   RD->addDecl(SizeField);
 
-  // __capacity field
+  // C4 Array CAPACITY field
   FieldDecl *CapacityField = FieldDecl::Create(
       Context, RD, SourceLocation(), SourceLocation(),
       &Context.Idents.get(C4_ARRAY_CAPACITY_FIELD),

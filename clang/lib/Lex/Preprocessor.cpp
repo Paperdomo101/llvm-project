@@ -863,11 +863,36 @@ bool Preprocessor::HandleIdentifier(Token &Identifier) {
     HandlePoisonedIdentifier(Identifier);
   }
 
-  // If this is a macro to be expanded, do it.
+
+
   if (const MacroDefinition MD = getMacroDefinition(&II)) {
     const auto *MI = MD.getMacroInfo();
     assert(MI && "macro definition with no macro info?");
-    if (!DisableMacroExpansion) {
+    bool IsPrecededByColonColon = false;
+    if (getLangOpts().C4() && !CurTokenLexer && !InCachingLexMode() && Identifier.getLocation().isFileID()) {
+      const SourceManager &SM = getSourceManager();
+      bool Invalid = false;
+      const char *Buf = SM.getCharacterData(Identifier.getLocation(), &Invalid);
+      if (!Invalid && Buf) {
+        const char *Start = SM.getBufferData(SM.getFileID(Identifier.getLocation())).data();
+        const char *Ptr = Buf - 1;
+        while (Ptr >= Start) {
+          char C = *Ptr;
+          if (C == ' ' || C == '\t' || C == '\r' || C == '\n') {
+            --Ptr;
+            continue;
+          }
+          break;
+        }
+        if (Ptr - 1 >= Start && Ptr[0] == ':' && Ptr[-1] == ':') {
+          IsPrecededByColonColon = true;
+        }
+      }
+    }
+
+
+
+    if (!DisableMacroExpansion && !IsPrecededByColonColon) {
       if (!Identifier.isExpandDisabled() && MI->isEnabled()) {
         // C99 6.10.3p10: If the preprocessing token immediately after the
         // macro name isn't a '(', this macro should not be expanded.
@@ -1158,10 +1183,14 @@ bool Preprocessor::LexHeaderName(Token &FilenameTok, bool AllowMacroExpansion) {
 std::optional<Token> Preprocessor::peekNextPPToken() const {
   // Do some quick tests for rejection cases.
   std::optional<Token> Val;
-  if (CurLexer)
+  if (InCachingLexMode()) {
+    if (CachedLexPos < CachedTokens.size())
+      Val = CachedTokens[CachedLexPos];
+  } else if (CurLexer) {
     Val = CurLexer->peekNextPPToken();
-  else
+  } else if (CurTokenLexer) {
     Val = CurTokenLexer->peekNextPPToken();
+  }
 
   if (!Val) {
     // We have run off the end.  If it's a source file we don't
@@ -1170,9 +1199,20 @@ std::optional<Token> Preprocessor::peekNextPPToken() const {
     if (CurPPLexer)
       return std::nullopt;
     for (const IncludeStackInfo &Entry : llvm::reverse(IncludeMacroStack)) {
+      // A caching lexer stack entry has both TheLexer and TheTokenLexer null.
+      // Peek from CachedTokens rather than falling through to the file lexer
+      // which has already advanced past the cached region.
+      if (!Entry.TheLexer && !Entry.TheTokenLexer && !Entry.ThePPLexer) {
+        if (CachedLexPos < CachedTokens.size()) {
+          Val = CachedTokens[CachedLexPos];
+          break;
+        }
+        continue;
+      }
+
       if (Entry.TheLexer)
         Val = Entry.TheLexer->peekNextPPToken();
-      else
+      else if (Entry.TheTokenLexer)
         Val = Entry.TheTokenLexer->peekNextPPToken();
 
       if (Val)
@@ -1319,6 +1359,9 @@ bool Preprocessor::HandleModuleName(StringRef DirType, SourceLocation UseLoc,
 /// Otherwise the token is treated as an identifier.
 bool Preprocessor::HandleModuleContextualKeyword(Token &Result) {
   if (!getLangOpts().CPlusPlusModules || !Result.isModuleContextualKeyword())
+    return false;
+
+  if (!CurPPLexer)
     return false;
 
   if (Result.is(tok::kw_export)) {

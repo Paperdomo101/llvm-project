@@ -374,6 +374,14 @@ public:
       ExprResult Receiver,
       Token OpToken);
 
+  // C4: handles obj::macro(args) when `macro` is a function-like macro.
+  // Intercepts before the preprocessor expands the macro, prepends the
+  // receiver as the first argument, and re-injects for proper expansion.
+  ExprResult ParseC4MacroMethodDispatch(ExprResult Receiver,
+                                        IdentifierInfo *MacroII,
+                                        SourceLocation MacroLoc,
+                                        const MacroInfo *TargetMI);
+
   /// ConsumeAnyToken - Dispatch to the right Consume* method based on the
   /// current token type.  This should only be used in cases where the type of
   /// the token really isn't known, e.g. in error recovery.

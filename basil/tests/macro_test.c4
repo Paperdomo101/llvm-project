@@ -1,0 +1,167 @@
+// Comprehensive Test: function-like macro method dispatch
+// Verifies multiple kinds of macro dispatches
+
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+
+// --- Test 1: Single-arg macro ---
+#define push_int(vec, val)  ((vec)->items[(vec)->count++] = (val))
+typedef struct { int items[32]; int count; } IntVec;
+
+// --- Test 2: Two-arg macro ---
+#define vec_set(vec, idx, val)  ((vec)->items[idx] = (val))
+
+// --- Test 3: Variadic macro ---
+#define log_msg(prefix, ...)   printf(prefix ": " __VA_ARGS__)
+
+// --- Test 4: Macro alias chain (#define push push_int) ---
+#define push push_int
+
+// --- Test 5: Variadic macro using helper function (like user's nob_cmd_append) ---
+typedef struct {
+    const char **items;
+    int count;
+    int capacity;
+} StrBuf;
+
+void str_buf_append_raw(StrBuf *buf, int n, const char **vals) {
+    for (int i = 0; i < n; i++) {
+        if (buf->count >= buf->capacity) {
+            buf->capacity = buf->capacity ? buf->capacity * 2 : 8;
+            buf->items = realloc(buf->items, buf->capacity * sizeof(char*));
+        }
+        buf->items[buf->count++] = vals[i];
+    }
+}
+
+#define str_buf_append(buf, ...) \
+    str_buf_append_raw(buf, \
+        sizeof((const char*[]){__VA_ARGS__})/sizeof(const char*), \
+        (const char*[]){__VA_ARGS__})
+
+// --- SV and cmd_append tests ---
+typedef struct {
+    const char *data;
+    size_t count;
+} String_View;
+
+#define SV_Fmt "%.*s"
+#define SV_Arg(sv) (int)(sv).count, (sv).data
+
+const char *temp_sprintf(const char *fmt, ...) {
+    return "dummy";
+}
+
+#define cmd_append nob_cmd_append
+#define nob_cmd_append(cmd, ...) \
+    nob__cmd_append(cmd, sizeof((const char*[]){__VA_ARGS__})/sizeof(const char*), (const char*[]){__VA_ARGS__})
+
+void nob__cmd_append(IntVec *cmd, int n, const char **vals) {}
+
+// --- Nob command run and da_append tests ---
+typedef struct {
+    int dummy;
+} Nob_Cmd_Opt;
+
+void nob_cmd_run_opt(IntVec *cmd, Nob_Cmd_Opt opt) {
+    printf("nob_cmd_run_opt executed\n");
+}
+
+#define NOB_CLIT(type) (type)
+
+#define nob_cmd_run(cmd, ...) \
+    nob_cmd_run_opt((cmd), NOB_CLIT(Nob_Cmd_Opt){__VA_ARGS__})
+
+#define nob_da_reserve(da, cap) (void)(0)
+
+#define nob_da_append(da, item)                \
+    do {                                       \
+        nob_da_reserve((da), (da)->count + 1); \
+        (da)->items[(da)->count++] = (item);   \
+    } while (0)
+
+// Dummy function for testing macro alias dispatch
+void nob_sb_appendf(StrBuf *sb, const char *fmt, ...) {
+    (void)sb; (void)fmt;
+}
+
+int main() {
+    // 1. Single-arg macro
+    IntVec v = {0};
+    (&v)::push_int(10);
+    (&v)::push_int(20);
+    printf("IntVec: count=%d, items=[%d, %d]\n", v.count, v.items[0], v.items[1]);
+
+    // 2. Two-arg macro
+    (&v)::vec_set(0, 99);
+    printf("IntVec after vec_set: items[0]=%d\n", v.items[0]);
+
+    // 3. Variadic macro (simple printf wrapper)
+    "Info"::log_msg("IntVec count is %d\n", v.count);
+
+    // 4. Macro alias chain dispatch (push -> push_int)
+    (&v)::push(30);
+    printf("IntVec after push alias: count=%d, items[2]=%d\n", v.count, v.items[2]);
+
+    // 4b. Unparenthesized macro alias chain dispatch
+    &v::push(40);
+    printf("IntVec after unparenthesized push: count=%d, items[3]=%d\n", v.count, v.items[3]);
+
+    // 5. Complex variadic macro (str_buf_append)
+    StrBuf buf = {0};
+    (&buf)::str_buf_append("hello", "world", "method", "dispatch");
+    printf("StrBuf count: %d\n", buf.count);
+    for (int i = 0; i < buf.count; i++) {
+        printf("  [%d] = %s\n", i, buf.items[i]);
+    }
+
+    // 6. Nob command run test
+    IntVec cmd = {0};
+    &cmd::nob_cmd_run();
+    (&cmd)::nob_cmd_run();
+
+    // 7. Nob da_append test
+    IntVec run_args = {0};
+    int args[2] = {100, 200};
+    int i = 0;
+    &run_args::nob_da_append(args[i]);
+    (&run_args)::nob_da_append(args[i]);
+    printf("run_args count: %d, items[0]=%d, items[1]=%d\n", run_args.count, run_args.items[0], run_args.items[1]);
+
+    // 8. String View and cmd_append test
+    {
+        String_View lib = {"hello", 5};
+        &cmd::cmd_append(temp_sprintf(SV_Fmt, SV_Arg(lib)));
+        nob_cmd_append(&cmd, temp_sprintf(SV_Fmt, SV_Arg(lib)));
+    }
+
+    // 9. Macro alias dispatch inside for loop body (sb_appendf pattern)
+    #define sb_appendf nob_sb_appendf
+    {
+        int n = 5;
+        for int iter = 0; iter < 1; ++iter {
+            &buf::sb_appendf("%.*s", (int)n, "test9")
+        }
+        printf("After for-loop sb_appendf: buf.count=%d\n", buf.count);
+    }
+
+    // 10. Macro alias dispatch inside else clause (da_append pattern)
+    #define da_append nob_da_append
+    {
+        int should_run = 0;
+        int flag = 1;
+        if flag == 0 {
+            should_run = 1;
+        }
+        else &run_args::da_append(args[i])
+
+        if should_run {
+            printf("should_run is true\n");
+        }
+        printf("After else da_append: run_args.count=%d\n", run_args.count);
+    }
+
+    free(buf.items);
+    return 0;
+}

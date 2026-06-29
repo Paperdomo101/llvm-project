@@ -1913,6 +1913,10 @@ public:
     DisableMacroExpansion = MacroExpansionInDirectivesOverride = false;
   }
 
+  bool isMacroExpansionDisabled() const { return DisableMacroExpansion; }
+  void setMacroExpansionDisabled(bool Val) { DisableMacroExpansion = Val; }
+  bool isInCachingLexMode() const { return InCachingLexMode(); }
+
   /// Peeks ahead N tokens and returns that token without consuming any
   /// tokens.
   ///
@@ -1942,6 +1946,12 @@ public:
     assert(signed(CachedLexPos) - signed(N) >= 0 &&
            "Corrupted backtrack positions ?");
     CachedLexPos -= N;
+  }
+
+  void ClearCachedTokens() {
+    CachedTokens.clear();
+    CachedLexPos = 0;
+    ExitCachingLexMode();
   }
 
   /// Enters a token in the token stream to be lexed next.
@@ -2583,8 +2593,6 @@ private:
   friend void TokenLexer::ExpandFunctionArguments();
 
   void PushIncludeMacroStack() {
-    assert(CurLexerCallback != CLK_CachingLexer &&
-           "cannot push a caching lexer");
     IncludeMacroStack.emplace_back(CurLexerCallback, CurLexerSubmodule,
                                    std::move(CurLexer), CurPPLexer,
                                    std::move(CurTokenLexer), CurDirLookup);

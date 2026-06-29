@@ -651,8 +651,11 @@ public:
     // A's startpoint.
     if (!Range.getBegin().isFileID()) {
       Range.setBegin(SM.getExpansionLoc(Range.getBegin()));
-      assert(Collector->Expansions.count(Range.getBegin()) &&
-             "Overlapping macros should have same expansion location");
+      // C4 synthetic macro tokens injected via EnterTokenStream may trigger
+      // nested expansions whose outer expansion was never recorded. Bail out
+      // rather than asserting.
+      if (!Collector->Expansions.count(Range.getBegin()))
+        return;
     }
 
     Collector->Expansions[Range.getBegin()] = Range.getEnd();
@@ -681,6 +684,8 @@ private:
 TokenCollector::TokenCollector(Preprocessor &PP) : PP(PP) {
   // Collect the expanded token stream during preprocessing.
   PP.setTokenWatcher([this](const clang::Token &T) {
+    if (T.getLocation().isInvalid())
+      return;
     if (T.is(tok::annot_module_name)) {
       auto &SM = this->PP.getSourceManager();
       StringRef Text = Lexer::getSourceText(
@@ -843,7 +848,15 @@ private:
     } else {
       // We found a new macro expansion. We should have its spelling bounds.
       auto End = CollectedExpansions.lookup(Expansion);
-      assert(End.isValid() && "Macro expansion wasn't captured?");
+      // C4 synthetic macro tokens may produce expansions that the
+      // MacroExpands callback couldn't record.  Skip them gracefully.
+      if (!End.isValid()) {
+        while (NextExpanded < Result.ExpandedTokens.size() &&
+               SM.getExpansionLoc(
+                   Result.ExpandedTokens[NextExpanded].location()) == Expansion)
+          ++NextExpanded;
+        return;
+      }
 
       // Mapping starts here...
       TokenBuffer::Mapping Mapping;

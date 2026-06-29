@@ -6933,7 +6933,7 @@ Sema::ActOnTypedefDeclarator(Scope* S, Declarator& D, DeclContext* DC,
   // C4: apply bounds-checked array wrapping for `typedef []T Name;`
   if (getLangOpts().C4()) {
     const DeclSpec &DS = D.getDeclSpec();
-    if (DS.isBoundsCheckedArray() && DS.getTypeSpecType() != DeclSpec::TST_error) {
+    if (DS.isC4BoundsCheckedArray() && DS.getTypeSpecType() != DeclSpec::TST_error) {
       QualType T = GetOrCreateC4ArrayType(TInfo->getType());
       TInfo = Context.getTrivialTypeSourceInfo(T, D.getIdentifierLoc());
     }
@@ -8033,7 +8033,7 @@ NamedDecl *Sema::ActOnVariableDeclarator(
   //   ^ T     (no '[]'): T*
   {
     const DeclSpec &DS = D.getDeclSpec();
-    bool HasArray = DS.isBoundsCheckedArray() &&
+    bool HasArray = DS.isC4BoundsCheckedArray() &&
                     DS.getTypeSpecType() != DeclSpec::TST_error;
     unsigned PtrDepth = DS.getC4PointerDepth();
 
@@ -16387,7 +16387,7 @@ Decl *Sema::ActOnParamDeclarator(Scope *S, Declarator &D,
     // 2. Apply [] / [N] and ^ in source order (same right-to-left semantics as
     //    ActOnVariableDeclarator: '[] ^T' → C4Array(T*), '^[] T' → C4Array(T)*).
     const DeclSpec &DS = D.getDeclSpec();
-    bool HasArray = DS.isBoundsCheckedArray() &&
+    bool HasArray = DS.isC4BoundsCheckedArray() &&
                     DS.getTypeSpecType() != DeclSpec::TST_error;
     unsigned PtrDepth = DS.getC4PointerDepth();
 
