@@ -4,6 +4,145 @@
 # ____________________________
 
 
+    ## Loop ranges
+    ```
+    for 0..10 {...}
+    for i := 0..2..10 {...}
+    for i := 0..-10 {...}
+    ```
+
+    ## type-of operator ?.
+    ```
+    bobtype := ?.bob
+    ```
+
+    ## string-of operator $.
+    ```
+    bob := 5;
+    $.bob // "5"
+    ```
+
+    ## Comma separated struct members
+    ```
+    struct {
+        size_t count, capacity,
+        ^int items,
+    }
+    ```
+
+    ## Trailing comma in function header
+    ```
+    LLVM_parse_ir
+    (
+        LLVM_buffer buffer,
+        ^LLVM_module module,
+        ^char *err_msg,
+        LLVM_ctx ctx = LLVM__implicit_ctx, // allowed
+    )
+    LLVM_bool
+    ```
+
+
+
+    ## strip
+
+    ## procedure aliasing
+
+
+    ## multiple returns
+
+    ## @. pointer dereferencing
+
+
+    ## multi-line strings
+    /"
+            indented
+                twice_indented
+        not_indented
+    "/
+
+    ## ||== / ||!=
+    ```
+    if c == ' ' || == '\t' || == '\n' {
+
+    }
+    ```
+
+    ## implicit return variables
+    ```
+    bob (int a, b, c) int result {
+        result = a + b * c;
+    }
+    ```
+
+
+    ## default members
+    ```
+    typedef struct {
+    	unsigned int
+    		r : 8,
+    		g : 8,
+    		b : 8,
+    		a : 8 = 255;
+    } Color;
+    ```
+
+    ## units
+    ```
+    < std.io >
+
+    ```
+
+
+    ## ##. association
+    ```
+    struct {
+        @:##. size_t capacity;
+    }
+    ```
+
+    ## #. association
+    ```
+    struct {
+        @:#. size_t count;
+    }
+    ```
+
+
+
+    ## enums
+    // The killer feature is you can define these enums of non-integer types (they do not automatically increment if so)
+
+    typedef struct { unsigned char r, g, b, a; } Color;
+
+    Colors : Color {
+        RED   = {255, 0, 0, 255},
+        GREEN = {0, 255, 0, 255},
+        BLUE  = {0, 0, 255, 255},
+    }
+
+    // Here's the real advantage of these new enums
+    DrawPixel (int x, int y, Colors color) {...}
+    DrawPixel(0, 0, Colors.RED) // type checked
+    // can also be written
+    DrawPixel(0, 0, .RED)
+
+    ## generics
+    ```
+    List[int] bob;
+    bob::append( 30, 40, 50 )
+    ```
+
+    ## Require / Satisfy
+
+
+    ## reflect operator ??.
+
+
+# ===|===|=== DONE ===|===|===
+# ____________________________
+
+
     ## Fix const ^
     ```
     // const char *, should be char *const
@@ -58,149 +197,11 @@
 
     ## alias array.items as array.data
 
-    ## Loop ranges
-    ```
-    for 0..10 {...}
-    for i := 0..2..10 {...}
-    for i := 0..-10 {...}
-    ```
 
-    ## type-of operator ?.
-    ```
-    bobtype := ?.bob
-    ```
+	## enums
 
-    ## string-of operator $.
-    ```
-    bob := 5;
-    $.bob // "5"
-    ```
+        .ENUM
 
-    ## Comma separated struct members
-    ```
-    struct {
-        size_t count, capacity,
-        ^int items,
-    }
-    ```
-
-    ## Trailing comma in function header
-    ```
-    LLVM_parse_ir
-    (
-        LLVM_buffer buffer,
-        ^LLVM_module module,
-        ^char *err_msg,
-        LLVM_ctx ctx = LLVM__implicit_ctx, // allowed
-    )
-    LLVM_bool
-    ```
-
-    ## ##. association
-    ```
-    struct {
-        @:##. size_t capacity;
-    }
-    ```
-
-    ## #. association
-    ```
-    struct {
-        @:#. size_t count;
-    }
-    ```
-
-
-    ## strip
-
-    ## procedure aliasing
-
-
-
-    ## multiple returns
-
-    ## .ENUM
-
-
-
-    ## @. pointer dereferencing
-
-
-    ## multi-line strings
-    /"
-            indented
-                twice_indented
-        not_indented
-    "/
-
-    ## ||== / ||!=
-    ```
-    if c == ' ' || == '\t' || == '\n' {
-
-    }
-    ```
-
-    ## implicit return variables
-    ```
-    bob (int a, b, c) int result {
-        result = a + b * c;
-    }
-    ```
-
-
-    ## default members
-    ```
-    typedef struct {
-    	unsigned int
-    		r : 8,
-    		g : 8,
-    		b : 8,
-    		a : 8 = 255;
-    } Color;
-    ```
-
-    ## units
-    ```
-    < std.io >
-
-    ```
-
-
-
-    ## enums
-    // The killer feature is you can define these enums of non-integer types (they do not automatically increment if so)
-
-    typedef struct { unsigned char r, g, b, a; } Color;
-
-    Colors : Color {
-        RED   = {255, 0, 0, 255},
-        GREEN = {0, 255, 0, 255},
-        BLUE  = {0, 0, 255, 255},
-    }
-
-    // Here's the real advantage of these new enums
-    DrawPixel (int x, int y, Colors color) {...}
-    DrawPixel(0, 0, Colors.RED) // type checked
-    // can also be written
-    DrawPixel(0, 0, .RED)
-
-    ## generics
-    ```
-    List[int] bob;
-    bob::append( 30, 40, 50 )
-    ```
-
-
-    ## Require / Satisfy
-
-
-    ## reflect operator ??.
-
-
-# ===|===|=== DONE ===|===|===
-# ____________________________
-
-		## enums
     // Defined at root scope, automatically typedefs `Entity_States`
     // with no type specified, this implicitly an enum of unsigned int, like vanilla C
     Fruit : {
@@ -216,6 +217,8 @@
         walk = 1 << #,
         dead = 1 << #,
     }
+
+
 
     ## symbol-of operator $$.
     ```

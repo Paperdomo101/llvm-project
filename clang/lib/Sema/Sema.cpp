@@ -577,18 +577,24 @@ QualType Sema::GetOrCreateC4ArrayType(QualType ElementTy) {
   if (It != C4ArrayTypeCache.end())
     return It->second;
 
+  SourceLocation StartOfMainFile;
+  FileID MainFileID = Context.getSourceManager().getMainFileID();
+  if (MainFileID.isValid()) {
+    StartOfMainFile = Context.getSourceManager().getLocForStartOfFile(MainFileID);
+  }
+
   RecordDecl *RD = RecordDecl::Create(
       Context,
       TagDecl::TagKind::Struct,
       Context.getTranslationUnitDecl(),
-      SourceLocation(),
-      SourceLocation(),
+      StartOfMainFile,
+      StartOfMainFile,
       nullptr);
   RD->startDefinition();
 
   // C4 Array ITEMS field
   FieldDecl *DataField = FieldDecl::Create(
-      Context, RD, SourceLocation(), SourceLocation(),
+      Context, RD, StartOfMainFile, StartOfMainFile,
       &Context.Idents.get(C4_ARRAY_DATA_FIELD),
       Context.getPointerType(ElementTy),
       nullptr, nullptr, false, ICIS_NoInit);
@@ -597,7 +603,7 @@ QualType Sema::GetOrCreateC4ArrayType(QualType ElementTy) {
 
   // C4 Array COUNT field
   FieldDecl *SizeField = FieldDecl::Create(
-      Context, RD, SourceLocation(), SourceLocation(),
+      Context, RD, StartOfMainFile, StartOfMainFile,
       &Context.Idents.get(C4_ARRAY_SIZE_FIELD),
       Context.getSizeType(),
       nullptr, nullptr, false, ICIS_NoInit);
@@ -606,7 +612,7 @@ QualType Sema::GetOrCreateC4ArrayType(QualType ElementTy) {
 
   // C4 Array CAPACITY field
   FieldDecl *CapacityField = FieldDecl::Create(
-      Context, RD, SourceLocation(), SourceLocation(),
+      Context, RD, StartOfMainFile, StartOfMainFile,
       &Context.Idents.get(C4_ARRAY_CAPACITY_FIELD),
       Context.getSizeType(),
       nullptr, nullptr, false, ICIS_NoInit);

@@ -1304,14 +1304,15 @@ Parser::ParseCastExpression(CastParseKind ParseKind, bool isAddressOfOperand,
     }
 
     // --- PART B: EXISTING BOUNDS-CHECKED VARIABLE SIZE LOOKUP (#.bob) ---
-    ExprResult SubExpr = ParseCastExpression(CastParseKind::AnyCastExpr,
+    ExprResult SubExpr = ParseCastExpression(CastParseKind::PrimaryExprOnly,
                                              /*isAddressOfOperand=*/false,
                                              NotCastExpr, CorrectionBehavior);
     if (SubExpr.isInvalid() || !SubExpr.isUsable()) {
       return ExprError();
     }
 
-    return Actions.ActOnArraySizeIntrinsic(SubExpr.get(), SizeOpLoc, SizeOpLoc);
+    Res = Actions.ActOnArraySizeIntrinsic(SubExpr.get(), SizeOpLoc, SubExpr.get()->getEndLoc());
+    break;
   }
   // ==========================================================
   // === C4 LANGUAGE EXTENSION: CAPACITY OF OPERATOR (##.) ===
@@ -1362,13 +1363,13 @@ Parser::ParseCastExpression(CastParseKind ParseKind, bool isAddressOfOperand,
           TInfo = Actions.getASTContext().getTrivialTypeSourceInfo(QT, OperatorLoc);
         if (!TInfo) return ExprError();
 
-        return Actions.ActOnCapacityOfExpr(OperatorLoc, TInfo);
+        Res = Actions.ActOnCapacityOfExpr(OperatorLoc, TInfo);
       } else {
         // ---- Expression form: ##. expr → expr.capacity (C4 array) ----
         // Parse the operand as a cast-expression (same pattern as the #. size
         // operator above) to handle identifiers, member accesses, derefs, etc.
         ExprResult SubExpr =
-            ParseCastExpression(CastParseKind::AnyCastExpr,
+            ParseCastExpression(CastParseKind::PrimaryExprOnly,
                                 /*isAddressOfOperand=*/false,
                                 NotCastExpr, CorrectionBehavior);
         if (SubExpr.isInvalid()) {
@@ -1379,8 +1380,9 @@ Parser::ParseCastExpression(CastParseKind ParseKind, bool isAddressOfOperand,
         if (isParenthesized)
           T.consumeClose();
 
-        return Actions.ActOnC4CapacityOf(SubExpr.get(), OperatorLoc);
+        Res = Actions.ActOnC4CapacityOf(SubExpr.get(), OperatorLoc);
       }
+      break;
     }
     // Fallthrough to standard handler if it isn't followed by your operator symbols
     [[fallthrough]];

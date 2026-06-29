@@ -304,6 +304,19 @@ main () int {
         printf("[PASS] Scenario 12: C4 array .data member alias\n");
     }
 
+    // =========================================================================
+    // SCENARIO 13: Tightest binding of #. size operator (#.stack++)
+    // =========================================================================
+    {
+        [5]int stack = {10, 20, 30};
+        CHECK(#.stack, 3, "S13: initial stack count is 3");
+        int val = stack[#.stack++];
+        CHECK(val, 0, "S13: stack[3] == 0 (unused element)");
+        CHECK(#.stack, 4, "S13: stack count incremented to 4");
+
+        printf("[PASS] Scenario 13: Tightest binding of #. size operator\n");
+    }
+
     printf("\n[SUCCESS] All pointer-syntax and sized-array tests passed!\n");
     return 0;
 }

@@ -3864,7 +3864,7 @@ CodeCompletionString *CodeCompletionResult::createCodeCompletionStringForDecl(
       Result.AddChunk(CodeCompletionString::CK_LeftParen);
     else
       Result.AddInformativeChunk("(");
-    AddFunctionParameterChunks(PP, Policy, Function, Result, /*Start=*/0,
+    AddFunctionParameterChunks(PP, Policy, Function, Result, /*Start=*/StartParameter,
                                /*InOptional=*/false,
                                /*FunctionCanBeCall=*/FunctionCanBeCall,
                                /*IsInDeclarationContext=*/DeclaringEntity);
@@ -3966,7 +3966,7 @@ CodeCompletionString *CodeCompletionResult::createCodeCompletionStringForDecl(
       Result.AddChunk(CodeCompletionString::CK_LeftParen);
     else
       Result.AddInformativeChunk("(");
-    AddFunctionParameterChunks(PP, Policy, Function, Result, /*Start=*/0,
+    AddFunctionParameterChunks(PP, Policy, Function, Result, /*Start=*/StartParameter,
                                /*InOptional=*/false,
                                /*FunctionCanBeCall=*/FunctionCanBeCall,
                                /*IsInDeclarationContext=*/DeclaringEntity);
@@ -6041,6 +6041,19 @@ void SemaCodeCompletion::CodeCompleteMemberReferenceExpr(
     if (RecordDecl *RD = getAsRecordDecl(BaseType, Resolver)) {
       AddRecordMembersCompletionResults(SemaRef, Results, S, BaseType, BaseKind,
                                         RD, std::move(AccessOpFixIt));
+      if (SemaRef.getLangOpts().C4() && SemaRef.isC4ArrayType(BaseType)) {
+        CodeCompletionBuilder Builder(Results.getAllocator(),
+                                      Results.getCodeCompletionTUInfo());
+        // "data" has the same pointer type as the "items" field of the C4 array.
+        QualType ElemTy = SemaRef.getElementTypeFromC4Array(BaseType);
+        QualType DataPtrTy = SemaRef.Context.getPointerType(ElemTy);
+        Builder.AddTypedTextChunk("data");
+        CodeCompletionResult DataResult(
+            Builder.TakeString(),
+            /*Priority=*/SemaRef.isC4ArrayType(BaseType) ? 5 : 35, // High priority boost
+            CXCursor_FieldDecl);
+        Results.AddResult(DataResult);
+      }
     } else if (const auto *TTPT =
                    dyn_cast<TemplateTypeParmType>(BaseType.getTypePtr())) {
       auto Operator =
@@ -6945,6 +6958,8 @@ void SemaCodeCompletion::CodeCompleteC4MethodDispatch(Scope *S, Expr *Receiver) 
         // Standard priority values are around 10-50, dividing by 2 or subtracting a constant works).
         R.Priority /= 4;
         if (R.Priority < 1) R.Priority = 1;
+        // Skip first parameter in completion string placeholders as LHS acts as the first argument
+        R.StartParameter = 1;
       }
     }
   }
