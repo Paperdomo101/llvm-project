@@ -7317,7 +7317,18 @@ ExprResult Sema::BuildCallExpr(Scope *Scope, Expr *Fn, SourceLocation LParenLoc,
   } else if (auto *ME = dyn_cast<MemberExpr>(NakedFn))
     NDecl = ME->getMemberDecl();
 
-  if (FunctionDecl *FD = dyn_cast_or_null<FunctionDecl>(NDecl)) {
+  FunctionDecl *FD = dyn_cast_or_null<FunctionDecl>(NDecl);
+  if (getLangOpts().C4() && !FD && NDecl && isa<VarDecl>(NDecl)) {
+    VarDecl *VD = cast<VarDecl>(NDecl);
+    if (VD->getInit()) {
+      Expr *Init = VD->getInit()->IgnoreParenCasts();
+      if (auto *DRE = dyn_cast<DeclRefExpr>(Init)) {
+        FD = dyn_cast_or_null<FunctionDecl>(DRE->getDecl());
+      }
+    }
+  }
+
+  if (FD) {
     if (CallingNDeclIndirectly && !checkAddressOfFunctionIsAvailable(
                                       FD, /*Complain=*/true, Fn->getBeginLoc()))
       return ExprError();
@@ -7416,6 +7427,7 @@ ExprResult Sema::BuildCallExpr(Scope *Scope, Expr *Fn, SourceLocation LParenLoc,
       }
     }
   }
+
 
   if (Context.isDependenceAllowed() &&
       (Fn->isTypeDependent() || Expr::hasAnyTypeDependentArguments(ArgExprs))) {
