@@ -30,10 +30,13 @@ struct DummyArg {
 };
 
 void run_test_edge_case(&struct DummyArg arg) {
-    append := ^(&struct DummyArg outer_arg, int val) {
+    append := ^(&struct DummyArg outer_arg, int val = 99) {
         outer_arg.value = val;
     };
     arg::append(42);
+    assert_equal(arg.value, 42, "Method call to local function block with explicit arg");
+    arg::append();
+    assert_equal(arg.value, 99, "Method call to local function block using default arg");
 }
 
 
@@ -68,7 +71,7 @@ int main() {
     // 3. Verify edge case: pass-by-ref parameter as method dispatch receiver to local function block
     struct DummyArg dummy = { 0 };
     run_test_edge_case(dummy);
-    assert_equal(dummy.value, 42, "Pass-by-ref parameter method dispatch to local function block works");
+    assert_equal(dummy.value, 99, "Pass-by-ref parameter method dispatch to local function block works");
     printf("[PASS] Edge case: pass-by-ref parameter method dispatch to local function block verified.\n");
 
     printf("\n[SUCCESS] Pass-By-Reference Subsystem Validated Successfully!\n");

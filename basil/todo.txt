@@ -10,6 +10,8 @@
     for 0..10 {...}
     for i := 0..2..10 {...}
     for i := 0..-10 {...}
+    for b..bobs {...}
+    for b..bobs {...}
     ```
 
 
@@ -30,6 +32,13 @@
         int a, b;
         float c;
     }
+    ```
+
+		## New ternary
+		```
+		porth_error("early EOF" if fp::feof() or
+          	   "read error" if fp::ferror() or
+            "unknown error")
     ```
 
 

@@ -12,6 +12,10 @@ static void chk(int a, int e, const char *m) {
 
 struct MathOps { int (*add)(int,int); int (*mul)(int,int); };
 
+struct DummyVal {
+    int value;
+};
+
 main () int {
     // 1. Basic local function
     add := ^(int a, int b) int { return a + b; }
@@ -79,6 +83,21 @@ main () int {
     // Casting directly to ^(int, int) int
     C4MathFn my_add_ptr2 = (C4MathFn)add;
     chk(my_add_ptr2(20, 30), 50, "C4MathFn direct cast call");
+
+    // 11. Pass-by-ref parameter method dispatch and default arguments on local function block
+    run_edge_case := ^(&struct DummyVal arg) {
+        append := ^(&struct DummyVal outer_arg, int val = 99) {
+            outer_arg.value = val;
+        };
+        arg::append(42);
+        chk(arg.value, 42, "local function block call with explicit arg");
+        arg::append();
+        chk(arg.value, 99, "local function block call with default arg");
+    };
+
+    struct DummyVal dv = { 0 };
+    run_edge_case(dv);
+    chk(dv.value, 99, "edge cases verified via run_edge_case");
 
     puts("[PASS] Local function pointer tests passed.");
     return 0;
