@@ -1,0 +1,36 @@
+// test comma-separated struct members and trailing commas in function headers
+
+struct Point {
+    int x, y,
+    float z,
+};
+
+struct Rect {
+    struct Point top_left, bottom_right,
+};
+
+int add_three
+(
+    int a,
+    int b,
+    int c,
+)
+{
+    return a + b + c;
+}
+
+int main() {
+    struct Point p = {10, 20, 3.5f};
+    if (p.x != 10) return 1;
+    if (p.y != 20) return 2;
+    if (p.z != 3.5f) return 3;
+
+    struct Rect r = {{1, 2, 0.0f}, {3, 4, 1.0f}};
+    if (r.top_left.x != 1) return 4;
+    if (r.bottom_right.y != 4) return 5;
+
+    int sum = add_three(1, 2, 3);
+    if (sum != 6) return 6;
+
+    return 0;
+}

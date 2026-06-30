@@ -932,7 +932,8 @@ NumericLiteralParser::NumericLiteralParser(StringRef TokSpelling,
   // 'pp-number' regex. This is required to support vector swizzles on numeric
   // constants (i.e. 1.xx or 1.5f.rrr).
   if (isPreprocessingNumberBody(*ThisTokEnd) &&
-      !(LangOpts.HLSL && *ThisTokEnd == '.')) {
+      !(LangOpts.HLSL && *ThisTokEnd == '.') &&
+      !(LangOpts.C4() && *ThisTokEnd == '.')) {
     Diags.Report(TokLoc, diag::err_lexing_numeric);
     hadError = true;
     return;

@@ -2107,6 +2107,12 @@ bool Lexer::LexNumericConstant(Token &Result, const char *CurPtr) {
   char C = getCharAndSize(CurPtr, Size);
   char PrevCh = 0;
   while (isPreprocessingNumberBody(C)) {
+    if (LangOpts.C4() && C == '.') {
+      unsigned SizeTmp;
+      if (getCharAndSize(CurPtr + Size, SizeTmp) == '.') {
+        break;
+      }
+    }
     CurPtr = ConsumeChar(CurPtr, Size, Result);
     PrevCh = C;
     if (LangOpts.HLSL && C == '.' && (*CurPtr == 'x' || *CurPtr == 'r')) {
@@ -4235,7 +4241,7 @@ LexStart:
     break;
   case '.':
     Char = getCharAndSize(CurPtr, SizeTmp);
-    if (Char >= '0' && Char <= '9') {
+    if (Char >= '0' && Char <= '9' && !(LangOpts.C4() && BufferPtr > BufferStart && BufferPtr[-1] == '.')) {
       // Notify MIOpt that we read a non-whitespace/non-comment token.
       MIOpt.ReadToken();
 

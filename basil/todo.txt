@@ -4,12 +4,14 @@
 # ____________________________
 
 
+
     ## Loop ranges
     ```
     for 0..10 {...}
     for i := 0..2..10 {...}
     for i := 0..-10 {...}
     ```
+
 
     ## type-of operator ?.
     ```
@@ -22,31 +24,24 @@
     $.bob // "5"
     ```
 
-    ## Comma separated struct members
+    ## C4 structs
     ```
-    struct {
-        size_t count, capacity,
-        ^int items,
+    Some_Struct {
+        int a, b;
+        float c;
     }
     ```
 
-    ## Trailing comma in function header
+
+
+    ## identifier aliasing
     ```
-    LLVM_parse_ir
-    (
-        LLVM_buffer buffer,
-        ^LLVM_module module,
-        ^char *err_msg,
-        LLVM_ctx ctx = LLVM__implicit_ctx, // allowed
-    )
-    LLVM_bool
+    Vector2Add / add (Vector2 a, b) {...}
+    Color {
+    		byte r / red, g / green, b / blue, a / alpha / opacity;
+    }
+    Color a = {10, 30, 200, 255}, b = {200, 40, 60, 255}
     ```
-
-
-
-    ## strip
-
-    ## procedure aliasing
 
 
     ## multiple returns
@@ -89,9 +84,19 @@
 
     ## units
     ```
-    < std.io >
+    > some_unit <
 
-    ```
+		int global = 0;
+		>< int secret = 3;
+
+
+		< some_unit >
+
+		main () int {
+		    some_unit.global = 2;
+		    some_unit.secret = 0; // error
+		}
+		```
 
 
     ## ##. association
@@ -141,6 +146,49 @@
 
 # ===|===|=== DONE ===|===|===
 # ____________________________
+
+
+    ## Comma separated struct members
+    ```
+    struct {
+        size_t count, capacity,
+        ^int items,
+    }
+    ```
+
+    ## Trailing comma in function header
+    ```
+    Parse_ir
+    (
+        Buffer buffer,
+        ^Module module,
+        ^^char err_msg,
+        Ctx ctx = implicit_ctx, // allowed
+    )
+    bool
+    {...}
+    ```
+
+    ## C4 switch
+    ```
+    Something_Error : { OK, FILE_IO, FORMAT, UNKNOWN }
+
+    switch err := do_something; err { // this part already works
+    		.OK: // omitting `case` enables C4 parsing route.
+      	{ // braces are required
+        	// implicit `break` at the end of each case. use `continue` to explicitly fallthrough to the next case
+       	}
+        .FORMAT: {
+        		ERROR::Log("format error")
+        		continue; // this will cause .FILE_IO to be evaluated too
+        }
+        .FILE_IO: {
+        		ERROR::Log("file io error")
+        }
+        // implicit default in switch braces
+        print("unknown")
+    }
+    ```
 
 
     ## Fix const ^

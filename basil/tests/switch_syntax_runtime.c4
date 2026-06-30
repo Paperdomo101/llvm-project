@@ -1,0 +1,106 @@
+// tests/switch_syntax_runtime.c4
+#include <stdio.h>
+#include <stdlib.h>
+
+Something_Error : { OK, FILE_IO, FORMAT, UNKNOWN }
+
+describe_error (Something_Error err) int {
+    int marker = 0;
+    switch err {
+        .OK: {
+            marker = 1;
+        }
+        .FORMAT: {
+            marker = 2;
+            continue; // fallthrough to FILE_IO
+        }
+        .FILE_IO: {
+            marker = marker + 10;
+        }
+        // implicit default
+        marker = 100;
+    }
+    return marker;
+}
+
+test_ranges (int val) int {
+    int res = 0;
+    switch (val) {
+        0..9: { res = 1; }
+        10..<20: { res = 2; }
+        default: { res = 3; }
+    }
+    return res;
+}
+
+printl (const char *s) {
+    puts(s);
+}
+
+int default_called = 0;
+
+test_multi_val (char key) int {
+    int res = 0;
+    switch key {
+        "Do default things"::printl()
+        'a', 'A': { res = 10; }
+        'b', 'B': { res = 20; }
+    }
+    return res;
+}
+
+C4_switch () {
+
+    LogLevel : { INFO, WARNING, ERROR }
+    Something_Error : { OK, FILE_IO, FORMAT, UNKNOWN }
+
+    do_something := ^() Something_Error {
+        return .FORMAT;
+    }
+
+    Log := ^(^const char msg, LogLevel level = .INFO) {
+        "[%s] %s\n"::printf($$.level, msg)
+    }
+
+    switch err := do_something(); err { // this part already works
+  		  .OK: // omitting `case` enables C4 parsing route.
+      	{   // braces are mandatory
+        	// implicit `break` at the end of each case. use `continue` to explicitly fallthrough to the next case
+       	}
+        .FORMAT: {
+      		"format error"::Log(ERROR)
+      		continue; // this will cause .FILE_IO to be evaluated too
+        }
+        .FILE_IO: {
+      		"file io error"::Log(ERROR)
+        }
+        // implicit default in switch braces
+        printf("unknown\n")
+    }
+}
+
+int main() {
+    C4_switch()
+
+    if (describe_error(Something_Error.OK) != 1) return 1;
+    if (describe_error(Something_Error.FORMAT) != 12) return 2; // 2 + 10 = 12
+    if (describe_error(Something_Error.FILE_IO) != 10) return 3;
+    if (describe_error(Something_Error.UNKNOWN) != 100) return 4;
+    if (describe_error(.OK) != 1) return 1;
+    if (describe_error(.FORMAT) != 12) return 2; // 2 + 10 = 12
+    if (describe_error(.FILE_IO) != 10) return 3;
+    if (describe_error(.UNKNOWN) != 100) return 4;
+
+    if (test_ranges(5) != 1) return 5;
+    if (test_ranges(10) != 2) return 6;
+    if (test_ranges(19) != 2) return 7;
+    if (test_ranges(20) != 3) return 8;
+
+    if (test_multi_val('a') != 10) return 9;
+    if (test_multi_val('A') != 10) return 10;
+    if (test_multi_val('b') != 20) return 11;
+    if (test_multi_val('B') != 20) return 12;
+
+    printf("[PASS] Switch syntax tests passed\n");
+    return 0;
+}

@@ -5791,8 +5791,7 @@ TypeSourceInfo *Sema::GetTypeForDeclarator(Declarator &D) {
   if (getLangOpts().C4() && TInfo) {
     QualType Type = TInfo->getType();
     if (!Type->isFunctionType() && Type->isIncompleteArrayType() &&
-        (D.getContext() == DeclaratorContext::File ||
-         D.getContext() == DeclaratorContext::Block ||
+        (D.getDeclSpec().isC4BoundsCheckedArray() ||
          D.getContext() == DeclaratorContext::ForInit ||
          D.getContext() == DeclaratorContext::SelectionInit)) {
       QualType ElemTy = Context.getAsArrayType(Type)->getElementType();

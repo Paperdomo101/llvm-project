@@ -318,6 +318,14 @@ CompilerTest custom_test_suite[] = {
         "Struct brace-init assignment (pos = {4, 5})",
         "tests/struct_brace_assign_runtime.c4", true
     },
+    {
+        "Comma separated struct members and trailing comma in function headers",
+        "tests/comma_syntax_runtime.c4", true
+    },
+    {
+        "Custom C4 switch syntax",
+        "tests/switch_syntax_runtime.c4", true
+    },
 };
 
 bool run_compiler_tests(const char *compiler_path) {

@@ -2140,7 +2140,298 @@ StmtResult Parser::ParseSwitchStatement(SourceLocation *TrailingElseLoc,
   if (C99orCXX)
     getCurScope()->decrementMSManglingNumber();
 
-  StmtResult Body(ParseStatement(TrailingElseLoc));
+  StmtResult Body;
+  if (getLangOpts().C4()) {
+    if (Tok.isNot(tok::l_brace)) {
+      Diag(Tok, diag::err_expected) << tok::l_brace;
+      Body = StmtError();
+    } else {
+      BalancedDelimiterTracker T(*this, tok::l_brace);
+      T.consumeOpen();
+      
+      SmallVector<Stmt *, 16> BodyStmts;
+      SmallVector<Stmt *, 8> DefaultSubStmts;
+      SourceLocation DefaultLoc;
+      
+      while (Tok.isNot(tok::r_brace) && Tok.isNot(tok::eof)) {
+        if (Tok.is(tok::kw_default) || (Tok.is(tok::identifier) && Tok.getIdentifierInfo()->getName() == "default" && NextToken().is(tok::colon))) {
+          if (!DefaultSubStmts.empty()) {
+            if (DefaultLoc.isInvalid()) DefaultLoc = DefaultSubStmts.front()->getBeginLoc();
+            StmtResult DefaultBody = Actions.ActOnCompoundStmt(DefaultLoc, DefaultLoc, DefaultSubStmts, false);
+            if (DefaultBody.isUsable()) {
+              CompoundStmt *CS = cast<CompoundStmt>(DefaultBody.get());
+              bool EndsWithExit = false;
+              if (CS->size() > 0) {
+                Stmt *Last = CS->body_back();
+                if (isa<BreakStmt>(Last) || isa<ReturnStmt>(Last) || isa<GotoStmt>(Last))
+                  EndsWithExit = true;
+              }
+              if (!EndsWithExit) {
+                SmallVector<Stmt *, 8> CSStmts(CS->body().begin(), CS->body().end());
+                StmtResult Break = Actions.ActOnBreakStmt(DefaultLoc, getCurScope(), nullptr, SourceLocation());
+                if (Break.isUsable()) CSStmts.push_back(Break.get());
+                DefaultBody = Actions.ActOnCompoundStmt(DefaultLoc, DefaultLoc, CSStmts, false);
+              }
+              StmtResult DefaultCase = Actions.ActOnDefaultStmt(DefaultLoc, DefaultLoc, DefaultBody.get(), getCurScope());
+              if (DefaultCase.isUsable()) BodyStmts.push_back(DefaultCase.get());
+            }
+            DefaultSubStmts.clear();
+            DefaultLoc = SourceLocation();
+          }
+
+          SourceLocation DefaultLoc = ConsumeToken();
+          ExpectAndConsume(tok::colon, diag::err_expected);
+          
+          StmtResult DefaultBody;
+          if (Tok.is(tok::l_brace)) {
+            BalancedDelimiterTracker CS_Braces(*this, tok::l_brace);
+            CS_Braces.consumeOpen();
+            
+            ParseScope CompoundScope(this, Scope::DeclScope);
+            
+            StmtVector CSStmts;
+            while (Tok.isNot(tok::r_brace) && Tok.isNot(tok::eof)) {
+              StmtResult R = ParseStatementOrDeclaration(CSStmts, ParsedStmtContext::Compound);
+              if (R.isUsable()) CSStmts.push_back(R.get());
+            }
+            CS_Braces.consumeClose();
+            
+            bool EndsWithExit = false;
+            if (!CSStmts.empty()) {
+              Stmt *Last = CSStmts.back();
+              if (isa<BreakStmt>(Last) || isa<ReturnStmt>(Last) || isa<GotoStmt>(Last)) {
+                EndsWithExit = true;
+              }
+            }
+            
+            StmtVector TrailingStmts;
+            while (Tok.isNot(tok::kw_case) && Tok.isNot(tok::kw_default) && Tok.isNot(tok::r_brace) && Tok.isNot(tok::eof) && !isC4CaseLabel()) {
+              StmtResult R = ParseStatementOrDeclaration(TrailingStmts, ParsedStmtContext::Compound);
+              if (R.isUsable()) TrailingStmts.push_back(R.get());
+            }
+            
+            bool TrailingEndsWithExit = false;
+            if (!TrailingStmts.empty()) {
+              Stmt *Last = TrailingStmts.back();
+              if (isa<BreakStmt>(Last) || isa<ReturnStmt>(Last) || isa<GotoStmt>(Last)) {
+                TrailingEndsWithExit = true;
+              }
+            }
+            
+            if (!EndsWithExit && !TrailingEndsWithExit) {
+              StmtResult Break = Actions.ActOnBreakStmt(DefaultLoc, getCurScope(), nullptr, SourceLocation());
+              if (Break.isUsable()) CSStmts.push_back(Break.get());
+            }
+            
+            CSStmts.insert(CSStmts.end(), TrailingStmts.begin(), TrailingStmts.end());
+            DefaultBody = Actions.ActOnCompoundStmt(CS_Braces.getOpenLocation(), CS_Braces.getCloseLocation(), CSStmts, false);
+          } else {
+            StmtVector Stmts;
+            while (Tok.isNot(tok::kw_case) && Tok.isNot(tok::kw_default) && Tok.isNot(tok::r_brace) && Tok.isNot(tok::eof) && !isC4CaseLabel()) {
+              StmtResult R = ParseStatementOrDeclaration(Stmts, ParsedStmtContext::Compound);
+              if (R.isUsable()) Stmts.push_back(R.get());
+            }
+            DefaultBody = Actions.ActOnCompoundStmt(DefaultLoc, DefaultLoc, Stmts, false);
+          }
+          
+          if (DefaultBody.isUsable()) {
+            StmtResult DefaultCase = Actions.ActOnDefaultStmt(DefaultLoc, DefaultLoc, DefaultBody.get(), getCurScope());
+            if (DefaultCase.isUsable()) BodyStmts.push_back(DefaultCase.get());
+          }
+        }
+        else if (Tok.is(tok::kw_case) || isC4CaseLabel()) {
+          if (!DefaultSubStmts.empty()) {
+            if (DefaultLoc.isInvalid()) DefaultLoc = DefaultSubStmts.front()->getBeginLoc();
+            StmtResult DefaultBody = Actions.ActOnCompoundStmt(DefaultLoc, DefaultLoc, DefaultSubStmts, false);
+            if (DefaultBody.isUsable()) {
+              CompoundStmt *CS = cast<CompoundStmt>(DefaultBody.get());
+              bool EndsWithExit = false;
+              if (CS->size() > 0) {
+                Stmt *Last = CS->body_back();
+                if (isa<BreakStmt>(Last) || isa<ReturnStmt>(Last) || isa<GotoStmt>(Last))
+                  EndsWithExit = true;
+              }
+              if (!EndsWithExit) {
+                SmallVector<Stmt *, 8> CSStmts(CS->body().begin(), CS->body().end());
+                StmtResult Break = Actions.ActOnBreakStmt(DefaultLoc, getCurScope(), nullptr, SourceLocation());
+                if (Break.isUsable()) CSStmts.push_back(Break.get());
+                DefaultBody = Actions.ActOnCompoundStmt(DefaultLoc, DefaultLoc, CSStmts, false);
+              }
+              StmtResult DefaultCase = Actions.ActOnDefaultStmt(DefaultLoc, DefaultLoc, DefaultBody.get(), getCurScope());
+              if (DefaultCase.isUsable()) BodyStmts.push_back(DefaultCase.get());
+            }
+            DefaultSubStmts.clear();
+            DefaultLoc = SourceLocation();
+          }
+          
+          SourceLocation CaseLoc = Tok.getLocation();
+          bool HasCaseKW = TryConsumeToken(tok::kw_case);
+          
+          struct C4CaseValue {
+            ExprResult LHS;
+            SourceLocation DotDotLoc;
+            ExprResult RHS;
+            bool HalfOpen;
+          };
+          SmallVector<C4CaseValue, 4> Values;
+          
+          do {
+            ExprResult LHS = ParseCaseExpression(CaseLoc);
+            if (LHS.isInvalid()) {
+              SkipUntil(tok::colon, tok::r_brace, StopAtSemi | StopBeforeMatch);
+              break;
+            }
+            
+            SourceLocation DotDotLoc;
+            ExprResult RHS;
+            bool HalfOpen = false;
+            if (Tok.is(tok::period) && NextToken().is(tok::period)) {
+              DotDotLoc = ConsumeToken();
+              ConsumeToken();
+              if (Tok.is(tok::less)) {
+                HalfOpen = true;
+                ConsumeToken();
+              }
+              RHS = ParseCaseExpression(CaseLoc);
+              if (RHS.isInvalid()) {
+                SkipUntil(tok::colon, tok::r_brace, StopAtSemi | StopBeforeMatch);
+                break;
+              }
+            }
+            
+            Values.push_back({LHS, DotDotLoc, RHS, HalfOpen});
+          } while (TryConsumeToken(tok::comma));
+          
+          SourceLocation ColonLoc;
+          if (!TryConsumeToken(tok::colon, ColonLoc)) {
+            Diag(Tok, diag::err_expected) << tok::colon;
+            SkipUntil(tok::colon, tok::r_brace, StopAtSemi | StopBeforeMatch);
+            TryConsumeToken(tok::colon);
+          }
+          
+          StmtResult CaseBody;
+          if (Tok.is(tok::l_brace)) {
+            BalancedDelimiterTracker CS_Braces(*this, tok::l_brace);
+            CS_Braces.consumeOpen();
+            
+            ParseScope CompoundScope(this, Scope::DeclScope);
+            
+            StmtVector CSStmts;
+            bool EndsWithContinue = false;
+            
+            while (Tok.isNot(tok::r_brace) && Tok.isNot(tok::eof)) {
+              if (Tok.is(tok::kw_continue) && NextToken().is(tok::semi)) {
+                if (PP.LookAhead(1).is(tok::r_brace)) {
+                  EndsWithContinue = true;
+                  ConsumeToken(); // Consume 'continue'
+                  ConsumeToken(); // Consume ';'
+                  continue;
+                }
+              }
+              
+              StmtResult R = ParseStatementOrDeclaration(CSStmts, ParsedStmtContext::Compound);
+              if (R.isUsable()) CSStmts.push_back(R.get());
+            }
+            
+            CS_Braces.consumeClose();
+            
+            bool EndsWithExit = false;
+            if (!CSStmts.empty()) {
+              Stmt *Last = CSStmts.back();
+              if (isa<BreakStmt>(Last) || isa<ReturnStmt>(Last) || isa<GotoStmt>(Last)) {
+                EndsWithExit = true;
+              }
+            }
+            
+            StmtVector TrailingStmts;
+            if (HasCaseKW) {
+              while (Tok.isNot(tok::kw_case) && Tok.isNot(tok::kw_default) && Tok.isNot(tok::r_brace) && Tok.isNot(tok::eof) && !isC4CaseLabel()) {
+                StmtResult R = ParseStatementOrDeclaration(TrailingStmts, ParsedStmtContext::Compound);
+                if (R.isUsable()) TrailingStmts.push_back(R.get());
+              }
+            }
+            
+            bool TrailingEndsWithExit = false;
+            if (!TrailingStmts.empty()) {
+              Stmt *Last = TrailingStmts.back();
+              if (isa<BreakStmt>(Last) || isa<ReturnStmt>(Last) || isa<GotoStmt>(Last)) {
+                TrailingEndsWithExit = true;
+              }
+            }
+            
+            if (!EndsWithContinue && !EndsWithExit && !TrailingEndsWithExit) {
+              StmtResult Break = Actions.ActOnBreakStmt(CaseLoc, getCurScope(), nullptr, SourceLocation());
+              if (Break.isUsable()) CSStmts.push_back(Break.get());
+            }
+            
+            CSStmts.insert(CSStmts.end(), TrailingStmts.begin(), TrailingStmts.end());
+            CaseBody = Actions.ActOnCompoundStmt(CS_Braces.getOpenLocation(), CS_Braces.getCloseLocation(), CSStmts, false);
+          } else {
+            StmtVector Stmts;
+            while (Tok.isNot(tok::kw_case) && Tok.isNot(tok::kw_default) && Tok.isNot(tok::r_brace) && Tok.isNot(tok::eof) && !isC4CaseLabel()) {
+              StmtResult R = ParseStatementOrDeclaration(Stmts, ParsedStmtContext::Compound);
+              if (R.isUsable()) Stmts.push_back(R.get());
+            }
+            CaseBody = Actions.ActOnCompoundStmt(CaseLoc, CaseLoc, Stmts, false);
+          }
+          
+          if (CaseBody.isUsable()) {
+            Stmt *SubStmt = CaseBody.get();
+            for (int i = (int)Values.size() - 1; i >= 0; --i) {
+              ExprResult LHS = Values[i].LHS;
+              ExprResult RHS = Values[i].RHS;
+              SourceLocation DotDotLoc = Values[i].DotDotLoc;
+              
+              if (Values[i].HalfOpen && RHS.isUsable()) {
+                Expr *One = IntegerLiteral::Create(Actions.Context, llvm::APInt(32, 1), Actions.Context.IntTy, DotDotLoc);
+                RHS = Actions.ActOnBinOp(getCurScope(), DotDotLoc, tok::minus, RHS.get(), One);
+              }
+              
+              StmtResult CaseStmt = Actions.ActOnCaseStmt(CaseLoc, LHS, DotDotLoc, RHS, ColonLoc);
+              if (CaseStmt.isUsable()) {
+                Actions.ActOnCaseStmtBody(CaseStmt.get(), SubStmt);
+                SubStmt = CaseStmt.get();
+              }
+            }
+            BodyStmts.push_back(SubStmt);
+          }
+        } else {
+          if (DefaultLoc.isInvalid()) DefaultLoc = Tok.getLocation();
+          StmtResult SubStmt = ParseStatement();
+          if (SubStmt.isUsable()) {
+            DefaultSubStmts.push_back(SubStmt.get());
+          }
+        }
+      }
+      
+      if (!DefaultSubStmts.empty()) {
+        if (DefaultLoc.isInvalid()) DefaultLoc = DefaultSubStmts.front()->getBeginLoc();
+        StmtResult DefaultBody = Actions.ActOnCompoundStmt(DefaultLoc, DefaultLoc, DefaultSubStmts, false);
+        if (DefaultBody.isUsable()) {
+          CompoundStmt *CS = cast<CompoundStmt>(DefaultBody.get());
+          bool EndsWithExit = false;
+          if (CS->size() > 0) {
+            Stmt *Last = CS->body_back();
+            if (isa<BreakStmt>(Last) || isa<ReturnStmt>(Last) || isa<GotoStmt>(Last))
+              EndsWithExit = true;
+          }
+          if (!EndsWithExit) {
+            SmallVector<Stmt *, 8> CSStmts(CS->body().begin(), CS->body().end());
+            StmtResult Break = Actions.ActOnBreakStmt(DefaultLoc, getCurScope(), nullptr, SourceLocation());
+            if (Break.isUsable()) CSStmts.push_back(Break.get());
+            DefaultBody = Actions.ActOnCompoundStmt(DefaultLoc, DefaultLoc, CSStmts, false);
+          }
+          StmtResult DefaultCase = Actions.ActOnDefaultStmt(DefaultLoc, DefaultLoc, DefaultBody.get(), getCurScope());
+          if (DefaultCase.isUsable()) BodyStmts.push_back(DefaultCase.get());
+        }
+      }
+      
+      T.consumeClose();
+      Body = Actions.ActOnCompoundStmt(T.getOpenLocation(), T.getCloseLocation(), BodyStmts, false);
+    }
+  } else {
+    Body = ParseStatement(TrailingElseLoc);
+  }
   InnerScope.Exit();
   SwitchScope.Exit();
 
@@ -3169,4 +3460,40 @@ void Parser::ParseMicrosoftIfExistsStatement(StmtVector &Stmts) {
       Stmts.push_back(R.get());
   }
   Braces.consumeClose();
+}
+
+bool Parser::isC4CaseLabel() {
+  unsigned Offset = 0;
+  bool HasQuestion = false;
+  while (true) {
+    const Token &T = PP.LookAhead(Offset);
+    if (T.is(tok::eof))
+      return false;
+    if (Offset > 0 && T.isAtStartOfLine())
+      return false;
+    if (T.is(tok::colon)) {
+      return !HasQuestion;
+    }
+    if (T.isOneOf(tok::semi, tok::l_brace, tok::r_brace))
+      return false;
+    if (T.is(tok::question))
+      HasQuestion = true;
+    
+    if (T.isOneOf(tok::l_paren, tok::l_square)) {
+      tok::TokenKind CloseKind = T.is(tok::l_paren) ? tok::r_paren : tok::r_square;
+      unsigned Depth = 1;
+      while (Depth > 0) {
+        Offset++;
+        const Token &NT = PP.LookAhead(Offset);
+        if (NT.is(tok::eof) || NT.isOneOf(tok::semi, tok::l_brace, tok::r_brace))
+          return false;
+        if (NT.is(T.getKind()))
+          Depth++;
+        else if (NT.is(CloseKind))
+          Depth--;
+      }
+    }
+    Offset++;
+  }
+  return false;
 }

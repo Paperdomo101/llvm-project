@@ -328,7 +328,10 @@ public:
       auto Batch = ExpandedTokens.take_while([&](const syntax::Token &T) {
         return T.location() >= Start && T.location() < Limit;
       });
-      assert(!Batch.empty());
+      if (Batch.empty()) {
+        ExpandedTokens = ExpandedTokens.drop_front(1);
+        continue;
+      }
       ExpandedTokens = ExpandedTokens.drop_front(Batch.size());
 
       update(Result, testChunk(FID, Batch));

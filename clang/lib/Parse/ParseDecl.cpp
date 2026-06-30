@@ -5043,6 +5043,30 @@ void Parser::ParseStructDeclaration(
 
     // If we don't have a comma, it is either the end of the list (a ';')
     // or an error, bail out.
+    if (Tok.is(tok::comma) && getLangOpts().C4()) {
+      const Token &Next = PP.LookAhead(0);
+      if (Next.is(tok::r_brace))
+        return;
+
+      bool IsTypeStart = false;
+      if (Next.isOneOf(
+          tok::kw_int, tok::kw_char, tok::kw_float, tok::kw_double,
+          tok::kw_long, tok::kw_short, tok::kw_signed, tok::kw_unsigned,
+          tok::kw_void, tok::kw__Bool, tok::kw_struct, tok::kw_union,
+          tok::kw_enum, tok::kw_const, tok::kw_volatile, tok::kw_restrict,
+          tok::caret, tok::l_square, tok::amp)) {
+        IsTypeStart = true;
+      } else if (Next.is(tok::identifier)) {
+        const Token &Next2 = PP.LookAhead(1);
+        if (Next2.isOneOf(
+            tok::identifier, tok::star, tok::l_paren, tok::caret, tok::amp)) {
+          IsTypeStart = true;
+        }
+      }
+      if (IsTypeStart)
+        return;
+    }
+
     if (!TryConsumeToken(tok::comma, CommaLoc))
       return;
 
@@ -5219,11 +5243,12 @@ void Parser::ParseStructUnionBody(SourceLocation RecordLoc,
       ExpectAndConsume(tok::r_paren);
     }
 
-    if (TryConsumeToken(tok::semi))
+    if (TryConsumeToken(tok::semi) || (getLangOpts().C4() && TryConsumeToken(tok::comma)))
       continue;
 
     if (Tok.is(tok::r_brace)) {
-      ExpectAndConsume(tok::semi, diag::err_expected_semi_decl_list);
+      if (!getLangOpts().C4())
+        ExpectAndConsume(tok::semi, diag::err_expected_semi_decl_list);
       break;
     }
 
@@ -7947,6 +7972,9 @@ void Parser::ParseParameterDeclarationClause(
   }
 
   do {
+    if (getLangOpts().C4() && Tok.is(tok::r_paren))
+      break;
+
     // FIXME: Issue a diagnostic if we parsed an attribute-specifier-seq
     // before deciding this was a parameter-declaration-clause.
     if (TryConsumeToken(tok::ellipsis, EllipsisLoc))

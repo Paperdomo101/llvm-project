@@ -836,6 +836,10 @@ private:
     auto &NextSpelled = this->NextSpelled[File];
 
     if (Tok.location().isFileID()) {
+      if (Tok.kind() == tok::eof) {
+        ++NextExpanded;
+        return;
+      }
       // A run of file tokens continues while the expanded/spelled tokens match.
       while (NextSpelled < SpelledTokens.size() &&
              NextExpanded < Result.ExpandedTokens.size() &&

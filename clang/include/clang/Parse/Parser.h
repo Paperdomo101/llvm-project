@@ -7427,6 +7427,7 @@ public:
   StmtResult ParseCaseStatement(ParsedStmtContext StmtCtx,
                                 bool MissingCase = false,
                                 ExprResult Expr = ExprResult());
+  bool isC4CaseLabel();
 
   /// ParseDefaultStatement
   /// \verbatim

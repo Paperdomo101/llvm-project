@@ -2675,10 +2675,11 @@ Parser::ParsePostfixExpressionSuffix(ExprResult LHS) {
         }
 
     case tok::arrow:
-        case tok::period: {
-          // postfix-expression: p-e '->' template[opt] id-expression
-          // postfix-expression: p-e '.' template[opt] id-expression
-          tok::TokenKind OpKind = Tok.getKind();
+    case tok::period: {
+      if (Tok.is(tok::period) && getLangOpts().C4() && NextToken().is(tok::period)) {
+        return LHS;
+      }
+      tok::TokenKind OpKind = Tok.getKind();
           SourceLocation OpLoc = ConsumeToken();  // Eat the "." or "->" token.
 
           Expr* OrigLHS = !LHS.isInvalid() ? LHS.get() : nullptr;
