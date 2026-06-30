@@ -6590,16 +6590,13 @@ bool Sema::GatherArgumentsForCall(SourceLocation CallLoc, FunctionDecl *FDecl,
       }
       // === C4: Auto-address injection for function pointer calls (no FDecl available) ===
       // When calling via function pointer, Param is null. Detect C4 reference parameters
-      // by checking if the proto param type is a const pointer to a C4 array struct.
+      // by checking if the proto param type is a const pointer.
       if (!Param && getLangOpts().C4() && ProtoArgType->isPointerType()) {
-        if (ProtoArgType.isLocalConstQualified() || ProtoArgType.isConstQualified()) {
-          QualType PointeeTy = ProtoArgType->getPointeeType();
-          if (PointeeTy->isRecordType() &&
-              isC4ArrayType(PointeeTy) &&
-              Arg && Arg->isGLValue() && !Arg->getType()->isPointerType() &&
-              isC4ArrayType(Arg->getType())) {
+        if (ProtoArgType.isLocalConstQualified() || ProtoArgType.isConstQualified() ||
+            ProtoArgType.getQualifiers().hasConst()) {
+          if (Arg && Arg->isGLValue() && !Arg->getType()->isPointerType()) {
             ExprResult InjectedAddress = CreateBuiltinUnaryOp(
-                Arg->getBeginLoc(), UO_AddrOf, Arg);
+                SourceLocation(), UO_AddrOf, Arg);
             if (!InjectedAddress.isInvalid())
               Arg = InjectedAddress.get();
           }
@@ -10127,7 +10124,7 @@ AssignConvertType Sema::CheckAssignmentConstraints(QualType LHSType,
     if (Arg && Arg->isGLValue() && !Arg->getType()->isPointerType()) {
 
       // Programmatically wrap the expression inside an implicit Address-Of (&) operator node
-      ExprResult InjectedAddress = CreateBuiltinUnaryOp(Arg->getBeginLoc(), UO_AddrOf, Arg);
+      ExprResult InjectedAddress = CreateBuiltinUnaryOp(SourceLocation(), UO_AddrOf, Arg);
       if (!InjectedAddress.isInvalid()) {
         RHS = InjectedAddress; // Modifies the true ExprResult reference permanently!
         Kind = CK_NoOp;

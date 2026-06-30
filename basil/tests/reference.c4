@@ -25,6 +25,18 @@ something (&int ref) {
 }
 
 
+struct DummyArg {
+    int value;
+};
+
+void run_test_edge_case(&struct DummyArg arg) {
+    append := ^(&struct DummyArg outer_arg, int val) {
+        outer_arg.value = val;
+    };
+    arg::append(42);
+}
+
+
 int main() {
     printf("==================================================\n");
     printf("Executing Pass-By-Reference Variable Verification...\n");
@@ -52,6 +64,12 @@ int main() {
     assert_equal(a, 30, "Pipeline call reference mutation index 0 (20 + 10)");
     assert_equal(b, 90, "Pipeline call reference mutation index 1 (3 * 30)");
     printf("[PASS] Method pipeline dispatch reference passing verified.\n");
+
+    // 3. Verify edge case: pass-by-ref parameter as method dispatch receiver to local function block
+    struct DummyArg dummy = { 0 };
+    run_test_edge_case(dummy);
+    assert_equal(dummy.value, 42, "Pass-by-ref parameter method dispatch to local function block works");
+    printf("[PASS] Edge case: pass-by-ref parameter method dispatch to local function block verified.\n");
 
     printf("\n[SUCCESS] Pass-By-Reference Subsystem Validated Successfully!\n");
     return 0;
