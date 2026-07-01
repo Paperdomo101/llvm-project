@@ -1238,7 +1238,23 @@ Parser::ParseCastExpression(CastParseKind ParseKind, bool isAddressOfOperand,
   // === C4: IMPLICIT ENUM DOT (.Member or .{M1, M2}) ===
   case tok::period: {
     if (getLangOpts().C4()) {
+      // Capture the preferred/expected type at the dot's source position
+      // BEFORE consuming the dot.  enterBinary() registered the dot location
+      // as ExpectedLoc, so get() must be called while Tok is still '.'.  After
+      // ConsumeToken() the location shifts to the next token and get() returns
+      // a null type.
+      QualType DotExpectedTy = PreferredType.get(Tok.getLocation());
       SourceLocation DotLoc = ConsumeToken(); // consume '.'
+
+      // === C4: CODE COMPLETION AFTER '.' ===
+      // The user typed '.' and triggered completion (e.g. `mode = .`).  Hand
+      // off to Sema so it can enumerate the members of the expected enum type.
+      if (Tok.is(tok::code_completion)) {
+        cutOffParsing();
+        Actions.CodeCompletion().CodeCompleteC4ImplicitDot(
+            getCurScope(), DotExpectedTy);
+        return ExprError();
+      }
 
       if (Tok.is(tok::l_brace)) {
         // .{M1, M2} → bitwise OR of enum members

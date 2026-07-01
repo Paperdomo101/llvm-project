@@ -6971,6 +6971,72 @@ void SemaCodeCompletion::CodeCompleteC4MethodDispatch(Scope *S, Expr *Receiver) 
                             Results.size());
 }
 
+// C4: Complete after an implicit-dot expression  ".<cursor>"
+//
+// If PreferredType is a concrete enum type (determined by context, e.g. the
+// LHS of an assignment or the formal parameter type), we show only the
+// enumerators of that enum — giving a tight, noise-free list.
+//
+// When the type cannot be inferred we fall back to walking the scope chain
+// and surfacing every EnumConstantDecl currently in scope.
+void SemaCodeCompletion::CodeCompleteC4ImplicitDot(Scope *S,
+                                                   QualType PreferredTy) {
+  if (!CodeCompleter)
+    return;
+
+  // ── Case A: known enum type ──────────────────────────────────────────────
+  if (!PreferredTy.isNull()) {
+    QualType Ty = PreferredTy.getNonReferenceType().getUnqualifiedType();
+    if (const auto *ET = Ty->getAs<EnumType>()) {
+      EnumDecl *ED = ET->getDecl();
+      ResultBuilder Results(
+          SemaRef, CodeCompleter->getAllocator(),
+          CodeCompleter->getCodeCompletionTUInfo(),
+          CodeCompletionContext(CodeCompletionContext::CCC_Expression, PreferredTy));
+      // Re-use the same helper that CodeCompleteExpression calls when it
+      // detects an enum preferred type, but here it is the *only* result set.
+      AddEnumerators(Results, getASTContext(), ED, SemaRef.CurContext,
+                     CoveredEnumerators());
+      HandleCodeCompleteResults(&SemaRef, CodeCompleter,
+                                Results.getCompletionContext(), Results.data(),
+                                Results.size());
+      return;
+    }
+  }
+
+  // ── Case B: unknown type – collect all enum constants visible in scope ───
+  // Walk LookupOrdinaryName decls and keep only EnumConstantDecl entries.
+  ResultBuilder Results(
+      SemaRef, CodeCompleter->getAllocator(),
+      CodeCompleter->getCodeCompletionTUInfo(),
+      CodeCompletionContext(CodeCompletionContext::CCC_Expression));
+
+  struct EnumConstOnlyConsumer : public VisibleDeclConsumer {
+    ResultBuilder &Results;
+    DeclContext *CurCtx;
+    EnumConstOnlyConsumer(ResultBuilder &R, DeclContext *C)
+        : Results(R), CurCtx(C) {}
+    void FoundDecl(NamedDecl *ND, NamedDecl * /*Hiding*/, DeclContext * /*Ctx*/,
+                   bool /*InBaseClass*/) override {
+      if (isa<EnumConstantDecl>(ND->getUnderlyingDecl())) {
+        CodeCompletionResult R(ND, CCP_EnumInCase);
+        Results.AddResult(R, CurCtx, nullptr, false);
+      }
+    }
+  };
+
+  Results.EnterNewScope();
+  EnumConstOnlyConsumer Consumer(Results, SemaRef.CurContext);
+  SemaRef.LookupVisibleDecls(S, Sema::LookupOrdinaryName, Consumer,
+                             CodeCompleter->includeGlobals(),
+                             CodeCompleter->loadExternal());
+  Results.ExitScope();
+
+  HandleCodeCompleteResults(&SemaRef, CodeCompleter,
+                            Results.getCompletionContext(), Results.data(),
+                            Results.size());
+}
+
 void SemaCodeCompletion::CodeCompleteInitializer(Scope *S, Decl *D) {
   ValueDecl *VD = dyn_cast_or_null<ValueDecl>(D);
   if (!VD) {

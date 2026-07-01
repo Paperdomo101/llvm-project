@@ -113,6 +113,10 @@ public:
   void CodeCompletePostfixExpression(Scope *S, ExprResult LHS,
                                      QualType PreferredType);
   void CodeCompleteC4MethodDispatch(Scope *S, Expr *Receiver);
+  /// Complete an implicit-dot enum member expression:  .█
+  /// If \p PreferredType is a known enum type, only its members are shown.
+  /// Otherwise all enum constants visible in scope are offered.
+  void CodeCompleteC4ImplicitDot(Scope *S, QualType PreferredType);
   void CodeCompleteTag(Scope *S, unsigned TagSpec);
   void CodeCompleteTypeQualifiers(DeclSpec &DS);
   void CodeCompleteFunctionQualifiers(DeclSpec &DS, Declarator &D,
