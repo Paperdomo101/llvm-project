@@ -377,17 +377,21 @@ TokenBuffer::expandedForSpelled(llvm::ArrayRef<syntax::Token> Spelled) const {
 
 llvm::ArrayRef<syntax::Token> TokenBuffer::spelledTokens(FileID FID) const {
   auto It = Files.find(FID);
-  assert(It != Files.end());
+  if (It == Files.end())
+    return {};
   return It->second.SpelledTokens;
 }
 
 const syntax::Token *
 TokenBuffer::spelledTokenContaining(SourceLocation Loc) const {
   assert(Loc.isFileID());
+  auto Tokens = spelledTokens(SourceMgr->getFileID(Loc));
+  if (Tokens.empty())
+    return nullptr;
   const auto *Tok = llvm::partition_point(
-      spelledTokens(SourceMgr->getFileID(Loc)),
+      Tokens,
       [&](const syntax::Token &Tok) { return Tok.endLocation() <= Loc; });
-  if (!Tok || Loc < Tok->location())
+  if (Tok == Tokens.end() || Loc < Tok->location())
     return nullptr;
   return Tok;
 }
@@ -558,7 +562,8 @@ syntax::spelledIdentifierTouching(SourceLocation Loc,
 std::vector<const syntax::Token *>
 TokenBuffer::macroExpansions(FileID FID) const {
   auto FileIt = Files.find(FID);
-  assert(FileIt != Files.end() && "file not tracked by token buffer");
+  if (FileIt == Files.end())
+    return {};
   auto &File = FileIt->second;
   std::vector<const syntax::Token *> Expansions;
   auto &Spelled = File.SpelledTokens;

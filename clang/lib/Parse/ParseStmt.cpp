@@ -1765,12 +1765,24 @@ Parser::ParsedCondition Parser::ParseCondition(SourceLocation StmtLoc,
         return true;
     }
     // Standard C/C4 type keyword specifiers.
-    return Tok.is(tok::kw_int) || Tok.is(tok::kw_float) || Tok.is(tok::kw_double) ||
-           Tok.is(tok::kw_char) || Tok.is(tok::kw_void) || Tok.is(tok::kw_short) ||
-           Tok.is(tok::kw_long) || Tok.is(tok::kw_signed) || Tok.is(tok::kw_unsigned) ||
-           Tok.is(tok::kw__Bool) || Tok.is(tok::kw__Complex) || Tok.is(tok::kw___vector) ||
-           Tok.is(tok::kw___attribute) || Tok.is(tok::kw_auto) ||
-           false;
+    if (Tok.isOneOf(tok::kw_int, tok::kw_float, tok::kw_double,
+                    tok::kw_char, tok::kw_void, tok::kw_short,
+                    tok::kw_long, tok::kw_signed, tok::kw_unsigned,
+                    tok::kw__Bool, tok::kw__Complex, tok::kw___vector,
+                    tok::kw___attribute, tok::kw_auto,
+                    tok::kw_struct, tok::kw_union, tok::kw_enum))
+      return true;
+
+    // User-defined types (typedef names)
+    if (Tok.is(tok::identifier)) {
+      if (Actions.getTypeName(*Tok.getIdentifierInfo(), Tok.getLocation(), getCurScope())) {
+        if (NextToken().isOneOf(tok::period, tok::coloncolon))
+          return false;
+        return true;
+      }
+    }
+
+    return false;
   };
 
 
@@ -1795,6 +1807,7 @@ Parser::ParsedCondition Parser::ParseCondition(SourceLocation StmtLoc,
               return Result;
           }
       } else if (isTypeSpecifier(Tok)) {
+          SourceLocation DeclStart = Tok.getLocation();
           ParsedAttributes DeclAttrs(AttrFactory);
           ParsedAttributes DeclSpecAttrs(AttrFactory);
           SourceLocation DeclEnd;
@@ -1805,7 +1818,7 @@ Parser::ParsedCondition Parser::ParseCondition(SourceLocation StmtLoc,
               Diag(Tok, diag::err_expected) << tok::semi;
               return Result;
           }
-          TmpInit = Actions.ActOnDeclStmt(DG, DeclEnd, DeclEnd);
+          TmpInit = Actions.ActOnDeclStmt(DG, DeclStart, DeclEnd);
           if (TmpInit.isInvalid()) {
               return Result;
           }
@@ -1856,6 +1869,7 @@ Parser::ParsedCondition Parser::ParseCondition(SourceLocation StmtLoc,
   }
   // Handle declaration init (e.g., `int c = 4;`).
   else if (isTypeSpecifier(Tok)) {
+      SourceLocation DeclStart = Tok.getLocation();
       ParsedAttributes DeclAttrs(AttrFactory);
       ParsedAttributes DeclSpecAttrs(AttrFactory);
       SourceLocation DeclEnd;
@@ -1868,7 +1882,7 @@ Parser::ParsedCondition Parser::ParseCondition(SourceLocation StmtLoc,
           Diag(Tok, diag::err_declaration_does_not_declare_param);
           return Result;
       }
-      Result.InitStmt = Actions.ActOnDeclStmt(DG, DeclEnd, DeclEnd);
+      Result.InitStmt = Actions.ActOnDeclStmt(DG, DeclStart, DeclEnd);
       if (Result.InitStmt.isInvalid())
           return Result;
       // Declaration parsing already consumed the ';'.

@@ -16099,7 +16099,7 @@ ExprResult Sema::ActOnArraySizeIntrinsic(Expr *SubExpr, SourceLocation HashDotLo
 
   // Look up the size field
   DeclarationName SizeName(&Context.Idents.get(C4_ARRAY_SIZE_FIELD));
-  LookupResult R(*this, SizeName, HashDotLoc, LookupMemberName);
+  LookupResult R(*this, SizeName, E->getEndLoc(), LookupMemberName);
   LookupQualifiedName(R, RD);
 
   if (R.empty()) {
@@ -16172,7 +16172,7 @@ ExprResult Sema::ActOnC4CapacityOf(Expr *SubExpr, SourceLocation OpLoc) {
 
   // Look up the 'capacity' field.
   DeclarationName CapName(&Context.Idents.get(C4_ARRAY_CAPACITY_FIELD));
-  LookupResult R(*this, CapName, OpLoc, LookupMemberName);
+  LookupResult R(*this, CapName, E->getEndLoc(), LookupMemberName);
   LookupQualifiedName(R, RD);
 
   if (R.empty()) {

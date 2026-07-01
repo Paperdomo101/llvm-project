@@ -1,0 +1,35 @@
+// tests/struct_syntax_test.c4
+#include <stdio.h>
+#include <stdlib.h>
+
+typedef struct {
+    char data[64];
+} String_View;
+
+Token {
+    size_t row, col;
+    String_View str;
+}
+
+_ {
+    int a, b, c;
+} anonymous;
+
+main () int {
+    Token tok = {};
+    tok.row = 10;
+    tok.col = 20;
+
+    anonymous.a = 100;
+    anonymous.b = 200;
+    anonymous.c = 300;
+
+    if tok.row != 10 { return 1; }
+    if tok.col != 20 { return 2; }
+    if anonymous.a != 100 { return 3; }
+    if anonymous.b != 200 { return 4; }
+    if anonymous.c != 300 { return 5; }
+
+    printf("Struct syntax test passed!\n");
+    return 0;
+}

@@ -174,14 +174,22 @@ void Preprocessor::EnterTokenStream(const Token *Toks, unsigned NumToks,
                                     bool IsReinject) {
   if (InCachingLexMode()) {
     if (CachedLexPos < CachedTokens.size()) {
-      assert(IsReinject && "new tokens in the middle of cached stream");
-      // We're entering tokens into the middle of our cached token stream. We
-      // can't represent that, so just insert the tokens into the buffer.
-      CachedTokens.insert(CachedTokens.begin() + CachedLexPos,
-                          Toks, Toks + NumToks);
-      if (OwnsTokens)
-        delete [] Toks;
-      return;
+      if (!IsReinject && getLangOpts().C4()) {
+        ExitCachingLexMode();
+        EnterTokenStream(Toks, NumToks, DisableMacroExpansion, OwnsTokens,
+                         IsReinject);
+        EnterCachingLexModeUnchecked();
+        return;
+      } else {
+        assert(IsReinject && "new tokens in the middle of cached stream");
+        // We're entering tokens into the middle of our cached token stream. We
+        // can't represent that, so just insert the tokens into the buffer.
+        CachedTokens.insert(CachedTokens.begin() + CachedLexPos,
+                            Toks, Toks + NumToks);
+        if (OwnsTokens)
+          delete [] Toks;
+        return;
+      }
     }
 
     // New tokens are at the end of the cached token sequnece; insert the

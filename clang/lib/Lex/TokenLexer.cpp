@@ -96,7 +96,7 @@ void TokenLexer::Init(Token &Tok, SourceLocation ELEnd, MacroInfo *MI,
 void TokenLexer::Init(const Token *TokArray, unsigned NumToks,
                       bool disableMacroExpansion, bool ownsTokens,
                       bool isReinject) {
-  assert(!isReinject || disableMacroExpansion);
+  assert(!isReinject || disableMacroExpansion || PP.getLangOpts().C4Mode);
   // If the client is reusing a TokenLexer, make sure to free any memory
   // associated with it.
   destroy();

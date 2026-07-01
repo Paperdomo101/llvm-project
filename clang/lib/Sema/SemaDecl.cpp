@@ -19683,6 +19683,17 @@ CreateNewDecl:
   } else if (SkipBody && SkipBody->ShouldSkip) {
     return SkipBody->Previous;
   } else {
+    if (getLangOpts().C4() && Name && New && !New->isInvalidDecl() &&
+        Context.getSourceManager().isInMainFile(New->getLocation())) {
+      if (auto *RD = dyn_cast<RecordDecl>(New)) {
+        if (RD->isStruct() || RD->isUnion()) {
+          QualType T = Context.getTagType(ElaboratedTypeKeyword::None, std::nullopt, RD, /*OwnsTag=*/false);
+          TypeSourceInfo *TInfo = Context.getTrivialTypeSourceInfo(T, NameLoc);
+          TypedefDecl *NewTD = TypedefDecl::Create(Context, CurContext, KWLoc, NameLoc, Name, TInfo);
+          PushOnScopeChains(NewTD, S, true);
+        }
+      }
+    }
     return New;
   }
 }

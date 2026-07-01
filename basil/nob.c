@@ -338,6 +338,10 @@ CompilerTest custom_test_suite[] = {
         "@error handler (@error {}, @error(e) {}, negative-index, in-range no-fire)",
         "tests/error_handler_test.c4", true
     },
+    {
+        "C4 struct syntax (auto-typedef, anonymous struct, comma separators)",
+        "tests/struct_syntax_test.c4", true
+    },
 };
 
 bool run_compiler_tests(const char *compiler_path) {

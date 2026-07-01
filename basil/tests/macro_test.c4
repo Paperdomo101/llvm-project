@@ -49,6 +49,24 @@ typedef struct {
 #define SV_Fmt "%.*s"
 #define SV_Arg(sv) (int)(sv).count, (sv).data
 
+#define sb_to_sv nob_sb_to_sv
+#define nob_sb_to_sv(sb) nob_sv_from_parts((sb).items, (sb).count)
+String_View nob_sv_from_parts(const char *data, size_t count) {
+    String_View sv = {data, count};
+    return sv;
+}
+
+struct String_Builder {
+    char *items;
+    size_t count;
+    size_t capacity;
+};
+int read_entire_file(const char *path, struct String_Builder *sb) {
+    sb->items = "hello world";
+    sb->count = 11;
+    return 1;
+}
+
 const char *temp_sprintf(const char *fmt, ...) {
     return "dummy";
 }
@@ -160,6 +178,46 @@ int main() {
             printf("should_run is true\n");
         }
         printf("After else da_append: run_args.count=%d\n", run_args.count);
+    }
+
+    // 11. Nested method-like macro preprocessing expansion: SV_Arg(sb::sb_to_sv())
+    {
+        struct {
+            char *items;
+            int count;
+            int capacity;
+        } sb = {0};
+        sb.items = "hello";
+        sb.count = 5;
+        printf("SV_Arg(sb::sb_to_sv()) expansion compiles and runs: " SV_Fmt "\n", SV_Arg(sb::sb_to_sv()));
+    }
+
+    // 12. Chained method-like macro preprocessing expansion: sb::sb_to_sv()::SV_Arg()
+    {
+        struct {
+            char *items;
+            int count;
+            int capacity;
+        } sb = {0};
+        sb.items = "world";
+        sb.count = 5;
+        printf("sb::sb_to_sv()::SV_Arg() expansion compiles and runs: " SV_Fmt "\n", sb::sb_to_sv()::SV_Arg());
+    }
+
+    // 13. if statement init-declaration: if ^String_Builder sb;
+    {
+        struct String_Builder real_sb = {0};
+        if ^struct String_Builder sb = &real_sb; read_entire_file("test", sb) {
+            printf("if-init chained call compiles and runs: " SV_Fmt "\n", sb::sb_to_sv()::SV_Arg());
+        }
+    }
+
+    // 14. if statement init-declaration with typedef: if SB sb = {0};
+    {
+        typedef struct String_Builder SB;
+        if SB sb = {0}; read_entire_file("test", &sb) {
+            printf("if-init typedef compiles and runs: " SV_Fmt "\n", sb::sb_to_sv()::SV_Arg());
+        }
     }
 
     free(buf.items);

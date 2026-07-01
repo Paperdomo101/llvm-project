@@ -675,13 +675,13 @@ Parser::ParseC4MacroMethodDispatch(ExprResult Receiver,
                                    SourceLocation MacroLoc,
                                    const MacroInfo *TargetMI) {
     // ── Step 1: get the receiver's source text ────────────────────────────
-    SourceManager &SM = PP.getSourceManager();
-    SourceRange RecvRange = Receiver.get()->getSourceRange();
-    CharSourceRange CharRange =
-        Lexer::makeFileCharRange(CharSourceRange::getTokenRange(RecvRange),
-                                 SM, getLangOpts());
-    StringRef ReceiverText =
-        Lexer::getSourceText(CharRange, SM, getLangOpts());
+    std::string ReceiverTextStr;
+    {
+        llvm::raw_string_ostream OS(ReceiverTextStr);
+        Receiver.get()->printPretty(OS, nullptr, Actions.Context.getPrintingPolicy());
+    }
+    StringRef ReceiverText = ReceiverTextStr;
+    SourceLocation RecvBeginLoc = Receiver.get()->getBeginLoc();
 
     // ── Step 2: consume the macro identifier from the token stream ────────
     // Tok is currently the unexpanded identifier.  We now need to advance
@@ -725,7 +725,8 @@ Parser::ParseC4MacroMethodDispatch(ExprResult Receiver,
     {
         // Copy the receiver text to a null-terminated string to satisfy the
         // Lexer's assumption that the end of the buffer is null-terminated.
-        Lexer RawLex(CharRange.getBegin(), getLangOpts(),
+        SourceLocation SpellingBeginLoc = PP.getSourceManager().getSpellingLoc(RecvBeginLoc);
+        Lexer RawLex(SpellingBeginLoc, getLangOpts(),
                      NullTerminatedReceiver.data(), NullTerminatedReceiver.data(),
                      NullTerminatedReceiver.data() + NullTerminatedReceiver.size());
         while (true) {
@@ -823,19 +824,23 @@ Parser::ParseC4MacroMethodDispatch(ExprResult Receiver,
         SyntheticToks.push_back(CloseParen);
     }
 
-    // ── Step 6: Inject the synthetic tokens for macro expansion ───────────
+
 
     auto Toks = std::make_unique<Token[]>(SyntheticToks.size());
     std::copy(SyntheticToks.begin(), SyntheticToks.end(), Toks.get());
-    bool IsReinject = PP.isInCachingLexMode();
     PP.EnterTokenStream(std::move(Toks), SyntheticToks.size(),
-                        /*DisableMacroExpansion=*/false, IsReinject);
+                        /*DisableMacroExpansion=*/false, /*IsReinject=*/true);
 
     // Advance Tok to the first synthetic token (or open paren of statement expr).
     PP.Lex(Tok);
 
     // ── Step 7: Parse the expanded call expression ────────────────────────
     ExprResult Result = ParseAssignmentExpression();
+    if (Result.isUsable()) {
+        if (auto *CE = dyn_cast<CallExpr>(Result.get())) {
+            CE->setUsesMemberSyntax(true);
+        }
+    }
     return Result;
 }
 
@@ -855,6 +860,9 @@ ExprResult Parser::ParseMethodDispatch(
         }
         return ExprError();
     }
+
+    if (Receiver.isInvalid() || !Receiver.isUsable())
+        return ExprError();
 
     if (Tok.isNot(tok::identifier))
         return ExprError();
@@ -1009,6 +1017,12 @@ ExprResult Parser::ParseMethodDispatch(
             ArgExprs,
             RParLoc,
             nullptr);
+
+    if (Result.isUsable()) {
+        if (auto *CE = dyn_cast<CallExpr>(Result.get())) {
+            CE->setUsesMemberSyntax(true);
+        }
+    }
 
     PT.consumeClose();
     return Result;
@@ -4206,7 +4220,7 @@ ExprResult Parser::ParseBlockLiteralExpression() {
     // Check if a type declaration is immediately present using modern Clang contexts
     if (isDeclarationSpecifier(ImplicitTypenameContext::No)) {
       DeclSpec TrailingDS(AttrFactory);
-      ParseSpecifierQualifierList(TrailingDS);
+      ParseSpecifierQualifierList(TrailingDS, AS_none, DeclSpecContext::DSC_type_specifier);
 
       Declarator TrailingDeclarator(TrailingDS, ParsedAttributesView::none(),
                                     DeclaratorContext::TypeName);

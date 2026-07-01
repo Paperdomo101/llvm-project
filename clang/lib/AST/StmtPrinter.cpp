@@ -1330,6 +1330,10 @@ void StmtPrinter::VisitConstantExpr(ConstantExpr *Node) {
 
 void StmtPrinter::VisitDeclRefExpr(DeclRefExpr *Node) {
   ValueDecl *VD = Node->getDecl();
+  if (!VD) {
+    Node->getNameInfo().printName(OS, Policy);
+    return;
+  }
   if (const auto *OCED = dyn_cast<OMPCapturedExprDecl>(VD)) {
     OCED->getInit()->IgnoreImpCasts()->printPretty(OS, nullptr, Policy);
     return;
@@ -1406,10 +1410,12 @@ void StmtPrinter::VisitUnresolvedLookupExpr(UnresolvedLookupExpr *Node) {
 
 static bool isImplicitSelf(const Expr *E) {
   if (const auto *DRE = dyn_cast<DeclRefExpr>(E)) {
-    if (const auto *PD = dyn_cast<ImplicitParamDecl>(DRE->getDecl())) {
-      if (PD->getParameterKind() == ImplicitParamKind::ObjCSelf &&
-          DRE->getBeginLoc().isInvalid())
-        return true;
+    if (const auto *VD = DRE->getDecl()) {
+      if (const auto *PD = dyn_cast<ImplicitParamDecl>(VD)) {
+        if (PD->getParameterKind() == ImplicitParamKind::ObjCSelf &&
+            DRE->getBeginLoc().isInvalid())
+          return true;
+      }
     }
   }
   return false;

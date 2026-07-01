@@ -69,6 +69,7 @@ Parser::Parser(Preprocessor &pp, Sema &actions, bool skipFunctionBodies)
   Actions.CurScope = nullptr;
   NumCachedScopes = 0;
   CurParsedObjCImpl = nullptr;
+  // C4NamedStructFreestanding is stored in DeclSpec (per-declaration, not global).
 
   // Add #pragma handlers. These are removed and destroyed in the
   // destructor.
@@ -1376,13 +1377,17 @@ Parser::DeclGroupPtrTy Parser::ParseDeclOrFunctionDefInternal(
 
   // If we had a free-standing type definition with a missing semicolon, we
   // may get this far before the problem becomes obvious.
-  if (DS.hasTagDefinition() && DiagnoseMissingSemiAfterTagDefinition(
-                                   DS, AS, DeclSpecContext::DSC_top_level))
+  // C4: Skip this check for C4 named struct declarations — they intentionally
+  // omit the trailing semicolon and must be treated as free-standing.
+  if (DS.hasTagDefinition() && !DS.isC4NamedStructFreestanding() &&
+      DiagnoseMissingSemiAfterTagDefinition(DS, AS, DeclSpecContext::DSC_top_level))
     return nullptr;
 
   // C99 6.7.2.3p6: Handle "struct-or-union identifier;", "enum { X };"
   // declaration-specifiers init-declarator-list[opt] ';'
-  if (Tok.is(tok::semi)) {
+  bool IsSemi = Tok.is(tok::semi);
+  bool ForceFreeStanding = !IsSemi && getLangOpts().C4() && DS.isC4NamedStructFreestanding();
+  if (IsSemi || ForceFreeStanding) {
     // Suggest correct location to fix '[[attrib]] struct' to 'struct
     // [[attrib]]'
     SourceLocation CorrectLocationForAttributes{};
@@ -1403,7 +1408,7 @@ Parser::DeclGroupPtrTy Parser::ParseDeclOrFunctionDefInternal(
       }
     }
     ProhibitAttributes(Attrs, CorrectLocationForAttributes);
-    ConsumeToken();
+    if (IsSemi) ConsumeToken();
     RecordDecl *AnonRecord = nullptr;
     Decl *TheDecl = Actions.ParsedFreeStandingDeclSpec(
         getCurScope(), AS_none, DS, ParsedAttributesView::none(), AnonRecord);

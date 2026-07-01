@@ -680,6 +680,7 @@ private:
   /// Gets set to true after calling ProduceSignatureHelp, it is for a
   /// workaround to make sure ProduceSignatureHelp is only called at the deepest
   /// function call.
+  // (C4LastStructWasFreestanding removed – use DS.C4NamedStructFreestanding)
   bool CalledSignatureHelp = false;
 
   IdentifierInfo *getSEHExceptKeyword();

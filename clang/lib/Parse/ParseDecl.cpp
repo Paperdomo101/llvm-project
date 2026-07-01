@@ -1987,12 +1987,16 @@ Parser::DeclGroupPtrTy Parser::ParseSimpleDeclaration(
   if (C4BraceTerminatedDecl)
     TryConsumeToken(tok::semi); // consume if present; skip silently if absent
 
+  // C4 named struct free-standing path: handled below in IsSemi/ForceFreeStanding.
+
   // C99 6.7.2.3p6: Handle "struct-or-union identifier;", "enum { X };"
   // declaration-specifiers init-declarator-list[opt] ';'
-  if (Tok.is(tok::semi)) {
+  bool IsSemi = Tok.is(tok::semi);
+  bool ForceFreeStanding = !IsSemi && getLangOpts().C4() && DS.isC4NamedStructFreestanding();
+  if (IsSemi || ForceFreeStanding) {
     ProhibitAttributes(DeclAttrs);
     DeclEnd = Tok.getLocation();
-    if (RequireSemi) ConsumeToken();
+    if (IsSemi && RequireSemi) ConsumeToken();
     RecordDecl *AnonRecord = nullptr;
     Decl *TheDecl = Actions.ParsedFreeStandingDeclSpec(
         getCurScope(), AS_none, DS, ParsedAttributesView::none(), AnonRecord);
@@ -3404,6 +3408,38 @@ void Parser::ParseDeclarationSpecifiers(
     DeclSpec &DS, ParsedTemplateInfo &TemplateInfo, AccessSpecifier AS,
     DeclSpecContext DSContext, LateParsedAttrList *LateAttrs,
     ImplicitTypenameContext AllowImplicitTypename) {
+  // C4: Identifier followed by '{' at top/block scope -> auto-inject 'struct'.
+  // Named struct (not '_') gets C4NamedStructFreestanding set so the caller
+  // can return it as a free-standing typedef without a trailing ';'.
+  if (getLangOpts().C4() && Tok.is(tok::identifier) && NextToken().is(tok::l_brace) &&
+      (DSContext == DeclSpecContext::DSC_top_level || DSContext == DeclSpecContext::DSC_normal)) {
+    IdentifierInfo *II = Tok.getIdentifierInfo();
+    SourceLocation Loc = Tok.getLocation();
+    if (II->isStr("_")) {
+      // Anonymous: inject just 'struct' (no name, no freestanding flag).
+      Token StructTok;
+      StructTok.startToken();
+      StructTok.setKind(tok::kw_struct);
+      StructTok.setLocation(Loc);
+      auto Toks = std::make_unique<Token[]>(1);
+      Toks[0] = StructTok;
+      PP.EnterTokenStream(std::move(Toks), 1, /*DisableMacroExpansion=*/true, /*IsReinject=*/true);
+      PP.Lex(Tok);
+    } else {
+      // Named: inject 'struct Name' and mark this DS as a C4 freestanding struct.
+      DS.setC4NamedStructFreestanding();
+      Token StructTok;
+      StructTok.startToken();
+      StructTok.setKind(tok::kw_struct);
+      StructTok.setLocation(Loc);
+      Token IdentTok = Tok;
+      auto Toks = std::make_unique<Token[]>(2);
+      Toks[0] = StructTok;
+      Toks[1] = IdentTok;
+      PP.EnterTokenStream(std::move(Toks), 2, /*DisableMacroExpansion=*/true, /*IsReinject=*/true);
+      PP.Lex(Tok);
+    }
+  }
   if (DS.getSourceRange().isInvalid()) {
     // Start the range at the current token but make the end of the range
     // invalid.  This will make the entire range invalid unless we successfully
@@ -6118,6 +6154,15 @@ bool Parser::isDeclarationSpecifier(
            getLangOpts().getOpenCLCompatibleVersion() >= 200;
 
   case tok::identifier:   // foo::bar
+    if (getLangOpts().C4() && NextToken().is(tok::l_brace)) {
+      const Token &AfterBrace = GetLookAheadToken(2);
+      if (!AfterBrace.isOneOf(tok::kw_break, tok::kw_continue, tok::kw_return,
+                             tok::kw_goto, tok::kw_if, tok::kw_switch,
+                             tok::kw_for, tok::kw_while, tok::kw_do,
+                             tok::period, tok::kw_case, tok::kw_default)) {
+        return true;
+      }
+    }
     // Unfortunate hack to support "Class.factoryMethod" notation.
     if (getLangOpts().ObjC && NextToken().is(tok::period))
       return false;

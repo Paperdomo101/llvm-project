@@ -453,6 +453,10 @@ private:
     bool C4ArrayBeforeCaret = false;
     unsigned IsC4Reference : 1;
     SourceLocation C4ReferenceLoc;
+    // Set when a named C4 struct (e.g. `Token { ... }`) was injection-rewritten
+    // and intentionally omits a trailing semicolon.
+    // NOTE: Must be a plain bool with a default initialiser – see C4ArrayBeforeCaret.
+    bool C4NamedStructFreestanding = false;
   // ------------------------------------
 
   WrittenBuiltinSpecs writtenBS;
@@ -510,6 +514,9 @@ public:
   }
 
   bool isC4Reference() const { return IsC4Reference; }
+
+  bool isC4NamedStructFreestanding() const { return C4NamedStructFreestanding; }
+  void setC4NamedStructFreestanding() { C4NamedStructFreestanding = true; }
 
   /// OR-in a type-qualifier flag for the given ^ pointer level.
   void addC4PointerLevelQual(unsigned level, unsigned qual) {
