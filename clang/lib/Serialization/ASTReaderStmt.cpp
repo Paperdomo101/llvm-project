@@ -345,6 +345,14 @@ void ASTStmtReader::VisitDeferStmt(DeferStmt *S) {
   S->setBody(Record.readSubStmt());
 }
 
+void ASTStmtReader::VisitC4ErrorHandlerStmt(C4ErrorHandlerStmt *S) {
+  VisitStmt(S);
+  S->setAtLoc(readSourceLocation());
+  S->setErrorVar(cast_or_null<VarDecl>(Record.readDecl()));
+  S->setSubStmt(Record.readSubStmt());
+  S->setHandlerBody(Record.readSubStmt());
+}
+
 void ASTStmtReader::VisitReturnStmt(ReturnStmt *S) {
   VisitStmt(S);
 
@@ -3205,6 +3213,10 @@ Stmt *ASTReader::ReadStmtFromStream(ModuleFile &F) {
 
     case STMT_DEFER:
       S = DeferStmt::CreateEmpty(Context, Empty);
+      break;
+
+    case STMT_C4_ERROR_HANDLER:
+      S = C4ErrorHandlerStmt::CreateEmpty(Context);
       break;
 
     case STMT_RETURN:

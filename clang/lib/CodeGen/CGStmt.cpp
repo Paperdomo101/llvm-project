@@ -113,6 +113,7 @@ void CodeGenFunction::EmitStmt(const Stmt *S, ArrayRef<const Attr *> Attrs) {
   case Stmt::DefaultStmtClass:
   case Stmt::CaseStmtClass:
   case Stmt::DeferStmtClass:
+  case Stmt::C4ErrorHandlerStmtClass:
   case Stmt::SEHLeaveStmtClass:
   case Stmt::SYCLKernelCallStmtClass:
     llvm_unreachable("should have emitted these statements as simple");
@@ -543,6 +544,9 @@ bool CodeGenFunction::EmitSimpleStmt(const Stmt *S,
     break;
   case Stmt::DeferStmtClass:
     EmitDeferStmt(cast<DeferStmt>(*S));
+    break;
+  case Stmt::C4ErrorHandlerStmtClass:
+    EmitC4ErrorHandlerStmt(cast<C4ErrorHandlerStmt>(*S));
     break;
   case Stmt::SEHLeaveStmtClass:
     EmitSEHLeaveStmt(cast<SEHLeaveStmt>(*S));
@@ -2038,6 +2042,58 @@ struct EmitDeferredStatement final : EHScopeStack::Cleanup {
 
 void CodeGenFunction::EmitDeferStmt(const DeferStmt &S) {
   EHStack.pushCleanup<EmitDeferredStatement>(NormalAndEHCleanup, &S);
+}
+
+// C4: @error { ... } / @error(e) { ... } statement.
+//
+// When the guarded statement contains a C4 bounds-checked array subscript that
+// would normally abort(), we redirect the trap path into the handler body and
+// then continue at AfterBB.
+//
+// For @error(e) { ... }:
+//   A char[512] message buffer and a const-char-* 'e' slot are allocated in
+//   the function entry block here.  The 'e' slot is pre-registered in
+//   LocalDeclMap so that DeclRefExprs in the handler body resolve correctly.
+//   EmitArraySubscriptExpr fills the buffer with snprintf when a trap fires.
+void CodeGenFunction::EmitC4ErrorHandlerStmt(const C4ErrorHandlerStmt &S) {
+  llvm::BasicBlock *AfterBB = createBasicBlock("c4_after_error");
+
+  llvm::Value *ErrBufPtr = nullptr;
+
+  if (S.hasErrorVar()) {
+    // Allocate char[512] for the formatted error message (entry-block alloca).
+    llvm::Type *BufTy = llvm::ArrayType::get(Int8Ty, 512);
+    RawAddress BufAlloca =
+        CreateTempAlloca(BufTy, CharUnits::One(), "c4_err_buf");
+    // GEP to i8* pointing at buf[0].
+    ErrBufPtr = Builder.CreateConstInBoundsGEP2_32(
+        BufTy, BufAlloca.getPointer(), 0, 0, "c4_err_buf_ptr");
+
+    // Allocate storage for the 'e' variable (a const char * slot).
+    QualType ConstCharPtrTy =
+        getContext().getPointerType(getContext().getConstType(getContext().CharTy));
+    RawAddress ErrVarRaw = CreateMemTemp(ConstCharPtrTy, "c4_e_var");
+    // Point 'e' at the buffer from the start so snprintf just fills it.
+    Builder.CreateStore(ErrBufPtr, Address(ErrVarRaw));
+
+    // Pre-register the slot so DeclRefExprs for 'e' inside the handler body
+    // resolve to it.  (No DeclStmt for 'e' will be emitted — it was scope-
+    // injected by Sema without going through the normal declaration path.)
+    Address ErrVarAddr(ErrVarRaw);
+    LocalDeclMap.insert(
+        {S.getErrorVar()->getCanonicalDecl(), ErrVarAddr});
+  }
+
+  CurrentC4BoundsErrorHandler = {AfterBB, &S, ErrBufPtr};
+
+  EmitStmt(S.getSubStmt());
+
+  CurrentC4BoundsErrorHandler = std::nullopt;
+
+  // Normal (non-trapping) path falls through to AfterBB.
+  EmitBranch(AfterBB);
+
+  EmitBlock(AfterBB);
 }
 
 /// CollectStatementsForCase - Given the body of a 'switch' statement and a

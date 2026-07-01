@@ -496,6 +496,14 @@ void StmtPrinter::VisitDeferStmt(DeferStmt *Node) {
   PrintControlledStmt(Node->getBody());
 }
 
+void StmtPrinter::VisitC4ErrorHandlerStmt(C4ErrorHandlerStmt *Node) {
+  PrintStmt(Node->getSubStmt());
+  Indent() << "@error";
+  if (Node->hasErrorVar())
+    OS << "(" << Node->getErrorVar()->getName() << ")";
+  PrintControlledStmt(Node->getHandlerBody());
+}
+
 void StmtPrinter::VisitReturnStmt(ReturnStmt *Node) {
   Indent() << "return";
   if (Node->getRetValue()) {

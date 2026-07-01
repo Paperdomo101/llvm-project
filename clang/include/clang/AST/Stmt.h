@@ -3283,6 +3283,68 @@ public:
   }
 };
 
+/// C4ErrorHandlerStmt - C4 language extension: a statement guarded by an
+/// @error handler block. When the guarded statement triggers a runtime
+/// bounds-check error the handler body is executed instead of aborting.
+///
+/// Syntax:
+///   stmt @error { handler-body }
+///   stmt @error(e) { handler-body }   // e is const char * bound to the message
+class C4ErrorHandlerStmt : public Stmt {
+  friend class ASTStmtReader;
+
+  enum { SUBSTMT, HANDLER, END_EXPR };
+
+  /// SubStmts[SUBSTMT]  – the guarded statement.
+  /// SubStmts[HANDLER]  – the handler compound-statement.
+  Stmt *SubStmts[END_EXPR];
+
+  SourceLocation AtLoc;
+
+  /// Non-null when @error(e) was written; the VarDecl for 'e' (const char *).
+  VarDecl *ErrorVar;
+
+  C4ErrorHandlerStmt(EmptyShell Empty);
+  C4ErrorHandlerStmt(SourceLocation AtLoc, Stmt *SubStmt, Stmt *HandlerBody,
+                     VarDecl *ErrorVar);
+
+public:
+  static C4ErrorHandlerStmt *Create(ASTContext &Ctx, SourceLocation AtLoc,
+                                    Stmt *SubStmt, Stmt *HandlerBody,
+                                    VarDecl *ErrorVar = nullptr);
+  static C4ErrorHandlerStmt *CreateEmpty(ASTContext &Ctx);
+
+  Stmt *getSubStmt() { return SubStmts[SUBSTMT]; }
+  const Stmt *getSubStmt() const { return SubStmts[SUBSTMT]; }
+  void setSubStmt(Stmt *S) { SubStmts[SUBSTMT] = S; }
+
+  Stmt *getHandlerBody() { return SubStmts[HANDLER]; }
+  const Stmt *getHandlerBody() const { return SubStmts[HANDLER]; }
+  void setHandlerBody(Stmt *S) { SubStmts[HANDLER] = S; }
+
+  VarDecl *getErrorVar() { return ErrorVar; }
+  const VarDecl *getErrorVar() const { return ErrorVar; }
+  void setErrorVar(VarDecl *VD) { ErrorVar = VD; }
+  bool hasErrorVar() const { return ErrorVar != nullptr; }
+
+  SourceLocation getAtLoc() const { return AtLoc; }
+  void setAtLoc(SourceLocation Loc) { AtLoc = Loc; }
+
+  SourceLocation getBeginLoc() const { return AtLoc; }
+  SourceLocation getEndLoc() const { return SubStmts[HANDLER]->getEndLoc(); }
+
+  child_range children() {
+    return child_range(SubStmts, SubStmts + END_EXPR);
+  }
+  const_child_range children() const {
+    return const_child_range(SubStmts, SubStmts + END_EXPR);
+  }
+
+  static bool classof(const Stmt *S) {
+    return S->getStmtClass() == C4ErrorHandlerStmtClass;
+  }
+};
+
 /// AsmStmt is the base class for GCCAsmStmt and MSAsmStmt.
 class AsmStmt : public Stmt {
 protected:

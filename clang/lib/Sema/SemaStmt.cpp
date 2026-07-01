@@ -3992,6 +3992,26 @@ StmtResult Sema::ActOnEndOfDeferStmt(Stmt *Body,
   return DeferStmt::Create(Context, DeferLoc, Body);
 }
 
+VarDecl *Sema::ActOnC4ErrorHandlerVarDecl(SourceLocation Loc,
+                                           IdentifierInfo *II, Scope *S) {
+  // Synthesize:  const char *<name>;
+  // (No initializer; CodeGen will fill the alloca with the formatted message.)
+  QualType Ty = Context.getPointerType(Context.getConstType(Context.CharTy));
+  VarDecl *VD =
+      VarDecl::Create(Context, CurContext, Loc, Loc, II, Ty,
+                      Context.getTrivialTypeSourceInfo(Ty, Loc), SC_None);
+  VD->setImplicit(true);
+  PushOnScopeChains(VD, S, /*AddToContext=*/true);
+  return VD;
+}
+
+StmtResult Sema::ActOnC4ErrorHandlerStmt(SourceLocation AtLoc, Stmt *SubStmt,
+                                          Stmt *HandlerBody,
+                                          VarDecl *ErrorVar) {
+  return C4ErrorHandlerStmt::Create(Context, AtLoc, SubStmt, HandlerBody,
+                                    ErrorVar);
+}
+
 static bool CheckSimplerImplicitMovesMSVCWorkaround(const Sema &S,
                                                     const Expr *E) {
   if (!E || !S.getLangOpts().CPlusPlus23 || !S.getLangOpts().MSVCCompat)

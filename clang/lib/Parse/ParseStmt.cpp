@@ -1504,6 +1504,25 @@ StmtResult Parser::ParseCompoundStatementBody(bool isStmtExpr) {
       }
     }
 
+    // C4: check for @error { ... } / @error(e) { ... } suffix handler
+    if (getLangOpts().C4() &&
+        Tok.is(tok::at) &&
+        GetLookAheadToken(1).is(tok::identifier) &&
+        GetLookAheadToken(1).getIdentifierInfo() &&
+        GetLookAheadToken(1).getIdentifierInfo()->isStr("error")) {
+      if (R.isUsable()) {
+        R = ParseC4ErrorHandlerSuffix(R.get());
+      } else if (!Stmts.empty()) {
+        Stmt *LastStmt = Stmts.pop_back_val();
+        StmtResult Wrapped = ParseC4ErrorHandlerSuffix(LastStmt);
+        if (Wrapped.isUsable()) {
+          Stmts.push_back(Wrapped.get());
+        } else {
+          Stmts.push_back(LastStmt);
+        }
+      }
+    }
+
     if (R.isUsable())
       Stmts.push_back(R.get());
     LastIsError = R.isInvalid();
@@ -3157,10 +3176,68 @@ StmtResult Parser::ParseDeferStatement(SourceLocation *TrailingElseLoc) {
   }
 
   OnError.release();
-  return Actions.ActOnEndOfDeferStmt(Res.get(), getCurScope());
-}
+    return Actions.ActOnEndOfDeferStmt(Res.get(), getCurScope());
+  }
 
-StmtResult Parser::ParsePragmaLoopHint(StmtVector &Stmts,
+  // C4: Parse @error { ... } or @error(e) { ... } as a suffix to an already-
+  // parsed statement.
+  //
+  //   @error-suffix:
+  //     '@' 'error' compound-statement
+  //     '@' 'error' '(' identifier ')' compound-statement
+  //
+  // The guarded statement is passed in; a C4ErrorHandlerStmt wrapping both is
+  // returned.
+  StmtResult Parser::ParseC4ErrorHandlerSuffix(Stmt *GuardedStmt) {
+    assert(Tok.is(tok::at) && "Expected '@'");
+    SourceLocation AtLoc = ConsumeToken(); // '@'
+
+    assert(Tok.is(tok::identifier) && Tok.getIdentifierInfo()->isStr("error"));
+    ConsumeToken(); // 'error'
+
+    // Optional (e) parameter.
+    IdentifierInfo *ErrorVarII = nullptr;
+    SourceLocation ErrorVarLoc;
+    if (Tok.is(tok::l_paren)) {
+      ConsumeParen(); // '('
+      if (Tok.isNot(tok::identifier)) {
+        Diag(Tok, diag::err_expected) << tok::identifier;
+        SkipUntil(tok::r_brace, StopAtSemi);
+        return GuardedStmt;
+      }
+      ErrorVarII = Tok.getIdentifierInfo();
+      ErrorVarLoc = Tok.getLocation();
+      ConsumeToken(); // identifier
+      if (ExpectAndConsume(tok::r_paren))
+        return GuardedStmt;
+    }
+
+    if (Tok.isNot(tok::l_brace)) {
+      Diag(Tok, diag::err_expected) << tok::l_brace;
+      return GuardedStmt;
+    }
+
+    // Open a new scope so that 'e' (if present) is visible inside the handler
+    // body but not outside.
+    ParseScope ErrorHandlerScope(this, Scope::DeclScope,
+                                 /*ScopeFlags=*/ErrorVarII != nullptr);
+
+    VarDecl *ErrorVarDecl = nullptr;
+    if (ErrorVarII) {
+      ErrorVarDecl =
+          Actions.ActOnC4ErrorHandlerVarDecl(ErrorVarLoc, ErrorVarII,
+                                             getCurScope());
+    }
+
+    StmtResult HandlerBody = ParseCompoundStatement();
+    if (HandlerBody.isInvalid())
+      return GuardedStmt;
+
+    return Actions.ActOnC4ErrorHandlerStmt(AtLoc, GuardedStmt,
+                                           HandlerBody.get(), ErrorVarDecl);
+  }
+
+  StmtResult Parser::ParsePragmaLoopHint(StmtVector &Stmts,
                                        ParsedStmtContext StmtCtx,
                                        SourceLocation *TrailingElseLoc,
                                        ParsedAttributes &Attrs,

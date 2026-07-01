@@ -5026,10 +5026,14 @@ LValue CodeGenFunction::EmitArraySubscriptExpr(const ArraySubscriptExpr *E,
   }
 
   QualType BaseTy = BaseExpr->getType();
+  QualType CheckTy = BaseTy;
+  if (CheckTy->isPointerType()) {
+    CheckTy = CheckTy->getPointeeType();
+  }
 
- // If the isolated base object represents our custom array metadata structure layout
-  if (BaseTy->isRecordType()) {
-    const RecordDecl *RD = BaseTy->getAsRecordDecl();
+  // If the isolated base object represents our custom array metadata structure layout
+  if (CheckTy->isRecordType()) {
+    const RecordDecl *RD = CheckTy->getAsRecordDecl();
     if (RD && RD->hasAttr<C4BoundsCheckedArrayAttr>() && RD->getIdentifier() == nullptr &&
         RD->lookup(&CGM.getContext().Idents.get(C4_ARRAY_CAPACITY_FIELD)).isSingleResult()) {
 
@@ -5235,6 +5239,37 @@ LValue CodeGenFunction::EmitArraySubscriptExpr(const ArraySubscriptExpr *E,
       // ---------------------------------------------------------
 
       // ---------------------------------------------------------
+      // C4 @error handler detection
+      // ---------------------------------------------------------
+      // If an @error handler is active (set by EmitC4ErrorHandlerStmt),
+      // redirect trap blocks into the handler instead of calling abort().
+
+      bool C4HasHandler = CurrentC4BoundsErrorHandler.has_value();
+      bool C4HasErrorVar =
+          C4HasHandler && (CurrentC4BoundsErrorHandler->ErrBufPtr != nullptr);
+
+      // Create the handler landing block before the sub-blocks so each
+      // sub-block can branch to it.
+      llvm::BasicBlock *C4HandlerBB =
+          C4HasHandler ? createBasicBlock("c4_error_handler") : nullptr;
+
+      // snprintf(buf, 512, fmt, ...) — only needed when @error(e) captures
+      // the message string.
+      llvm::FunctionCallee SnprintfFn;
+      llvm::Value *C4ErrBufPtr = nullptr;
+      llvm::Value *C4SnprintfSz = nullptr;
+      if (C4HasErrorVar) {
+        C4ErrBufPtr = CurrentC4BoundsErrorHandler->ErrBufPtr;
+        C4SnprintfSz = llvm::ConstantInt::get(Int64Ty, 512);
+        SnprintfFn = CGM.getModule().getOrInsertFunction(
+            "snprintf",
+            llvm::FunctionType::get(
+                IntTy,
+                {Builder.getPtrTy(), Int64Ty, Builder.getPtrTy()},
+                /*isVarArg=*/true));
+      }
+
+      // ---------------------------------------------------------
       // Trap sub-blocks
       // ---------------------------------------------------------
 
@@ -5257,16 +5292,25 @@ LValue CodeGenFunction::EmitArraySubscriptExpr(const ArraySubscriptExpr *E,
 
       EmitBlock(EmptyBB);
 
-      Builder.CreateCall(
-          PrintfFn,
-          {EmptyFmtPtr,
-           FileNamePtr,
-           LineVal,
-           IdxSigned64,
-           ArrayNamePtr});
-
-      Builder.CreateCall(AbortFn);
-      Builder.CreateUnreachable();
+      if (C4HandlerBB) {
+        // @error handler: optionally capture message, then jump to handler.
+        if (C4HasErrorVar)
+          Builder.CreateCall(
+              SnprintfFn,
+              {C4ErrBufPtr, C4SnprintfSz, EmptyFmtPtr,
+               FileNamePtr, LineVal, IdxSigned64, ArrayNamePtr});
+        Builder.CreateBr(C4HandlerBB);
+      } else {
+        Builder.CreateCall(
+            PrintfFn,
+            {EmptyFmtPtr,
+             FileNamePtr,
+             LineVal,
+             IdxSigned64,
+             ArrayNamePtr});
+        Builder.CreateCall(AbortFn);
+        Builder.CreateUnreachable();
+      }
 
       // =========================================================
       // Non-empty array
@@ -5286,17 +5330,25 @@ LValue CodeGenFunction::EmitArraySubscriptExpr(const ArraySubscriptExpr *E,
 
         EmitBlock(NegativeBB);
 
-        Builder.CreateCall(
-            PrintfFn,
-            {NegativeFmtPtr,
-             FileNamePtr,
-             LineVal,
-             IdxSigned64,
-             ArrayNamePtr,
-             Size64});
-
-        Builder.CreateCall(AbortFn);
-        Builder.CreateUnreachable();
+        if (C4HandlerBB) {
+          if (C4HasErrorVar)
+            Builder.CreateCall(
+                SnprintfFn,
+                {C4ErrBufPtr, C4SnprintfSz, NegativeFmtPtr,
+                 FileNamePtr, LineVal, IdxSigned64, ArrayNamePtr, Size64});
+          Builder.CreateBr(C4HandlerBB);
+        } else {
+          Builder.CreateCall(
+              PrintfFn,
+              {NegativeFmtPtr,
+               FileNamePtr,
+               LineVal,
+               IdxSigned64,
+               ArrayNamePtr,
+               Size64});
+          Builder.CreateCall(AbortFn);
+          Builder.CreateUnreachable();
+        }
       } else {
         Builder.CreateBr(RangeBB);
       }
@@ -5307,19 +5359,45 @@ LValue CodeGenFunction::EmitArraySubscriptExpr(const ArraySubscriptExpr *E,
 
       EmitBlock(RangeBB);
 
-      Builder.CreateCall(
-          PrintfFn,
-          {BoundsFmtPtr,
-           FileNamePtr,
-           LineVal,
-           IdxUnsigned64,
-           ArrayNamePtr,
-           Size64,
-           IdxUnsigned64,
-           MaxIdx64});
+      if (C4HandlerBB) {
+        if (C4HasErrorVar)
+          Builder.CreateCall(
+              SnprintfFn,
+              {C4ErrBufPtr, C4SnprintfSz, BoundsFmtPtr,
+               FileNamePtr, LineVal, IdxUnsigned64, ArrayNamePtr,
+               Size64, IdxUnsigned64, MaxIdx64});
+        Builder.CreateBr(C4HandlerBB);
+      } else {
+        Builder.CreateCall(
+            PrintfFn,
+            {BoundsFmtPtr,
+             FileNamePtr,
+             LineVal,
+             IdxUnsigned64,
+             ArrayNamePtr,
+             Size64,
+             IdxUnsigned64,
+             MaxIdx64});
+        Builder.CreateCall(AbortFn);
+        Builder.CreateUnreachable();
+      }
 
-      Builder.CreateCall(AbortFn);
-      Builder.CreateUnreachable();
+      // =========================================================
+      // @error handler body (when handler is active)
+      // =========================================================
+
+      if (C4HandlerBB) {
+        EmitBlock(C4HandlerBB);
+        // Temporarily clear the handler so that any bounds-checked subscripts
+        // *inside* the handler body do not recurse back here.
+        auto SavedHandler = *CurrentC4BoundsErrorHandler;
+        CurrentC4BoundsErrorHandler = std::nullopt;
+        EmitStmt(SavedHandler.HandlerStmt->getHandlerBody());
+        // Restore so that other subscripts in the same guarded statement can
+        // also use the handler.
+        CurrentC4BoundsErrorHandler = SavedHandler;
+        EmitBranch(SavedHandler.AfterBB);
+      }
 
       // =========================================================
       // Safe path resumes here

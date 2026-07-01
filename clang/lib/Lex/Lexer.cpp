@@ -4635,8 +4635,8 @@ LexStart:
     break;
 
   case '@':
-    // Objective C support.
-    if (CurPtr[-1] == '@' && LangOpts.ObjC) {
+    // Objective C support (and C4 which also uses @).
+    if (CurPtr[-1] == '@' && (LangOpts.ObjC || LangOpts.C4Mode)) {
       FormTokenWithChars(Result, CurPtr, tok::at);
       if (PP && Result.isAtPhysicalStartOfLine() && !LexingRawMode &&
           !Is_PragmaLexer) {

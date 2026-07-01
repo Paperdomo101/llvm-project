@@ -2081,6 +2081,9 @@ enum StmtCode {
   EXPR_HLSL_OUT_ARG,
 
   STMT_DEFER,
+
+  // C4 error-handler statement: @error { ... } / @error(e) { ... }
+  STMT_C4_ERROR_HANDLER,
 };
 
 /// The kinds of designators that can occur in a

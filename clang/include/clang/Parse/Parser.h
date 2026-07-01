@@ -7643,6 +7643,12 @@ public:
   /// \endverbatim
   StmtResult ParseDeferStatement(SourceLocation *TrailingElseLoc);
 
+  /// ParseC4ErrorHandlerSuffix - Parse a C4 \@error { ... } or
+  /// \@error(e) { ... } suffix that wraps an already-parsed statement.
+  /// Called from ParseCompoundStatementBody when \@ 'error' is seen after a
+  /// statement.  The caller passes the already-parsed guarded statement.
+  StmtResult ParseC4ErrorHandlerSuffix(Stmt *GuardedStmt);
+
   StmtResult ParsePragmaLoopHint(StmtVector &Stmts, ParsedStmtContext StmtCtx,
                                  SourceLocation *TrailingElseLoc,
                                  ParsedAttributes &Attrs,

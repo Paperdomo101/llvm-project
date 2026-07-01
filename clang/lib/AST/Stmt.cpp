@@ -1553,3 +1553,25 @@ DeferStmt *DeferStmt::Create(ASTContext &Context, SourceLocation DeferLoc,
                              Stmt *Body) {
   return new (Context) DeferStmt(DeferLoc, Body);
 }
+
+C4ErrorHandlerStmt::C4ErrorHandlerStmt(EmptyShell Empty)
+    : Stmt(C4ErrorHandlerStmtClass, Empty), ErrorVar(nullptr) {}
+
+C4ErrorHandlerStmt::C4ErrorHandlerStmt(SourceLocation AtLoc, Stmt *SubStmt,
+                                       Stmt *HandlerBody, VarDecl *ErrorVar)
+    : Stmt(C4ErrorHandlerStmtClass), AtLoc(AtLoc), ErrorVar(ErrorVar) {
+  SubStmts[SUBSTMT] = SubStmt;
+  SubStmts[HANDLER] = HandlerBody;
+}
+
+C4ErrorHandlerStmt *C4ErrorHandlerStmt::Create(ASTContext &Ctx,
+                                               SourceLocation AtLoc,
+                                               Stmt *SubStmt,
+                                               Stmt *HandlerBody,
+                                               VarDecl *ErrorVar) {
+  return new (Ctx) C4ErrorHandlerStmt(AtLoc, SubStmt, HandlerBody, ErrorVar);
+}
+
+C4ErrorHandlerStmt *C4ErrorHandlerStmt::CreateEmpty(ASTContext &Ctx) {
+  return new (Ctx) C4ErrorHandlerStmt(EmptyShell());
+}

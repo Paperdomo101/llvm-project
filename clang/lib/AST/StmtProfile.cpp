@@ -328,6 +328,12 @@ void StmtProfiler::VisitReturnStmt(const ReturnStmt *S) {
 
 void StmtProfiler::VisitDeferStmt(const DeferStmt *S) { VisitStmt(S); }
 
+void StmtProfiler::VisitC4ErrorHandlerStmt(const C4ErrorHandlerStmt *S) {
+  VisitStmt(S);
+  if (S->getErrorVar())
+    VisitDecl(S->getErrorVar());
+}
+
 void StmtProfiler::VisitGCCAsmStmt(const GCCAsmStmt *S) {
   VisitStmt(S);
   ID.AddBoolean(S->isVolatile());

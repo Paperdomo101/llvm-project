@@ -334,6 +334,10 @@ CompilerTest custom_test_suite[] = {
         "Custom C4 switch syntax",
         "tests/switch_syntax_runtime.c4", true
     },
+    {
+        "@error handler (@error {}, @error(e) {}, negative-index, in-range no-fire)",
+        "tests/error_handler_test.c4", true
+    },
 };
 
 bool run_compiler_tests(const char *compiler_path) {

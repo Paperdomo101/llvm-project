@@ -8648,6 +8648,21 @@ StmtResult TreeTransform<Derived>::TransformDeferStmt(DeferStmt *S) {
   return DeferStmt::Create(getSema().Context, S->getDeferLoc(), Result.get());
 }
 
+template <typename Derived>
+StmtResult
+TreeTransform<Derived>::TransformC4ErrorHandlerStmt(C4ErrorHandlerStmt *S) {
+  StmtResult SubResult = getDerived().TransformStmt(S->getSubStmt());
+  if (!SubResult.isUsable())
+    return StmtError();
+  StmtResult HandlerResult = getDerived().TransformStmt(S->getHandlerBody());
+  if (!HandlerResult.isUsable())
+    return StmtError();
+  // The ErrorVar VarDecl is synthetic (implicit); we just reuse the original.
+  return C4ErrorHandlerStmt::Create(getSema().Context, S->getAtLoc(),
+                                    SubResult.get(), HandlerResult.get(),
+                                    S->getErrorVar());
+}
+
 template<typename Derived>
 StmtResult
 TreeTransform<Derived>::TransformReturnStmt(ReturnStmt *S) {

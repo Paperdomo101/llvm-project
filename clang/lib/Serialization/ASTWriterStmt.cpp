@@ -338,6 +338,15 @@ void ASTStmtWriter::VisitDeferStmt(DeferStmt *S) {
   Code = serialization::STMT_DEFER;
 }
 
+void ASTStmtWriter::VisitC4ErrorHandlerStmt(C4ErrorHandlerStmt *S) {
+  VisitStmt(S);
+  Record.AddSourceLocation(S->getAtLoc());
+  Record.AddDeclRef(S->getErrorVar());
+  Record.AddStmt(S->getSubStmt());
+  Record.AddStmt(S->getHandlerBody());
+  Code = serialization::STMT_C4_ERROR_HANDLER;
+}
+
 void ASTStmtWriter::VisitReturnStmt(ReturnStmt *S) {
   VisitStmt(S);
 

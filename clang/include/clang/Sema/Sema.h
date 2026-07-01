@@ -11311,6 +11311,12 @@ public:
   void ActOnDeferStmtError(Scope *CurScope);
   StmtResult ActOnEndOfDeferStmt(Stmt *Body, Scope *CurScope);
 
+  // C4: @error handler statement
+  VarDecl *ActOnC4ErrorHandlerVarDecl(SourceLocation Loc, IdentifierInfo *II,
+                                       Scope *S);
+  StmtResult ActOnC4ErrorHandlerStmt(SourceLocation AtLoc, Stmt *SubStmt,
+                                     Stmt *HandlerBody, VarDecl *ErrorVar);
+
   struct NamedReturnInfo {
     const VarDecl *Candidate;
 

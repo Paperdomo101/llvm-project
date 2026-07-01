@@ -1550,6 +1550,21 @@ private:
   /// decls.
   DeclMapTy LocalDeclMap;
 
+  /// C4: Information about the currently active @error handler, if any.
+  /// Set by EmitC4ErrorHandlerStmt and read by EmitArraySubscriptExpr to
+  /// redirect bounds-check failures into the handler instead of abort().
+  struct C4BoundsErrorHandlerInfo {
+    /// Basic block to branch to after the handler body (the continuation of
+    /// the @error statement).
+    llvm::BasicBlock *AfterBB;
+    /// The @error AST node (needed to access the handler body and error var).
+    const C4ErrorHandlerStmt *HandlerStmt;
+    /// Pointer to a char[512] buffer pre-allocated in the function entry for
+    /// snprintf. Null when the @error has no error-variable (i.e. @error {}).
+    llvm::Value *ErrBufPtr;
+  };
+  std::optional<C4BoundsErrorHandlerInfo> CurrentC4BoundsErrorHandler;
+
   // Keep track of the cleanups for callee-destructed parameters pushed to the
   // cleanup stack so that they can be deactivated later.
   llvm::DenseMap<const ParmVarDecl *, EHScopeStack::stable_iterator>
@@ -3673,6 +3688,7 @@ public:
   void EmitCaseStmt(const CaseStmt &S, ArrayRef<const Attr *> Attrs);
   void EmitCaseStmtRange(const CaseStmt &S, ArrayRef<const Attr *> Attrs);
   void EmitDeferStmt(const DeferStmt &S);
+  void EmitC4ErrorHandlerStmt(const C4ErrorHandlerStmt &S);
   void EmitAsmStmt(const AsmStmt &S);
 
   const BreakContinue *GetDestForLoopControlStmt(const LoopControlStmt &S);

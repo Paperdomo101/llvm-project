@@ -1,0 +1,111 @@
+// tests/error_handler_test.c4
+//
+// Runtime test for the @error { } and @error(e) { } handler syntax.
+// Uses runtime (non-constant) indices so the static bounds checker
+// does not fire at compile time — @error is for runtime errors.
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+poptest ([]int stack) int {
+    return stack[--#.stack];
+    @error { printf("OOPS! stack underflow\n") }
+}
+
+reftest (&[]int stack) int {
+    return stack[--#.stack];
+    @error { printf("OOPS! &stack underflow\n") }
+}
+
+int main(void) {
+
+    // =========================================================================
+    // 1. @error { } — no error variable; handler fires, statement is skipped.
+    // =========================================================================
+
+    [] int arr0 = {};
+    b := poptest(arr0);
+    r := reftest(arr0);
+
+    int warned = 0;
+    [] int arr1 = { 10, 20, 30 };
+
+
+    // IN-range: handler must NOT fire.
+    int idx_ok = 0;
+    arr1[idx_ok] = 99;
+    @error { fprintf(stderr, "FAIL: @error fired for in-range access\n"); return 1; }
+
+    if (arr1[0] != 99) {
+        fprintf(stderr, "FAIL: arr1[0] in-range write wrong value\n");
+        return 1;
+    }
+
+    // OUT-OF-RANGE: handler must fire.
+    int idx_bad = 5;   // runtime value, not a constant
+    arr1[idx_bad] = 7; // OOB — skipped by handler
+    @error { warned = 1; }
+
+    if (warned != 1) {
+        fprintf(stderr, "FAIL: @error block did not fire for OOB access\n");
+        return 1;
+    }
+
+    // =========================================================================
+    // 2. @error(e) { } — error variable receives the formatted message string.
+    // =========================================================================
+
+    const char *msg = NULL;
+    [] int arr2 = { 1, 2 };
+    int idx_oob = 10;  // runtime value
+
+    arr2[idx_oob] = 5; // OOB
+    @error(e) { msg = e; }
+
+    if (msg == NULL) {
+        fprintf(stderr, "FAIL: @error(e) block did not set msg\n");
+        return 1;
+    }
+    // The message must mention "out of bounds" (the runtime formatter fills it).
+    if (strstr(msg, "out of bounds") == NULL && strstr(msg, "out of bounds") == NULL) {
+        fprintf(stderr, "FAIL: error message missing 'out of bounds': %s", msg);
+        return 1;
+    }
+    printf("PASS: error message captured: %s", msg);
+
+    // =========================================================================
+    // 3. Execution continues normally after the @error block.
+    // =========================================================================
+
+    [] int arr3 = { 100, 200, 300 };
+    int result = 0;
+    int idx_valid = 1;
+
+    result = arr3[idx_valid]; // in-range
+    @error { result = -1; }
+
+    if (result != 200) {
+        fprintf(stderr, "FAIL: in-range access returned wrong value %d\n", result);
+        return 1;
+    }
+
+    // =========================================================================
+    // 4. Negative index is also handled.
+    // =========================================================================
+
+    int neg_warned = 0;
+    [] int arr4 = { 7, 8, 9 };
+    int idx_neg = -1; // runtime signed negative index
+
+    arr4[idx_neg] = 0; // negative OOB
+    @error { neg_warned = 1; }
+
+    if (neg_warned != 1) {
+        fprintf(stderr, "FAIL: @error did not fire for negative index\n");
+        return 1;
+    }
+
+    printf("PASS: all @error handler tests passed\n");
+    return 0;
+}
