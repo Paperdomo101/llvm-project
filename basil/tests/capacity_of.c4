@@ -1,4 +1,4 @@
-typedef unsigned long size_t;
+typedef __SIZE_TYPE__ size_t;
 typedef unsigned char uint8_t;
 typedef signed char int8_t;
 typedef unsigned short uint16_t;
@@ -23,7 +23,7 @@ enum DummyEnum { VAL_A, VAL_B };
 // RUN: %clang_cc1 -fsyntax-only -verify %s
 // expected-no-diagnostics
 
-typedef unsigned long size_t;
+typedef __SIZE_TYPE__ size_t;
 
 // Standard populated enum group layout
 enum SampleEnum {

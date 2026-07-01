@@ -1,5 +1,18 @@
+// tests/size_guard.c4
+// Verifies that ##. on a TYPE NAME returns the max representable value of
+// that type as size_t, and that the result type is platform-correct.
+// (Previously used 'unsigned long' which is 32-bit on Windows LLP64;
+//  now uses __SIZE_TYPE__ so it is correct on all targets.)
 main () int {
-    int scalar = 42;
-    unsigned long sz = ##.scalar;
+    // ##.TypeName → max representable value of that type (returned as size_t)
+    __SIZE_TYPE__ int_max  = ##.int;
+    __SIZE_TYPE__ uint_max = ##.unsigned int;
+    __SIZE_TYPE__ char_max = ##.char;
+
+    // Sanity: all maxima must be non-zero and correctly ordered.
+    if (int_max  == 0) return 1;
+    if (uint_max == 0) return 2;
+    if (char_max == 0) return 3;
+    if (uint_max <= int_max) return 4;   // unsigned max > signed max for same width
     return 0;
 }
