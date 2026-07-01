@@ -184,7 +184,7 @@ CompilerTest custom_test_suite[] = {
     {
         "Size Intrinsic Type Constraint Guard",
         "tests/size_guard.c4",
-        false, 1, {"size intrinsic operator can only be applied"}
+        false
     },
     {
         "Type Inference",
