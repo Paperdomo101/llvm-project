@@ -340,11 +340,14 @@ struct C4ParsedEnumElement {
 
 // C4: ParseC4EnumDeclaration
 // Syntax:  Name ':' [Type] '{' Member ['=' Expr] [',' ...] '}'
+// Anonymous:  _ ':' [Type] '{' Member ... '}' VarName ['=' Init]
 OpaquePtr<DeclGroupRef> Parser::ParseC4EnumDeclaration(SourceLocation *DeclEnd) {
   assert(Tok.is(tok::identifier) && "expected identifier for enum name");
 
   IdentifierInfo *EnumName = Tok.getIdentifierInfo();
   SourceLocation NameLoc = ConsumeToken(); // consume name
+  // '_' as the enum name signals an anonymous enum with an inline variable.
+  bool IsAnonymous = EnumName->isStr("_");
 
   // Consume ':'
   assert(Tok.is(tok::colon));
@@ -414,8 +417,6 @@ OpaquePtr<DeclGroupRef> Parser::ParseC4EnumDeclaration(SourceLocation *DeclEnd) 
 
   if (DeclEnd) *DeclEnd = RBraceLoc;
 
-  TryConsumeOptionalSemi();
-
   // Build Sema element list
   SmallVector<Sema::C4EnumElement, 8> SemaElems;
   for (auto &E : Elements) {
@@ -426,9 +427,35 @@ OpaquePtr<DeclGroupRef> Parser::ParseC4EnumDeclaration(SourceLocation *DeclEnd) 
     SemaElems.push_back(std::move(SE));
   }
 
-  return Actions.ActOnC4EnumDeclaration(getCurScope(), NameLoc, EnumName,
-                                        UnderlyingType, LBraceLoc, SemaElems,
-                                        RBraceLoc);
+  // Register the enum (and its constants) in scope first.  For anonymous enums
+  // this must happen before we parse any initializer expression so that
+  // implicit-dot forms like  .ERROR  can resolve.
+  OpaquePtr<DeclGroupRef> EnumDG =
+      Actions.ActOnC4EnumDeclaration(getCurScope(), NameLoc, EnumName,
+                                     UnderlyingType, LBraceLoc, SemaElems,
+                                     RBraceLoc, IsAnonymous);
+
+  // Anonymous enum: look for an inline variable declarator.
+  //   _ : { ERROR, SIMULATE, COMPILE } mode = .ERROR;
+  //                                    ^^^^^^^^^^^^^^^^
+  if (IsAnonymous && Tok.is(tok::identifier)) {
+    IdentifierInfo *VarName = Tok.getIdentifierInfo();
+    SourceLocation VarNameLoc = ConsumeToken(); // consume variable name
+    ExprResult Init;
+    if (Tok.is(tok::equal)) {
+      ConsumeToken(); // consume '='
+      Init = ParseAssignmentExpression();
+    }
+    if (DeclEnd && Init.isUsable())
+      *DeclEnd = Init.get()->getEndLoc();
+    TryConsumeOptionalSemi();
+    return Actions.ActOnC4AnonEnumVarDecl(getCurScope(), EnumDG, VarName,
+                                          VarNameLoc,
+                                          Init.isUsable() ? Init.get() : nullptr);
+  }
+
+  TryConsumeOptionalSemi();
+  return EnumDG;
 }
 
 /////----------------- END C4 CODE -----------------/////

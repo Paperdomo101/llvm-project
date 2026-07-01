@@ -1,0 +1,62 @@
+// tests/anon_enum_runtime.c4
+// Runtime tests for C4 anonymous enum declarations.
+//   _ : { A, B, C } varname = .A;
+//   _ : int { X, Y, Z } v;
+// Exit 0 = all assertions passed.
+#include <stdio.h>
+#include <stdlib.h>
+
+// ── Anonymous enum at file scope with initializer ────────────────────────────
+
+_ : { ERROR, SIMULATE, COMPILE } mode = .ERROR;
+
+// ── Anonymous enum with explicit underlying type ──────────────────────────────
+
+_ : int { RED, GREEN, BLUE } color = .GREEN;
+
+// ── Anonymous enum without initializer ───────────────────────────────────────
+
+_ : { SMALL, MEDIUM, LARGE } size;
+
+// ── main ─────────────────────────────────────────────────────────────────────
+
+main () int {
+
+    // ── File-scope anonymous enum values ─────────────────────────────────────
+    if (ERROR    != 0) { puts("[FAIL] ERROR != 0");    exit(1); }
+    if (SIMULATE != 1) { puts("[FAIL] SIMULATE != 1"); exit(1); }
+    if (COMPILE  != 2) { puts("[FAIL] COMPILE != 2");  exit(1); }
+
+    // ── File-scope variable initialised to .ERROR ─────────────────────────────
+    if (mode != ERROR) { puts("[FAIL] mode != ERROR"); exit(1); }
+
+    // ── Assign to anonymous-enum variable ────────────────────────────────────
+    mode = .SIMULATE;
+    if (mode != SIMULATE) { puts("[FAIL] mode != SIMULATE"); exit(1); }
+
+    mode = .COMPILE;
+    if (mode != COMPILE)  { puts("[FAIL] mode != COMPILE");  exit(1); }
+
+    // ── Explicit underlying type ──────────────────────────────────────────────
+    if (RED   != 0) { puts("[FAIL] RED != 0");   exit(1); }
+    if (GREEN != 1) { puts("[FAIL] GREEN != 1"); exit(1); }
+    if (BLUE  != 2) { puts("[FAIL] BLUE != 2");  exit(1); }
+
+    if (color != GREEN) { puts("[FAIL] color != GREEN"); exit(1); }
+
+    // ── Uninitialized variable + assignment ───────────────────────────────────
+    size = .LARGE;
+    if (size != LARGE) { puts("[FAIL] size != LARGE"); exit(1); }
+
+    // ── Local anonymous enum ──────────────────────────────────────────────────
+    _ : { OFF, ON } flag = .ON;
+    if (flag != ON)  { puts("[FAIL] flag != ON");  exit(1); }
+    if (ON   != 1)   { puts("[FAIL] ON != 1");     exit(1); }
+    if (OFF  != 0)   { puts("[FAIL] OFF != 0");    exit(1); }
+
+    flag = .OFF;
+    if (flag != OFF) { puts("[FAIL] flag != OFF"); exit(1); }
+
+    puts("[PASS] anonymous enum tests passed.");
+    return 0;
+}

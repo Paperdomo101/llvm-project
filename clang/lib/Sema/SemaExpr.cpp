@@ -16400,7 +16400,8 @@ bool Sema::IsC4EnumName(IdentifierInfo *II) {
 OpaquePtr<DeclGroupRef> Sema::ActOnC4EnumDeclaration(
     Scope *S, SourceLocation NameLoc, IdentifierInfo *EnumName,
     ParsedType UnderlyingType, SourceLocation LBraceLoc,
-    SmallVectorImpl<C4EnumElement> &Elems, SourceLocation RBraceLoc) {
+    SmallVectorImpl<C4EnumElement> &Elems, SourceLocation RBraceLoc,
+    bool IsAnonymous) {
 
   // Resolve underlying type (default: unsigned int)
   QualType UnderlyTy = Context.UnsignedIntTy;
@@ -16462,7 +16463,8 @@ OpaquePtr<DeclGroupRef> Sema::ActOnC4EnumDeclaration(
   // Create a C4 typedef: typedef enum Flags Flags;
   // This makes 'Flags' usable as a type name without the 'enum' keyword,
   // consistent with C4 enum convention.
-  {
+  // Skip for anonymous enums (name == '_') — no user-visible type name.
+  if (!IsAnonymous) {
     QualType EnumTy = Context.getTagType(ElaboratedTypeKeyword::None,
                                           /*Qualifier=*/std::nullopt, ED,
                                           /*OwnsTag=*/false);
@@ -16474,6 +16476,49 @@ OpaquePtr<DeclGroupRef> Sema::ActOnC4EnumDeclaration(
   }
 
   return OpaquePtr<DeclGroupRef>::make(DeclGroupRef(ED));
+}
+
+// C4 anonymous enum variable:  _ : { A, B } varname [= init];
+// Called after ActOnC4EnumDeclaration so that enum constants are already in
+// scope, allowing implicit-dot initializers like .A to resolve.
+OpaquePtr<DeclGroupRef> Sema::ActOnC4AnonEnumVarDecl(
+    Scope *S, OpaquePtr<DeclGroupRef> EnumDG,
+    IdentifierInfo *VarName, SourceLocation VarNameLoc,
+    Expr *Init) {
+
+  // Extract the EnumDecl from the DeclGroupRef.
+  DeclGroupRef DGR = EnumDG.get();
+  EnumDecl *ED = nullptr;
+  for (Decl *D : DGR)
+    if ((ED = dyn_cast<EnumDecl>(D)))
+      break;
+
+  if (!ED || !VarName) {
+    if (VarName)
+      Diag(VarNameLoc, diag::err_invalid_expression);
+    return OpaquePtr<DeclGroupRef>();
+  }
+
+  // Use the same enum type that was used for the typedef in named enums.
+  QualType EnumTy = Context.getTagType(ElaboratedTypeKeyword::None,
+                                        /*Qualifier=*/std::nullopt, ED,
+                                        /*OwnsTag=*/false);
+
+  // Create the variable declaration.
+  VarDecl *VD = VarDecl::Create(
+      Context, CurContext, VarNameLoc, VarNameLoc, VarName, EnumTy,
+      Context.getTrivialTypeSourceInfo(EnumTy, VarNameLoc), SC_None);
+  PushOnScopeChains(VD, S, /*AddToContext=*/true);
+
+  if (Init)
+    AddInitializerToDecl(VD, Init, /*DirectInit=*/false);
+  else
+    ActOnUninitializedDecl(VD);
+
+  // Return a DeclGroup containing both the (anonymous) enum and the variable.
+  Decl *Group[2] = {ED, VD};
+  return OpaquePtr<DeclGroupRef>::make(
+      DeclGroupRef::Create(Context, Group, 2));
 }
 
 // ============ end C4 new features =============

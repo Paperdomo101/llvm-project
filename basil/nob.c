@@ -319,6 +319,10 @@ CompilerTest custom_test_suite[] = {
         "tests/enums_c4_runtime.c4", true
     },
     {
+        "Anonymous C4 enums",
+        "tests/anon_enum_runtime.c4", true
+    },
+    {
         "Struct brace-init assignment (pos = {4, 5})",
         "tests/struct_brace_assign_runtime.c4", true
     },

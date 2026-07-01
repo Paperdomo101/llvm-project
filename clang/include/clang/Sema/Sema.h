@@ -2667,7 +2667,15 @@ public:
   OpaquePtr<DeclGroupRef> ActOnC4EnumDeclaration(
       Scope *S, SourceLocation NameLoc, IdentifierInfo *EnumName,
       ParsedType UnderlyingType, SourceLocation LBraceLoc,
-      SmallVectorImpl<C4EnumElement> &Elems, SourceLocation RBraceLoc);
+      SmallVectorImpl<C4EnumElement> &Elems, SourceLocation RBraceLoc,
+      bool IsAnonymous = false);
+
+  // Called after ActOnC4EnumDeclaration for anonymous enums that have an
+  // inline variable declarator:  _ : { A, B } varname [= init];
+  OpaquePtr<DeclGroupRef> ActOnC4AnonEnumVarDecl(
+      Scope *S, OpaquePtr<DeclGroupRef> EnumDG,
+      IdentifierInfo *VarName, SourceLocation VarNameLoc,
+      Expr *Init);
 
 
   ExprResult CheckStructArithmeticOperands(ExprResult &LHS, ExprResult &RHS,
