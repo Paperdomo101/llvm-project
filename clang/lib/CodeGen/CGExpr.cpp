@@ -3723,6 +3723,22 @@ LValue CodeGenFunction::EmitDeclRefLValue(const DeclRefExpr *E) {
 
     // No other cases for now.
     } else {
+      // When there are compilation errors the AST can be structurally
+      // inconsistent: a DeclRefExpr may reference a VarDecl whose alloca was
+      // never emitted.  A common example is a C4 switch case body that was
+      // accidentally closed early — the shifted braces cause variables to be
+      // referenced from outside the scope where CodeGen would have emitted
+      // them, and the cascade parse errors (e.g. "extraneous closing brace")
+      // mean hasErrorOccurred() is true.  Return a temporary alloca so the
+      // user sees only the actual diagnostic, not an unrelated compiler crash.
+      if (CGM.getDiags().hasErrorOccurred()) {
+        llvm::Type *Ty = ConvertTypeForMem(VD->getType());
+        CharUnits Align = getContext().getDeclAlign(VD);
+        // CreateTempAlloca(Type, Name) returns AllocaInst* (no cast/AS logic).
+        llvm::AllocaInst *AI = CreateTempAlloca(Ty, "errtmp");
+        return MakeAddrLValue(Address(AI, Ty, Align), T,
+                              AlignmentSource::Decl);
+      }
       llvm_unreachable("DeclRefExpr for Decl not entered in LocalDeclMap?");
     }
 

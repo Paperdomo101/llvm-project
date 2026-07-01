@@ -2397,10 +2397,20 @@ StmtResult Parser::ParseSwitchStatement(SourceLocation *TrailingElseLoc,
           }
         } else {
           if (DefaultLoc.isInvalid()) DefaultLoc = Tok.getLocation();
-          StmtResult SubStmt = ParseStatement();
-          if (SubStmt.isUsable()) {
+          // Use ParseStatementOrDeclaration with an explicit accumulator so
+          // that C4 type-inferred declarations (`x := expr`) land in
+          // DefaultSubStmts.  ParseStatement() wraps ParseStatementOrDeclaration
+          // with a *local* StmtVector that it discards; DeclStmts injected via
+          // that local vector are lost while their VarDecls remain registered in
+          // Sema, causing CodeGen to crash with "DeclRefExpr for Decl not entered
+          // in LocalDeclMap" whenever a later default-case stmt references them.
+          StmtVector InjectedStmts;
+          StmtResult SubStmt = ParseStatementOrDeclaration(
+              InjectedStmts, ParsedStmtContext::Compound);
+          // Collect injected stmts (e.g. DeclStmts from := declarations) first.
+          DefaultSubStmts.append(InjectedStmts.begin(), InjectedStmts.end());
+          if (SubStmt.isUsable())
             DefaultSubStmts.push_back(SubStmt.get());
-          }
         }
       }
       
