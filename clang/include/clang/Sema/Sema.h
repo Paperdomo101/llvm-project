@@ -2618,6 +2618,8 @@ public:
   /// Build a CompoundLiteralExpr of the C4 array struct from a StringLiteral.
   InitListExpr* BuildC4ArrayFromStringLiteral(StringLiteral *SL, QualType C4Type);
 
+  ExprResult BuildC4DynamicArrayInit(VarDecl *VD, Expr *SizeExpr);
+
 
   QualType getArrayTypeForInitList(InitListExpr *ILE);
 

@@ -1,0 +1,100 @@
+// tests/bang_dispatch_runtime.c4
+// Verifies that the '!' (logical-not) operator binds to the *result* of a
+// '::' method-dispatch expression, not just to the receiver token.
+//
+//   Desired:   !arr::isEmpty()   →  !(arr::isEmpty())
+//   Preserved: &arr::method()    →  (&arr)::method()   (pass-by-ref receiver)
+//
+// Exit 0 = all assertions passed.
+
+#include <stdio.h>
+#include <stdlib.h>
+
+static void chk(int actual, int expected, const char *msg) {
+    if (actual != expected) {
+        printf("[FAIL] %s (got %d, want %d)\n", msg, actual, expected);
+        exit(1);
+    }
+}
+
+// Simple predicates used as dispatch targets.
+static int isEmpty([] int arr)   { return arr.count == 0; }
+static int nonEmpty([] int arr)  { return arr.count > 0; }
+static int size_of([] int arr)   { return (int)arr.count; }
+
+
+
+int main() {
+    [] int arr   = {10, 20, 30};
+    [] int empty = {};
+
+    // ------------------------------------------------------------------
+    // 1. Basic !expr::method() — '!' must apply AFTER the dispatch call.
+    // ------------------------------------------------------------------
+
+    // arr is non-empty  → isEmpty() == 0  → !isEmpty() == 1
+    chk(!arr::isEmpty(),  1, "!arr::isEmpty() == 1");
+
+    // arr is non-empty  → nonEmpty() == 1 → !nonEmpty() == 0
+    chk(!arr::nonEmpty(), 0, "!arr::nonEmpty() == 0");
+
+    // empty → isEmpty() == 1 → !isEmpty() == 0
+    chk(!empty::isEmpty(),  0, "!empty::isEmpty() == 0");
+
+    // empty → nonEmpty() == 0 → !nonEmpty() == 1
+    chk(!empty::nonEmpty(), 1, "!empty::nonEmpty() == 1");
+
+    printf("[PASS] 1: basic !expr::method()\n");
+
+    // ------------------------------------------------------------------
+    // 2. Double negation !!
+    // ------------------------------------------------------------------
+    chk(!!arr::nonEmpty(),   1, "!!arr::nonEmpty() == 1");
+    chk(!!empty::nonEmpty(), 0, "!!empty::nonEmpty() == 0");
+
+    printf("[PASS] 2: double negation !!expr::method()\n");
+
+    // ------------------------------------------------------------------
+    // 3. '!' as a boolean condition.
+    // ------------------------------------------------------------------
+    if (!arr::isEmpty())
+        chk(1, 1, "if (!arr::isEmpty()) true branch");
+    else {
+        printf("[FAIL] if (!arr::isEmpty()) took wrong branch\n");
+        exit(1);
+    }
+
+    if (!empty::nonEmpty())
+        chk(1, 1, "if (!empty::nonEmpty()) true branch");
+    else {
+        printf("[FAIL] if (!empty::nonEmpty()) took wrong branch\n");
+        exit(1);
+    }
+
+    printf("[PASS] 3: ! as boolean condition\n");
+
+    // ------------------------------------------------------------------
+    // 4. Compound expression:  !a::f() && !b::g()
+    //    Both '!' must apply to their respective dispatch results.
+    // ------------------------------------------------------------------
+    int compound = !arr::isEmpty() && !empty::nonEmpty();
+    chk(compound, 1, "!arr::isEmpty() && !empty::nonEmpty() == 1");
+
+    int compound2 = !arr::nonEmpty() || !empty::isEmpty();
+    chk(compound2, 0, "!arr::nonEmpty() || !empty::isEmpty() == 0");
+
+    printf("[PASS] 4: compound && / || with !\n");
+
+    // ------------------------------------------------------------------
+    // 5. '&' still binds tightly to the receiver (existing correct
+    //    behaviour: &arr::method() → (&arr)::method()).
+    // ------------------------------------------------------------------
+    ^[] int p = &arr;
+    chk(p->count, 3, "&arr binds tightly: p->count == 3");
+    chk(p->items[0], 10, "&arr binds tightly: p->items[0] == 10");
+
+    printf("[PASS] 5: & still binds tightly to receiver\n");
+
+    printf("\n[SUCCESS] All ! dispatch binding tests passed.\n");
+    return 0;
+}

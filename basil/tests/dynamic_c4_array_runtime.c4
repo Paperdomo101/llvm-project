@@ -1,0 +1,164 @@
+// tests/dynamic_c4_array_runtime.c4
+// Runtime tests for dynamically-sized C4 arrays ([runtime_expr] T)
+// and for #. applied to plain C variable-length arrays.
+//
+// Covers:
+//   A. [size] T var;          (uninitialized)
+//   B. [size] T var = {}      (empty initializer)
+//   C. [size] T var = {0}     (idiomatic C zero-init)
+//   D. #. on a plain C VLA    (unevaluated-context fix, no assert crash)
+//
+// Exit 0 = all assertions passed.
+
+#include <stdio.h>
+#include <stdlib.h>
+
+static void chk(int actual, int expected, const char *msg) {
+    if (actual != expected) {
+        printf("[FAIL] %s (got %d, want %d)\n", msg, actual, expected);
+        exit(1);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// A. Uninitialized form:  [size] T var;
+// ---------------------------------------------------------------------------
+static void test_uninit() {
+    int n = 7;
+    [n] int arr;
+
+    chk(#.arr,  7, "uninit: #.arr == n");
+    chk(##.arr, 7, "uninit: ##.arr == n");
+
+    // Write and read back to confirm the backing storage is usable.
+    for (int i = 0; i < n; ++i) arr[i] = i * 3;
+    for (int i = 0; i < n; ++i)
+        chk(arr[i], i * 3, "uninit: element round-trip");
+
+    // Mutating the size variable after declaration must not change the array.
+    n = 1;
+    chk(#.arr,  7, "uninit: #.arr unchanged after n mutation");
+    chk(##.arr, 7, "uninit: ##.arr unchanged after n mutation");
+
+    printf("[PASS] A: uninitialized [n] T var\n");
+}
+
+// ---------------------------------------------------------------------------
+// B. Empty initializer:  [size] T var = {}
+// ---------------------------------------------------------------------------
+static void test_empty_init() {
+    int n = 5;
+    [n] char arr = {};
+
+    chk(#.arr,  5, "empty-init: #.arr == n");
+    chk(##.arr, 5, "empty-init: ##.arr == n");
+
+    for (int i = 0; i < n; ++i)
+        chk(arr[i], 0, "empty-init: element is zero");
+
+    n = 1;
+    chk(#.arr,  5, "empty-init: #.arr unchanged after n mutation");
+    chk(##.arr, 5, "empty-init: ##.arr unchanged after n mutation");
+
+    printf("[PASS] B: [n] T var = {}\n");
+}
+
+// ---------------------------------------------------------------------------
+// C. Idiomatic C zero-init:  [size] T var = {0}
+// ---------------------------------------------------------------------------
+static void test_zero_init() {
+    int n = 9;
+    [n] int arr = {0};
+
+    chk(#.arr,  9, "zero-init {0}: #.arr == n");
+    chk(##.arr, 9, "zero-init {0}: ##.arr == n");
+
+    for (int i = 0; i < n; ++i)
+        chk(arr[i], 0, "zero-init {0}: element is zero");
+
+    n = 1;
+    chk(#.arr,  9, "zero-init {0}: #.arr unchanged after n mutation");
+    chk(##.arr, 9, "zero-init {0}: ##.arr unchanged after n mutation");
+
+    printf("[PASS] C: [n] T var = {0}\n");
+}
+
+// ---------------------------------------------------------------------------
+// C2. Same as C but with char element type (the original regression case).
+// ---------------------------------------------------------------------------
+static void test_zero_init_char() {
+    int n = 21;
+    [n] char arr = {0};
+
+    chk(#.arr,  21, "zero-init char {0}: #.arr == 21");
+    chk(##.arr, 21, "zero-init char {0}: ##.arr == 21");
+
+    for (int i = 0; i < n; ++i)
+        chk(arr[i], 0, "zero-init char {0}: element is zero");
+
+    printf("[PASS] C2: [n] char var = {0}  (original regression)\n");
+}
+
+// ---------------------------------------------------------------------------
+// D. #. on a plain C variable-length array (unevaluated-context fix).
+//    Before the fix this triggered an assert crash inside the compiler.
+// ---------------------------------------------------------------------------
+static void test_c_vla_size(int n) {
+    char vla[n];
+    // sizeof(vla) == n for char VLAs; #. falls back to sizeof for plain C arrays.
+    chk((int)#.vla, n, "C VLA: #.vla == n");
+    printf("[PASS] D: #. on plain C VLA\n");
+}
+
+// ---------------------------------------------------------------------------
+// E. Mix: verify that a static-size C4 array is unaffected by the same
+//    runtime-size code paths (regression guard).
+// ---------------------------------------------------------------------------
+static void test_static_size() {
+    [4] int arr = {10, 20, 30, 40};
+
+    chk(#.arr,  4,  "static [4]: #.arr == 4");
+    chk(##.arr, 4,  "static [4]: ##.arr == 4");
+    chk(arr[0], 10, "static [4]: arr[0]");
+    chk(arr[3], 40, "static [4]: arr[3]");
+
+    printf("[PASS] E: static [4] T var = {...}\n");
+}
+
+// ---------------------------------------------------------------------------
+// F. Different element types to exercise the size * sizeof(ElemTy) path.
+// ---------------------------------------------------------------------------
+static void test_element_types() {
+    int n = 4;
+
+    [n] short  sa = {0};
+    [n] int    ia = {0};
+    [n] float  fa = {};
+
+    chk(#.sa, 4, "element-types: short array count");
+    chk(#.ia, 4, "element-types: int array count");
+    chk(#.fa, 4, "element-types: float array count");
+
+    // Confirm backing memory is accessible and writable.
+    for (int i = 0; i < n; ++i) {
+        ia[i] = i + 1;
+        sa[i] = (short)(i * 2);
+    }
+    chk(ia[3], 4, "element-types: ia[3] after write");
+    chk(sa[3], 6, "element-types: sa[3] after write");
+
+    printf("[PASS] F: different element types\n");
+}
+
+int main() {
+    test_uninit();
+    test_empty_init();
+    test_zero_init();
+    test_zero_init_char();
+    test_c_vla_size(13);
+    test_static_size();
+    test_element_types();
+
+    printf("\n[SUCCESS] All dynamic C4 array runtime tests passed.\n");
+    return 0;
+}

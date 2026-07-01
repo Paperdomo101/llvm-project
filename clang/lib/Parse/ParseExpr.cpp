@@ -1291,6 +1291,12 @@ Parser::ParseCastExpression(CastParseKind ParseKind, bool isAddressOfOperand,
   case tok::hashdot: {
     SourceLocation SizeOpLoc = ConsumeToken(); // Consumes your '#.' punctuator token
 
+    EnterExpressionEvaluationContext Unevaluated(
+        Actions, Sema::ExpressionEvaluationContext::Unevaluated,
+        /*BlockDecl=*/nullptr,
+        Sema::ExpressionEvaluationContextRecord::EK_Other,
+        /*ShouldRegisterDecl=*/true);
+
     // --- PART A: TYPE NAME SIZE LOOKUP INTERCEPT (#.int) ---
     // Look ahead to check if the next token is a native type keyword or an identifier class type
     if (isDeclarationSpecifier(ImplicitTypenameContext::No)) {
@@ -1323,6 +1329,12 @@ Parser::ParseCastExpression(CastParseKind ParseKind, bool isAddressOfOperand,
 
     if (IsStandardPeriod || IsNumericConstant) {
       SourceLocation OperatorLoc = Tok.getLocation();
+
+      EnterExpressionEvaluationContext Unevaluated(
+          Actions, Sema::ExpressionEvaluationContext::Unevaluated,
+          /*BlockDecl=*/nullptr,
+          Sema::ExpressionEvaluationContextRecord::EK_Other,
+          /*ShouldRegisterDecl=*/true);
 
       // CRASH FIX 1: If it's a numeric constant like '.3', we cannot blindly call
       // ConsumeCapacityOfOperator() because there is no isolated period token to consume.
@@ -1808,6 +1820,24 @@ Parser::ParseCastExpression(CastParseKind ParseKind, bool isAddressOfOperand,
     PreferredType.enterUnary(Actions, Tok.getLocation(), SavedKind, SavedLoc);
     Res = ParseCastExpression(CastParseKind::AnyCastExpr);
     if (!Res.isInvalid()) {
+      // C4: '!' should bind to the result of the entire '::' method-dispatch
+      // chain, not just to the receiver token before '::'.  After parsing the
+      // immediate operand, if '::' follows, run the RHS binary-expression loop
+      // at MethodDispatch precedence so that '::' (and any chained '::') is
+      // fully consumed BEFORE '!' is applied.
+      //
+      // Examples:
+      //   !arr::isEmpty()         →  !(arr::isEmpty())       [desired]
+      //   !a::f()::g()            →  !((a::f())::g())        [chained]
+      //   !a::f() && !b::g()      →  !(a::f()) && !(b::g())  [compound]
+      //
+      // '&' intentionally keeps its tight binding so that
+      //   &arr::method()          →  (&arr)::method()        [pass-by-ref receiver]
+      if (getLangOpts().C4() && SavedKind == tok::exclaim &&
+          Tok.is(tok::coloncolon)) {
+        Res = ParseRHSOfBinaryExpression(Res, prec::MethodDispatch);
+        if (Res.isInvalid()) return ExprError();
+      }
       Expr *Arg = Res.get();
       Res = Actions.ActOnUnaryOp(getCurScope(), SavedLoc, SavedKind, Arg,
                                  isAddressOfOperand);

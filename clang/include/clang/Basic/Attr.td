@@ -819,6 +819,13 @@ def C4ArrayInfo : Attr {
   let Documentation = [Undocumented];
 }
 
+def C4ArraySizeExpr : Attr {
+  let Spellings = [];
+  let Args = [ExprArgument<"SizeExpr">];
+  let Subjects = SubjectList<[Var]>;
+  let Documentation = [Undocumented];
+}
+
 def C4Main : InheritableAttr {
   let Spellings = [];
   let Subjects = SubjectList<[Function]>;

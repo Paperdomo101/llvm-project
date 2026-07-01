@@ -267,6 +267,10 @@ CompilerTest custom_test_suite[] = {
         "tests/array_type_syntax.c4", true
     },
     {
+        "Dynamic C4 arrays",
+        "tests/dynamic_c4_array_runtime.c4", true
+    },
+    {
         "Struct function pointer fields (^field (params) rettype;)",
         "tests/struct_fn_ptr_runtime.c4", true
     },

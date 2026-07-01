@@ -6930,14 +6930,7 @@ Sema::ActOnTypedefDeclarator(Scope* S, Declarator& D, DeclContext* DC,
     return nullptr;
   }
 
-  // C4: apply bounds-checked array wrapping for `typedef []T Name;`
-  if (getLangOpts().C4()) {
-    const DeclSpec &DS = D.getDeclSpec();
-    if (DS.isC4BoundsCheckedArray() && DS.getTypeSpecType() != DeclSpec::TST_error) {
-      QualType T = GetOrCreateC4ArrayType(TInfo->getType());
-      TInfo = Context.getTrivialTypeSourceInfo(T, D.getIdentifierLoc());
-    }
-  }
+  // C4 type prefix is handled centrally in GetTypeForDeclarator.
   TypedefDecl *NewTD = ParseTypedefDecl(S, D, TInfo->getType(), TInfo);
   if (!NewTD) return nullptr;
 
@@ -7126,10 +7119,14 @@ StmtResult Sema::ActOnTypeInferredAssignment(Scope *S, LHSVarInfo Var, Expr *Ini
   if (Var.SizeExpr && isC4ArrayType(FinalType)) {
     Expr::EvalResult SizeER;
     unsigned Capacity = 0;
-    if (Var.SizeExpr->EvaluateAsInt(SizeER, Context))
+    bool HasConstSize = Var.SizeExpr->EvaluateAsInt(SizeER, Context);
+    if (HasConstSize)
       Capacity = (unsigned)SizeER.Val.getInt().getZExtValue();
     NewVD->addAttr(C4ArrayInfoAttr::CreateImplicit(
         Context, Capacity, /*InitCount=*/0, /*HasInitializer=*/false));
+    if (!HasConstSize) {
+      NewVD->addAttr(C4ArraySizeExprAttr::CreateImplicit(Context, Var.SizeExpr));
+    }
   }
 
   AddInitializerToDecl(NewVD, InitExpr, /*DirectInit=*/false);
@@ -8018,65 +8015,7 @@ NamedDecl *Sema::ActOnVariableDeclarator(
   IdentifierInfo *II = Name.getAsIdentifierInfo();
   bool IsPlaceholderVariable = false;
 
-  // === C4: TYPE PREFIX TRANSFORMATION ===
-  // The order of [] and ^ in source determines the type semantics:
-  //
-  //   [] ^T   ('[]' before '^'): right-to-left reading → '^' is an element-
-  //            type modifier, producing C4Array(T*). e.g. '[] ^char' = C4
-  //            array of char* (suitable for main argv).
-  //
-  //   ^[] T   ('^' before '[]'): right-to-left reading → '^' is an outer
-  //            pointer wrapping the array, producing C4Array(T)*. e.g.
-  //            '^[] int' = pointer to C4 array of int.
-  //
-  //   [] T    (no '^'): C4Array(T)
-  //   ^ T     (no '[]'): T*
-  {
-    const DeclSpec &DS = D.getDeclSpec();
-    bool HasArray = DS.isC4BoundsCheckedArray() &&
-                    DS.getTypeSpecType() != DeclSpec::TST_error;
-    unsigned PtrDepth = DS.getC4PointerDepth();
-
-    if (HasArray && PtrDepth > 0 && DS.isC4ArrayBeforeCaret()) {
-      // '[] ^T' → apply '^' (with per-level qualifiers) to base type first,
-      // then wrap in C4 array: C4Array(T*).
-      const auto &LevelQuals = DS.getC4PointerLevelQuals();
-      for (unsigned i = 0; i < PtrDepth; ++i) {
-        unsigned levelIdx = PtrDepth - 1 - i;
-        QualType PtrTy = Context.getPointerType(R);
-        if (levelIdx < LevelQuals.size()) {
-          unsigned Q = LevelQuals[levelIdx];
-          if (Q & DeclSpec::TQ_const)    PtrTy.addConst();
-          if (Q & DeclSpec::TQ_volatile) PtrTy.addVolatile();
-          if (Q & DeclSpec::TQ_restrict) PtrTy.addRestrict();
-        }
-        R = PtrTy;
-      }
-      R = GetOrCreateC4ArrayType(R);
-    } else {
-      // '^ []T' or no combination: apply [] first, then ^ (outer pointer).
-      if (HasArray)
-        R = GetOrCreateC4ArrayType(R);
-      // Apply pointer levels from innermost to outermost, attaching
-      // any per-level qualifiers declared with '^const', '^volatile', etc.
-      const auto &LevelQuals = DS.getC4PointerLevelQuals();
-      for (unsigned i = 0; i < PtrDepth; ++i) {
-        // Build from inside out: innermost = high index, outermost = 0.
-        unsigned levelIdx = PtrDepth - 1 - i;
-        QualType PtrTy = Context.getPointerType(R);
-        if (levelIdx < LevelQuals.size()) {
-          unsigned Q = LevelQuals[levelIdx];
-          if (Q & DeclSpec::TQ_const)    PtrTy.addConst();
-          if (Q & DeclSpec::TQ_volatile) PtrTy.addVolatile();
-          if (Q & DeclSpec::TQ_restrict) PtrTy.addRestrict();
-        }
-        R = PtrTy;
-      }
-    }
-    if (HasArray || PtrDepth > 0)
-      TInfo = Context.getTrivialTypeSourceInfo(R, D.getIdentifierLoc());
-  }
-  // ======================================
+  // C4 type prefix transformation is handled centrally in GetTypeForDeclarator.
 
   if (D.isDecompositionDeclarator()) {
 
@@ -8216,6 +8155,9 @@ NamedDecl *Sema::ActOnVariableDeclarator(
         // HasInitializer when the explicit initialiser is processed.
         NewVD->addAttr(C4ArrayInfoAttr::CreateImplicit(
             Context, Capacity, /*InitCount=*/0, /*HasInitializer=*/false));
+        if (!HasConstSize) {
+          NewVD->addAttr(C4ArraySizeExprAttr::CreateImplicit(Context, SizeExpr));
+        }
 
         // Synthesise a default struct initialiser { (T[N]){...}, N, N } for
         // static/file-scope storage only.  Auto-locals without an explicit init
@@ -14399,6 +14341,41 @@ void Sema::AddInitializerToDecl(Decl *RealDecl, Expr *Init, bool DirectInit) {
         }
 
         if (!NewInit) {
+          bool IsEmptyInit = false;
+          Expr *CheckInit = InitExpr;
+          if (auto *CLE = dyn_cast<CompoundLiteralExpr>(CheckInit))
+            CheckInit = CLE->getInitializer();
+          if (auto *ILE = dyn_cast<InitListExpr>(CheckInit))
+            IsEmptyInit = (ILE->getNumInits() == 0);
+
+          if (auto *SizeAttr = VDecl->getAttr<C4ArraySizeExprAttr>()) {
+            // For dynamically-sized C4 arrays, any initializer whose meaning is
+            // "zero-initialize all elements" should produce a runtime-sized
+            // allocation.  This covers both the empty `{}` form and the
+            // idiomatic C `{0}` form (a single zero that zero-fills the rest).
+            // Treat them identically: allocate `size` elements and memset.
+            bool IsZeroInit = IsEmptyInit;
+            if (!IsZeroInit) {
+              Expr *CheckInit2 = InitExpr;
+              if (auto *CLE = dyn_cast<CompoundLiteralExpr>(CheckInit2))
+                CheckInit2 = CLE->getInitializer();
+              if (auto *ILE = dyn_cast<InitListExpr>(CheckInit2)) {
+                if (ILE->getNumInits() == 1) {
+                  Expr *Only = ILE->getInit(0)->IgnoreImplicit();
+                  if (auto *IL = dyn_cast<IntegerLiteral>(Only))
+                    IsZeroInit = IL->getValue().isZero();
+                }
+              }
+            }
+            if (IsZeroInit) {
+              ExprResult DynamicInit = BuildC4DynamicArrayInit(VDecl, SizeAttr->getSizeExpr());
+              if (!DynamicInit.isInvalid()) {
+                VDecl->setInit(DynamicInit.get());
+                return;
+              }
+            }
+          }
+
           // ---- Count initialiser elements for capacity validation ----
           unsigned InitCount = 0;
           Expr *RawInit = InitExpr;
@@ -15029,6 +15006,16 @@ void Sema::ActOnUninitializedDecl(Decl *RealDecl) {
     if (VarDecl *Var = dyn_cast<VarDecl>(RealDecl)) {
       if (!Var->isInvalidDecl() && Var->hasLocalStorage() &&
           isC4ArrayType(Var->getType())) {
+        if (auto *SizeAttr = Var->getAttr<C4ArraySizeExprAttr>()) {
+          ExprResult DynamicInit = BuildC4DynamicArrayInit(Var, SizeAttr->getSizeExpr());
+          if (!DynamicInit.isInvalid()) {
+            Var->setInit(DynamicInit.get());
+            Var->setInitStyle(VarDecl::CInit);
+            CheckCompleteVariableDeclaration(Var);
+            return;
+          }
+        }
+
         if (auto *InfoAttr = Var->getAttr<C4ArrayInfoAttr>()) {
           unsigned N = InfoAttr->getCapacity();
           if (N > 0) {
@@ -16384,53 +16371,9 @@ Decl *Sema::ActOnParamDeclarator(Scope *S, Declarator &D,
       }
     }
 
-    // 2. Apply [] / [N] and ^ in source order (same right-to-left semantics as
-    //    ActOnVariableDeclarator: '[] ^T' → C4Array(T*), '^[] T' → C4Array(T)*).
-    const DeclSpec &DS = D.getDeclSpec();
-    bool HasArray = DS.isC4BoundsCheckedArray() &&
-                    DS.getTypeSpecType() != DeclSpec::TST_error;
-    unsigned PtrDepth = DS.getC4PointerDepth();
-
-    if (HasArray) {
-      QualType ElementTy = parmDeclType;
-
-      if (PtrDepth > 0 && DS.isC4ArrayBeforeCaret()) {
-        // '[] ^T' → apply '^' (with per-level qualifiers) to element type first.
-        const auto &LevelQuals = DS.getC4PointerLevelQuals();
-        for (unsigned i = 0; i < PtrDepth; ++i) {
-          unsigned levelIdx = PtrDepth - 1 - i;
-          QualType PtrTy = Context.getPointerType(ElementTy);
-          if (levelIdx < LevelQuals.size()) {
-            unsigned Q = LevelQuals[levelIdx];
-            if (Q & DeclSpec::TQ_const)    PtrTy.addConst();
-            if (Q & DeclSpec::TQ_volatile) PtrTy.addVolatile();
-            if (Q & DeclSpec::TQ_restrict) PtrTy.addRestrict();
-          }
-          ElementTy = PtrTy;
-        }
-        QualType RecordTy = GetOrCreateC4ArrayType(ElementTy);
-        parmDeclType = RecordTy;
-        PtrDepth = 0; // already consumed
-      } else {
-        QualType RecordTy = GetOrCreateC4ArrayType(ElementTy);
-        if (IsExplicitC4Ref) {
-          // &[] int → const pointer to the struct
-          QualType PtrTy = Context.getPointerType(RecordTy);
-          PtrTy.addConst();
-          parmDeclType = PtrTy;
-          D.AddTypeInfo(DeclaratorChunk::getPointer(
-                            /*TypeQuals=*/DeclSpec::TQ_const,
-                            D.getBeginLoc(), SourceLocation(),
-                            SourceLocation(), SourceLocation(),
-                            SourceLocation(), SourceLocation()),
-                        D.getEndLoc());
-        } else {
-          parmDeclType = RecordTy;
-        }
-      }
-      TInfo = Context.getTrivialTypeSourceInfo(parmDeclType, D.getIdentifierLoc());
-    } else if (IsExplicitC4Ref) {
-      // &T → const T*
+    // 2. C4 array and caret pointers are already handled centrally in GetTypeForDeclarator.
+    // We only need to apply C4 pass-by-reference (&) parameter wrapping.
+    if (IsExplicitC4Ref) {
       QualType PtrTy = Context.getPointerType(parmDeclType);
       PtrTy.addConst();
       parmDeclType = PtrTy;
@@ -16438,23 +16381,6 @@ Decl *Sema::ActOnParamDeclarator(Scope *S, Declarator &D,
       D.AddTypeInfo(DeclaratorChunk::getPointer(/*TypeQuals=*/DeclSpec::TQ_const,
           D.getBeginLoc(), SourceLocation(), SourceLocation(), SourceLocation(),
           SourceLocation(), SourceLocation()), D.getEndLoc());
-    }
-
-    // Apply remaining ^ pointer depth with per-level qualifiers.
-    if (PtrDepth > 0) {
-      const auto &LevelQuals = DS.getC4PointerLevelQuals();
-      for (unsigned i = 0; i < PtrDepth; ++i) {
-        unsigned levelIdx = PtrDepth - 1 - i;
-        QualType PtrTy = Context.getPointerType(parmDeclType);
-        if (levelIdx < LevelQuals.size()) {
-          unsigned Q = LevelQuals[levelIdx];
-          if (Q & DeclSpec::TQ_const)    PtrTy.addConst();
-          if (Q & DeclSpec::TQ_volatile) PtrTy.addVolatile();
-          if (Q & DeclSpec::TQ_restrict) PtrTy.addRestrict();
-        }
-        parmDeclType = PtrTy;
-      }
-      TInfo = Context.getTrivialTypeSourceInfo(parmDeclType, D.getIdentifierLoc());
     }
   }
   // ======================================================================
@@ -20028,27 +19954,7 @@ FieldDecl *Sema::HandleField(Scope *S, RecordDecl *Record,
   TypeSourceInfo *TInfo = GetTypeForDeclarator(D);
   QualType T = TInfo->getType();
 
-  // === C4: apply C4 pointer-depth prefix for struct fields.
-  // `^field (params) rettype;` stores depth=1 in the DeclSpec;
-  // HandleField must wrap T in a pointer just like ActOnVariableDeclarator.
-  if (getLangOpts().C4()) {
-    const DeclSpec &FieldDS = D.getDeclSpec();
-    unsigned PtrDepth = FieldDS.getC4PointerDepth();
-    if (PtrDepth > 0) {
-      const auto &LQ = FieldDS.getC4PointerLevelQuals();
-      for (unsigned i = 0; i < PtrDepth; ++i) {
-        unsigned lvl = PtrDepth - 1 - i;
-        QualType PtrTy = Context.getPointerType(T);
-        if (lvl < LQ.size()) {
-          if (LQ[lvl] & DeclSpec::TQ_const)    PtrTy.addConst();
-          if (LQ[lvl] & DeclSpec::TQ_volatile) PtrTy.addVolatile();
-          if (LQ[lvl] & DeclSpec::TQ_restrict) PtrTy.addRestrict();
-        }
-        T = PtrTy;
-      }
-      TInfo = Context.getTrivialTypeSourceInfo(T, Loc);
-    }
-  }
+  // C4 type prefix is handled centrally in GetTypeForDeclarator.
 
   if (getLangOpts().CPlusPlus) {
     CheckExtraCXXDefaultArguments(D);
@@ -22075,4 +21981,86 @@ bool Sema::isRedefinitionAllowedFor(NamedDecl *D, NamedDecl **Suggested,
   // The redefinition of D in the **current** TU is allowed if D is invisible or
   // D is defined in the global module of other module units.
   return D->isInAnotherModuleUnit() || !Visible;
+}
+
+ExprResult Sema::BuildC4DynamicArrayInit(VarDecl *VD, Expr *SizeExpr) {
+  SourceLocation Loc = VD->getLocation();
+  QualType VarType = VD->getType();
+  QualType ElemTy = getElementTypeFromC4Array(VarType);
+  if (ElemTy.isNull()) return ExprError();
+
+  QualType SizeTy = Context.getSizeType();
+  unsigned SizeBits = Context.getTypeSize(SizeTy);
+  CharUnits ElemSize = Context.getTypeSizeInChars(ElemTy);
+
+  // Helper: create a fresh read of SizeExpr's variable for each use site,
+  // avoiding shared AST nodes that confuse CodeGen.
+  auto CloneSizeRead = [&]() -> Expr * {
+    if (auto *DRE = dyn_cast<DeclRefExpr>(SizeExpr->IgnoreImplicit()))
+      return BuildDeclRefExpr(DRE->getDecl(), DRE->getType(),
+                              DRE->getValueKind(), Loc);
+    // Fallback for non-trivial size expressions: reuse the node.
+    return SizeExpr;
+  };
+
+  // Helper: build  CloneSizeRead() * sizeof(ElemTy)  as a size_t expression.
+  auto MakeTotalSize = [&]() -> ExprResult {
+    Expr *ElemSizeLit = IntegerLiteral::Create(
+        Context, llvm::APInt(SizeBits, ElemSize.getQuantity()), SizeTy, Loc);
+    return CreateBuiltinBinOp(Loc, BO_Mul, CloneSizeRead(), ElemSizeLit);
+  };
+
+  // Look up __builtin_alloca and __builtin_memset once.
+  auto LookupBuiltin = [&](StringRef Name) -> ExprResult {
+    LookupResult LR(*this, &Context.Idents.get(Name), Loc, LookupOrdinaryName);
+    LookupName(LR, TUScope, /*AllowBuiltinCreation=*/true);
+    NamedDecl *ND = LR.getAsSingle<NamedDecl>();
+    if (!ND) return ExprError();
+    return BuildDeclRefExpr(cast<ValueDecl>(ND),
+                            cast<ValueDecl>(ND)->getType(), VK_LValue, Loc);
+  };
+
+  ExprResult AllocaFn = LookupBuiltin("__builtin_alloca");
+  ExprResult MemsetFn = LookupBuiltin("__builtin_memset");
+  if (AllocaFn.isInvalid() || MemsetFn.isInvalid()) return ExprError();
+
+  // 1. alloca(size * sizeof(ElemTy))  →  void*
+  ExprResult TotalSizeAlloca = MakeTotalSize();
+  if (TotalSizeAlloca.isInvalid()) return ExprError();
+  SmallVector<Expr *, 1> AllocaArgs = {TotalSizeAlloca.get()};
+  ExprResult AllocaCall =
+      BuildCallExpr(nullptr, AllocaFn.get(), Loc, AllocaArgs, Loc);
+  if (AllocaCall.isInvalid()) return ExprError();
+
+  // 2. memset(alloca_result, 0, size * sizeof(ElemTy))  →  void*
+  //    Nest the alloca directly as memset's first arg so the zeroed pointer
+  //    is the single value that flows into the struct's items field.
+  //    This avoids a BackingVD intermediary that would cause a double-alloca
+  //    in CodeGen (synthetic VarDecls re-evaluate their initializer on each use).
+  ExprResult TotalSizeMemset = MakeTotalSize();
+  if (TotalSizeMemset.isInvalid()) return ExprError();
+  Expr *ZeroVal = IntegerLiteral::Create(
+      Context,
+      llvm::APInt(Context.getIntWidth(Context.IntTy), 0),
+      Context.IntTy, Loc);
+  SmallVector<Expr *, 3> MemsetArgs = {AllocaCall.get(), ZeroVal,
+                                       TotalSizeMemset.get()};
+  ExprResult MemsetCall =
+      BuildCallExpr(nullptr, MemsetFn.get(), Loc, MemsetArgs, Loc);
+  if (MemsetCall.isInvalid()) return ExprError();
+
+  // Cast void* (memset return) to ElemTy*  →  the items field value.
+  QualType PtrTy = Context.getPointerType(ElemTy);
+  ExprResult ItemsInit = ImpCastExprToType(MemsetCall.get(), PtrTy, CK_BitCast);
+  if (ItemsInit.isInvalid()) return ExprError();
+
+  // 3. Build  { (ElemTy*)memset(alloca(n),0,n), size, size }
+  //    Use fresh reads for count and capacity so each field has its own node.
+  SmallVector<Expr *, 3> StructInits = {ItemsInit.get(), CloneSizeRead(),
+                                        CloneSizeRead()};
+  InitListExpr *StructInit = new (Context)
+      InitListExpr(Context, Loc, StructInits, Loc, /*Synthetic=*/false);
+  StructInit->setType(VarType);
+
+  return StructInit;
 }

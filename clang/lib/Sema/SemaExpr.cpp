@@ -16088,6 +16088,11 @@ ExprResult Sema::ActOnArraySizeIntrinsic(Expr *SubExpr, SourceLocation HashDotLo
                                          SourceRange(HashDotLoc, EndLoc));
   }
 
+  ExprResult PE = TransformToPotentiallyEvaluated(SubExpr);
+  if (PE.isInvalid()) return ExprError();
+  SubExpr = PE.get();
+  E = SubExpr->IgnoreImplicit();
+
   const RecordType *RT = TargetTy.getCanonicalType()->getAs<RecordType>();
   RecordDecl *RD = RT->getDecl();
 
@@ -16129,6 +16134,10 @@ ExprResult Sema::ActOnArraySizeIntrinsic(Expr *SubExpr, SourceLocation HashDotLo
 
 ExprResult Sema::ActOnC4CapacityOf(Expr *SubExpr, SourceLocation OpLoc) {
   if (!SubExpr) return ExprError();
+
+  ExprResult PE = TransformToPotentiallyEvaluated(SubExpr);
+  if (PE.isInvalid()) return ExprError();
+  SubExpr = PE.get();
 
   Expr *E = SubExpr->IgnoreImplicit();
   QualType TargetTy = E->getType();
@@ -19582,6 +19591,17 @@ namespace {
     ExprResult TransformUnaryOperator(UnaryOperator *E) {
       if (E->getOpcode() == UO_AddrOf && E->getType()->isMemberPointerType())
         return E;
+
+      if (E->getOpcode() == UO_Deref) {
+        ExprResult Op = TransformExpr(E->getSubExpr());
+        if (Op.isInvalid()) return ExprError();
+        if (auto *UO = dyn_cast<UnaryOperator>(Op.get())) {
+          if (UO->getOpcode() == UO_Deref) {
+            return Op;
+          }
+        }
+        return RebuildUnaryOperator(E->getOperatorLoc(), E->getOpcode(), Op.get());
+      }
 
       return BaseTransform::TransformUnaryOperator(E);
     }

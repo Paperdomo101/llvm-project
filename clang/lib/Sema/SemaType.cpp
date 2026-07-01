@@ -5789,14 +5789,58 @@ TypeSourceInfo *Sema::GetTypeForDeclarator(Declarator &D) {
   TypeSourceInfo *TInfo = GetFullTypeForDeclarator(state, T, ReturnTypeInfo);
 
   if (getLangOpts().C4() && TInfo) {
+    const DeclSpec &DS = D.getDeclSpec();
     QualType Type = TInfo->getType();
     if (!Type->isFunctionType() && Type->isIncompleteArrayType() &&
-        (D.getDeclSpec().isC4BoundsCheckedArray() ||
+        (DS.isC4BoundsCheckedArray() ||
          D.getContext() == DeclaratorContext::ForInit ||
          D.getContext() == DeclaratorContext::SelectionInit)) {
       QualType ElemTy = Context.getAsArrayType(Type)->getElementType();
       QualType C4ArrayTy = GetOrCreateC4ArrayType(ElemTy);
       TInfo = Context.getTrivialTypeSourceInfo(C4ArrayTy, D.getIdentifierLoc());
+    }
+
+    bool HasArray = DS.isC4BoundsCheckedArray() &&
+                    DS.getTypeSpecType() != DeclSpec::TST_error;
+    unsigned PtrDepth = DS.getC4PointerDepth();
+
+    if (HasArray || PtrDepth > 0) {
+      QualType R = TInfo->getType();
+      if (!R->isFunctionType()) {
+        if (HasArray && PtrDepth > 0 && DS.isC4ArrayBeforeCaret()) {
+          // '[] ^T'
+          const auto &LevelQuals = DS.getC4PointerLevelQuals();
+          for (unsigned i = 0; i < PtrDepth; ++i) {
+            unsigned levelIdx = PtrDepth - 1 - i;
+            QualType PtrTy = Context.getPointerType(R);
+            if (levelIdx < LevelQuals.size()) {
+              unsigned Q = LevelQuals[levelIdx];
+              if (Q & DeclSpec::TQ_const)    PtrTy.addConst();
+              if (Q & DeclSpec::TQ_volatile) PtrTy.addVolatile();
+              if (Q & DeclSpec::TQ_restrict) PtrTy.addRestrict();
+            }
+            R = PtrTy;
+          }
+          R = GetOrCreateC4ArrayType(R);
+        } else {
+          // '^ []T' or no combination
+          if (HasArray && !isC4ArrayType(R))
+            R = GetOrCreateC4ArrayType(R);
+          const auto &LevelQuals = DS.getC4PointerLevelQuals();
+          for (unsigned i = 0; i < PtrDepth; ++i) {
+            unsigned levelIdx = PtrDepth - 1 - i;
+            QualType PtrTy = Context.getPointerType(R);
+            if (levelIdx < LevelQuals.size()) {
+              unsigned Q = LevelQuals[levelIdx];
+              if (Q & DeclSpec::TQ_const)    PtrTy.addConst();
+              if (Q & DeclSpec::TQ_volatile) PtrTy.addVolatile();
+              if (Q & DeclSpec::TQ_restrict) PtrTy.addRestrict();
+            }
+            R = PtrTy;
+          }
+        }
+        TInfo = Context.getTrivialTypeSourceInfo(R, D.getIdentifierLoc());
+      }
     }
   }
 

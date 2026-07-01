@@ -99,6 +99,33 @@ main () int {
     run_edge_case(dv);
     chk(dv.value, 99, "edge cases verified via run_edge_case");
 
+    // 12. Dynamic-sized C4 array declaration on stack
+    int size = 21;
+    [size] char buffer = {};
+    chk(#.buffer, 21, "dynamic C4 array size is 21");
+    chk(##.buffer, 21, "dynamic C4 array capacity is 21");
+
+    for (int i = 0; i < 21; ++i) {
+        chk(buffer[i], 0, "elements should be zero-initialized");
+    }
+
+    size = 10;
+    chk(#.buffer, 21, "changing size variable does not affect array size");
+    chk(##.buffer, 21, "changing size variable does not affect array capacity");
+
+    // 13. Dynamic C4 array with {0} initializer (idiomatic C zero-init)
+    int size2 = 21;
+    [size2] char buffer2 = {0};
+    chk(#.buffer2,  21, "{0} init: dynamic C4 array size is 21");
+    chk(##.buffer2, 21, "{0} init: dynamic C4 array capacity is 21");
+    for (int i = 0; i < 21; ++i)
+        chk(buffer2[i], 0, "{0} init: elements should be zero-initialized");
+
+    // 14. Fixed/Dynamic size C array #. lookups (VLA unevaluated context fix)
+    int size_val = 5;
+    char buffer1[size_val] = {};
+    chk(#.buffer1, 5, "C array dynamic size via #.");
+
     puts("[PASS] Local function pointer tests passed.");
     return 0;
 }
