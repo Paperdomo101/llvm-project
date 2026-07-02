@@ -1115,6 +1115,7 @@ CanThrowResult Sema::canThrow(const Stmt *S) {
   //   [Can throw] if in a potentially-evaluated context the expression would
   //   contain:
   switch (S->getStmtClass()) {
+  case Expr::C4ErrorHandlerStmtClass: break;
   case Expr::ConstantExprClass:
     return canThrow(cast<ConstantExpr>(S)->getSubExpr());
 

@@ -26,13 +26,6 @@
     $.bob // "5"
     ```
 
-    ## C4 structs
-    ```
-    Some_Struct {
-        int a, b;
-        float c;
-    }
-    ```
 
 		## New ternary
 		```
@@ -156,6 +149,14 @@
 # ===|===|=== DONE ===|===|===
 # ____________________________
 
+
+    ## C4 structs
+    ```
+    Some_Struct {
+        int a, b;
+        float c;
+    }
+    ```
 
     ## Comma separated struct members
     ```

@@ -6047,8 +6047,8 @@ void SemaCodeCompletion::CodeCompleteMemberReferenceExpr(
         CodeCompletionBuilder Builder(Results.getAllocator(),
                                       Results.getCodeCompletionTUInfo());
         // "data" has the same pointer type as the "items" field of the C4 array.
-        QualType ElemTy = SemaRef.getElementTypeFromC4Array(BaseType);
-        QualType DataPtrTy = SemaRef.Context.getPointerType(ElemTy);
+        // QualType ElemTy = SemaRef.getElementTypeFromC4Array(BaseType); // unused variable
+        // QualType DataPtrTy = SemaRef.Context.getPointerType(ElemTy); // unused variable
         Builder.AddTypedTextChunk("data");
         CodeCompletionResult DataResult(
             Builder.TakeString(),

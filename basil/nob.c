@@ -342,6 +342,10 @@ CompilerTest custom_test_suite[] = {
         "C4 struct syntax (auto-typedef, anonymous struct, comma separators)",
         "tests/struct_syntax_test.c4", true
     },
+    {
+        "C4 enum member collision test across different enums",
+        "tests/enum_collision.c4", true
+    },
 };
 
 bool run_compiler_tests(const char *compiler_path) {

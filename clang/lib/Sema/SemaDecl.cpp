@@ -21383,12 +21383,21 @@ Decl *Sema::ActOnEnumConstant(Scope *S, Decl *theEnumDecl, Decl *lastEnumConst,
     assert((getLangOpts().CPlusPlus || !isa<TagDecl>(PrevDecl)) &&
            "Received TagDecl when not in C++!");
     if (!isa<TagDecl>(PrevDecl) && isDeclInScope(PrevDecl, CurContext, S)) {
-      if (isa<EnumConstantDecl>(PrevDecl))
-        Diag(IdLoc, diag::err_redefinition_of_enumerator) << Id;
-      else
-        Diag(IdLoc, diag::err_redefinition) << Id;
-      notePreviousDefinition(PrevDecl, IdLoc);
-      return nullptr;
+      bool IsRedefinition = true;
+      if (getLangOpts().C4() && isa<EnumConstantDecl>(PrevDecl)) {
+        auto *PrevECD = cast<EnumConstantDecl>(PrevDecl);
+        if (PrevECD->getDeclContext() != TheEnumDecl) {
+          IsRedefinition = false;
+        }
+      }
+      if (IsRedefinition) {
+        if (isa<EnumConstantDecl>(PrevDecl))
+          Diag(IdLoc, diag::err_redefinition_of_enumerator) << Id;
+        else
+          Diag(IdLoc, diag::err_redefinition) << Id;
+        notePreviousDefinition(PrevDecl, IdLoc);
+        return nullptr;
+      }
     }
   }
 
