@@ -5388,6 +5388,23 @@ Decl *Sema::ParsedFreeStandingDeclSpec(Scope *S, AccessSpecifier AS,
         DS.getTypeSpecType() == DeclSpec::TST_typename) {
       RecordDecl *Record = Tag ? dyn_cast<RecordDecl>(Tag)
                                : DS.getRepAsType().get()->getAsRecordDecl();
+      if (Record && (getLangOpts().C4() && DS.isC4Embed())) {
+        SmallVector<FieldDecl*, 8> EmbeddedFields;
+        for (Decl *D : CurContext->decls()) {
+          if (FieldDecl *FD = dyn_cast<FieldDecl>(D)) {
+            if (FD->isC4Embed() && Context.hasSameType(FD->getType(), Context.getCanonicalTagType(Record))) {
+              Diag(DS.getBeginLoc(), diag::err_multiple_c4_embed_same_type);
+            }
+          }
+        }
+        Decl *Anon = BuildMicrosoftCAnonymousStruct(S, DS, Record);
+        if (Anon) {
+          if (FieldDecl *FD = dyn_cast<FieldDecl>(Anon)) {
+            FD->setC4Embed(true);
+          }
+        }
+        return Anon;
+      }
       if (Record && getLangOpts().MSAnonymousStructs) {
         Diag(DS.getBeginLoc(), diag::ext_ms_anonymous_record)
             << Record->isUnion() << DS.getSourceRange();
@@ -7112,6 +7129,7 @@ StmtResult Sema::ActOnTypeInferredAssignment(Scope *S, LHSVarInfo Var, Expr *Ini
   if (!isa<TranslationUnitDecl>(CurContext))
     NewVD->setLocalExternDecl();
   PushOnScopeChains(NewVD, S);
+  CheckShadow(S, NewVD);
 
   // For the sized [N] id := init form, evaluate the explicit capacity and
   // attach C4ArrayInfo so that AddInitializerToDecl can validate
@@ -7223,6 +7241,7 @@ StmtResult Sema::ActOnMultiTypeInferredAssignment(Scope *S,
                                      SC_None);
     NewVD->setLocalExternDecl();
     PushOnScopeChains(NewVD, S);
+    CheckShadow(S, NewVD);
     AddInitializerToDecl(NewVD, SubInitExpr, /*DirectInit=*/false);
     DeclsInGroup.push_back(NewVD);
   }
@@ -8764,6 +8783,30 @@ NamedDecl *Sema::ActOnVariableDeclarator(
   // Diagnose shadowed variables iff this isn't a redeclaration.
   if (!IsPlaceholderVariable && ShadowedDecl && !D.isRedeclaration())
     CheckShadow(NewVD, ShadowedDecl, Previous);
+
+  if (getLangOpts().C4() && NewVD->isLocalVarDecl() && !NewVD->isInvalidDecl() &&
+      !Diags.isIgnored(diag::warn_c4_decl_shadow_embed, NewVD->getLocation())) {
+    if (FunctionDecl *FD = getCurFunctionDecl(/*AllowLambda=*/true)) {
+      for (ParmVarDecl *PVD : FD->parameters()) {
+        if (PVD->isC4Embed()) {
+          QualType ParamTy = PVD->getType();
+          if (ParamTy->isPointerType())
+            ParamTy = ParamTy->castAs<PointerType>()->getPointeeType();
+          if (const RecordType *RT = ParamTy->getAs<RecordType>()) {
+            RecordDecl *RD = RT->getDecl();
+            LookupResult SubR(*this, NewVD->getDeclName(), NewVD->getLocation(), LookupMemberName);
+            LookupQualifiedName(SubR, RD);
+            if (!SubR.empty()) {
+              std::string ShadowedName = (PVD->getName() + "." + NewVD->getName()).str();
+              Diag(NewVD->getLocation(), diag::warn_c4_decl_shadow_embed)
+                  << NewVD << ShadowedName;
+              break;
+            }
+          }
+        }
+      }
+    }
+  }
 
   ProcessPragmaWeak(S, NewVD);
   ProcessPragmaExport(NewVD);
@@ -16426,6 +16469,9 @@ Decl *Sema::ActOnParamDeclarator(Scope *S, Declarator &D,
   ParmVarDecl *New =
       CheckParameter(Context.getTranslationUnitDecl(), D.getBeginLoc(),
                      D.getIdentifierLoc(), II, parmDeclType, TInfo, SC);
+  if (D.getDeclSpec().isC4Embed()) {
+    New->setC4Embed(true);
+  }
 
   if (D.isInvalidType())
     New->setInvalidDecl();
@@ -20196,6 +20242,9 @@ FieldDecl *Sema::CheckFieldDecl(DeclarationName Name, QualType T,
 
   FieldDecl *NewFD = FieldDecl::Create(Context, Record, TSSL, Loc, II, T, TInfo,
                                        BitWidth, Mutable, InitStyle);
+  if (D && D->getDeclSpec().isC4Embed()) {
+    NewFD->setC4Embed(true);
+  }
   if (InvalidDecl)
     NewFD->setInvalidDecl();
 
@@ -20629,6 +20678,20 @@ void Sema::ActOnFields(Scope *S, SourceLocation RecLoc, Decl *EnclosingDecl,
   }
 
   RecordDecl *Record = dyn_cast<RecordDecl>(EnclosingDecl);
+  if (Record && getLangOpts().C4()) {
+    SmallVector<FieldDecl*, 8> EmbeddedFields;
+    for (FieldDecl *FD : Record->fields()) {
+      if (FD->isC4Embed()) {
+        for (FieldDecl *Prev : EmbeddedFields) {
+          if (Context.hasSameType(FD->getType(), Prev->getType())) {
+            Diag(FD->getLocation(), diag::err_multiple_c4_embed_same_type);
+            FD->setInvalidDecl();
+          }
+        }
+        EmbeddedFields.push_back(FD);
+      }
+    }
+  }
   CXXRecordDecl *CXXRecord = dyn_cast<CXXRecordDecl>(EnclosingDecl);
 
   // Start counting up the number of named members; make sure to include

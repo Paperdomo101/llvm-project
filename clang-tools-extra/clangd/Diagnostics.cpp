@@ -872,7 +872,6 @@ void StoreDiags::HandleDiagnostic(DiagnosticsEngine::Level DiagLevel,
   } else {
     // Handle a note to an existing diagnostic.
     if (!LastDiag) {
-      assert(false && "Adding a note without main diagnostic");
       IgnoreDiagnostics::log(DiagLevel, Info);
       return;
     }

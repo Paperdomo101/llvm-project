@@ -2908,6 +2908,49 @@ ExprResult Sema::ActOnIdExpression(Scope *S, CXXScopeSpec &SS,
     }
   }
 
+  if (R.empty() && getLangOpts().C4()) {
+    if (FunctionDecl *FD = getCurFunctionDecl(/*AllowLambda=*/true)) {
+      ParmVarDecl *FoundEmbedParam = nullptr;
+      NamedDecl *FoundSubMember = nullptr;
+      for (ParmVarDecl *PVD : FD->parameters()) {
+        if (PVD->isC4Embed()) {
+          QualType ParamTy = PVD->getType();
+          if (ParamTy->isPointerType())
+            ParamTy = ParamTy->castAs<PointerType>()->getPointeeType();
+          if (const RecordType *RT = ParamTy->getAs<RecordType>()) {
+            RecordDecl *RD = RT->getDecl();
+            LookupResult SubR(*this, R.getLookupNameInfo(), LookupMemberName);
+            LookupQualifiedName(SubR, RD);
+            if (!SubR.empty()) {
+              if (FoundEmbedParam) {
+                Diag(NameLoc, diag::err_ambiguous_member_multiple_embed_params)
+                    << Name << FD;
+                return ExprError();
+              }
+              FoundEmbedParam = PVD;
+              FoundSubMember = SubR.getRepresentativeDecl();
+            }
+          }
+        }
+      }
+
+      if (FoundEmbedParam) {
+        ExprResult ParamRef = BuildDeclRefExpr(FoundEmbedParam, FoundEmbedParam->getType(),
+                                               VK_LValue, NameLoc);
+        if (!ParamRef.isInvalid()) {
+          bool IsArrow = FoundEmbedParam->getType()->isPointerType();
+          LookupResult MemberR(*this, R.getLookupNameInfo(), LookupMemberName);
+          MemberR.addDecl(FoundSubMember);
+          MemberR.resolveKind();
+          return BuildMemberReferenceExpr(ParamRef.get(), ParamRef.get()->getType(),
+                                          NameLoc, IsArrow, SS, TemplateKWLoc,
+                                          /*FirstQualifierInScope=*/nullptr,
+                                          MemberR, TemplateArgs, S);
+        }
+      }
+    }
+  }
+
   if (R.isAmbiguous())
     return ExprError();
 
@@ -6539,6 +6582,36 @@ Sema::ConvertArgumentsForCall(CallExpr *Call, Expr *Fn,
   return false;
 }
 
+bool Sema::IsC4ReferenceReturnType(const FunctionDecl *FD) const {
+  if (!FD) return false;
+  FunctionTypeLoc FTL = FD->getFunctionTypeLoc();
+  if (FTL.isNull()) return false;
+  SourceLocation RParen = FTL.getRParenLoc();
+  if (RParen.isInvalid()) return false;
+
+  std::pair<FileID, unsigned> LocInfo = Context.getSourceManager().getDecomposedLoc(RParen);
+  bool Invalid = false;
+  StringRef Buf = Context.getSourceManager().getBufferData(LocInfo.first, &Invalid);
+  if (Invalid || LocInfo.second >= Buf.size()) return false;
+
+  unsigned Index = LocInfo.second + 1;
+  while (Index < Buf.size()) {
+    char C = Buf[Index];
+    if (C == '{' || C == ';' || C == '=')
+      break;
+    if (C == '&') {
+      // Check if it's '&&'
+      if (Index + 1 < Buf.size() && Buf[Index + 1] == '&') {
+        Index += 2;
+        continue;
+      }
+      return true;
+    }
+    Index++;
+  }
+  return false;
+}
+
 // C4 helper – Sema member so it is visible across translation units.
 bool Sema::TryC4ResolveDotExpr(Expr *&E, QualType TargetType) {
   if (TargetType.isNull()) return false;
@@ -7842,7 +7915,16 @@ ExprResult Sema::BuildResolvedCallExpr(Expr *Fn, NamedDecl *NDecl,
       return ExprError();
   }
 
-  return CheckForImmediateInvocation(MaybeBindToTemporary(TheCall), FDecl);
+  ExprResult CallRes = CheckForImmediateInvocation(MaybeBindToTemporary(TheCall), FDecl);
+  if (getLangOpts().C4() && FDecl && CallRes.isUsable() && !CallRes.isInvalid()) {
+    if (IsC4ReferenceReturnType(FDecl)) {
+      ExprResult Deref = CreateBuiltinUnaryOp(CallRes.get()->getBeginLoc(), UO_Deref, CallRes.get());
+      if (!Deref.isInvalid()) {
+        CallRes = Deref;
+      }
+    }
+  }
+  return CallRes;
 }
 
 ExprResult
@@ -16414,6 +16496,22 @@ ExprResult Sema::ActOnC4DotOrGroup(SourceLocation DotLoc,
   return Result;
 }
 
+static FieldDecl *findEmbeddedMemberOfType(const RecordDecl *RD, QualType TargetTy, ASTContext &Ctx) {
+  for (FieldDecl *FD : RD->fields()) {
+    if (FD->isC4Embed()) {
+      if (Ctx.hasSameType(FD->getType(), TargetTy)) {
+        return FD;
+      }
+      if (const RecordType *RT = FD->getType()->getAs<RecordType>()) {
+        if (findEmbeddedMemberOfType(RT->getDecl(), TargetTy, Ctx)) {
+          return FD;
+        }
+      }
+    }
+  }
+  return nullptr;
+}
+
 // expr as Type  →  (Type)expr
 ExprResult Sema::ActOnC4AsCast(ExprResult LHS, ParsedType DestType,
                                 SourceLocation AsLoc) {
@@ -16421,6 +16519,39 @@ ExprResult Sema::ActOnC4AsCast(ExprResult LHS, ParsedType DestType,
   QualType Ty = GetTypeFromParser(DestType, &TInfo);
   if (Ty.isNull()) return ExprError();
   if (!TInfo) TInfo = Context.getTrivialTypeSourceInfo(Ty, AsLoc);
+
+  if (getLangOpts().C4() && !LHS.isInvalid() && LHS.get()) {
+    QualType LHSTy = LHS.get()->getType();
+    QualType TargetTy = Ty;
+    bool IsLHSVal = true;
+    if (LHSTy->isPointerType() && TargetTy->isPointerType()) {
+      LHSTy = LHSTy->castAs<PointerType>()->getPointeeType();
+      TargetTy = TargetTy->castAs<PointerType>()->getPointeeType();
+      IsLHSVal = false;
+    }
+    if (const RecordType *LHSRecTy = LHSTy->getAs<RecordType>()) {
+      if (FieldDecl *FD = findEmbeddedMemberOfType(LHSRecTy->getDecl(), TargetTy, Context)) {
+        CXXScopeSpec SS;
+        DeclAccessPair FoundDecl = DeclAccessPair::make(FD, FD->getAccess());
+        DeclarationNameInfo MemberNameInfo(FD->getDeclName(), AsLoc);
+        ExprResult MemberRef = BuildFieldReferenceExpr(
+            LHS.get(), !IsLHSVal, AsLoc, SS, FD, FoundDecl, MemberNameInfo);
+        if (!MemberRef.isInvalid()) {
+          Expr *MemberExpr = MemberRef.get();
+          if (!IsLHSVal) {
+            MemberRef = CreateBuiltinUnaryOp(AsLoc, UO_AddrOf, MemberExpr);
+          }
+          if (MemberRef.isInvalid()) return ExprError();
+
+          if (Context.hasSameType(MemberRef.get()->getType(), Ty)) {
+            return MemberRef;
+          }
+          return ActOnC4AsCast(MemberRef, DestType, AsLoc);
+        }
+      }
+    }
+  }
+
   return BuildCStyleCastExpr(AsLoc, TInfo, AsLoc, LHS.get());
 }
 
@@ -19456,7 +19587,7 @@ bool Sema::DiagnoseAssignmentResult(AssignConvertType ConvTy,
       ConvTy == AssignConvertType::IncompatiblePointer)
     ObjC().EmitRelatedResultTypeNoteForReturn(DstType);
 
-  if (Complained)
+  if (Complained && (!DiagKind || !Diags.isIgnored(DiagKind, Loc)))
     *Complained = true;
   return isInvalid;
 }

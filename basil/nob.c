@@ -235,6 +235,20 @@ CompilerTest custom_test_suite[] = {
             "expected '{'"
         }
     },
+    {
+        "C4 Embed Arrow Errors",
+        "tests/embed_arrow_errors.c4",
+        false, 4, {
+            "cannot have multiple `<-` members of the same type",
+            "ambiguous member 'x' accessed from multiple embedded fields of 'Player2'",
+            "ambiguous member 'x' found in multiple embedded parameters of 'test_param_ambiguous'",
+            "declaration 'x' is shadowing 'vector.x'"
+        }
+    },
+    {
+        "C++ Template Less-Minus Lexing Regression",
+        "tests/template_less_minus.cpp",
+    },
     /// --------------
     ///  RUNTIME
     /// ---------------
@@ -350,6 +364,10 @@ CompilerTest custom_test_suite[] = {
         "C4 struct semicolon omission and typedef test",
         "tests/struct_semicolon_test.c4", true
     },
+    {
+        "C4 Embed Arrow Runtime",
+        "tests/embed_arrow_runtime.c4", true
+    },
 };
 
 bool run_compiler_tests(const char *compiler_path) {
@@ -426,6 +444,13 @@ bool run_compiler_tests(const char *compiler_path) {
         while ((search_ptr = strstr(search_ptr, "error:")) != NULL) {
             total_errors_seen++;
             search_ptr += 6;
+        }
+        if (strcmp(test.name, "C4 Embed Arrow Errors") == 0) {
+            search_ptr = compiler_log_buffer;
+            while ((search_ptr = strstr(search_ptr, "warning:")) != NULL) {
+                total_errors_seen++;
+                search_ptr += 8;
+            }
         }
 
 

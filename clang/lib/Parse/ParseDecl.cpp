@@ -3727,6 +3727,18 @@ void Parser::ParseDeclarationSpecifiers(
       continue;
 
     // ==========================================================
+    // C4 LANGUAGE EXTENSION: EMBED ARROW PREFIX DETECTOR (<-type)
+    // ==========================================================
+    case tok::lessminus: {
+      if (!getLangOpts().C4()) goto DoneWithDeclSpec;
+      SourceLocation LessMinusLoc = Tok.getLocation();
+      ConsumeToken(); // Consumes the '<-' token safely
+      DS.SetIsC4Embed(true, LessMinusLoc);
+      continue;
+    }
+    // ==========================================================
+
+    // ==========================================================
     // C4 LANGUAGE EXTENSION: PASS-BY-REFERENCE PREFIX DETECTOR (&type)
     // ==========================================================
     case tok::amp: {

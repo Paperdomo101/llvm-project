@@ -1823,7 +1823,7 @@ protected:
   ParmVarDecl(Kind DK, ASTContext &C, DeclContext *DC, SourceLocation StartLoc,
               SourceLocation IdLoc, const IdentifierInfo *Id, QualType T,
               TypeSourceInfo *TInfo, StorageClass S, Expr *DefArg)
-      : VarDecl(DK, C, DC, StartLoc, IdLoc, Id, T, TInfo, S) {
+      : VarDecl(DK, C, DC, StartLoc, IdLoc, Id, T, TInfo, S), IsC4Embed(false) {
     assert(ParmVarDeclBits.HasInheritedDefaultArg == false);
     assert(ParmVarDeclBits.DefaultArgKind == DAK_None);
     assert(ParmVarDeclBits.IsKNRPromoted == false);
@@ -1976,11 +1976,16 @@ public:
   void setOwningFunction(DeclContext *FD) { setDeclContext(FD); }
 
   // Implement isa/cast/dyncast/etc.
+  bool isC4Embed() const { return IsC4Embed; }
+  void setC4Embed(bool B) { IsC4Embed = B; }
+
   static bool classof(const Decl *D) { return classofKind(D->getKind()); }
   static bool classofKind(Kind K) { return K == ParmVar; }
 
 private:
   friend class ASTDeclReader;
+
+  bool IsC4Embed = false;
 
   enum { ParameterIndexSentinel = (1 << NumParameterIndexBits) - 1 };
   SourceLocation ExplicitObjectParameterIntroducerLoc;
@@ -3254,7 +3259,7 @@ protected:
             InClassInitStyle InitStyle)
       : DeclaratorDecl(DK, DC, IdLoc, Id, T, TInfo, StartLoc), BitField(false),
         Mutable(Mutable), StorageKind((InitStorageKind)InitStyle),
-        CachedFieldIndex(0), Init() {
+        CachedFieldIndex(0), Init(), IsC4Embed(false) {
     if (BW)
       setBitWidth(BW);
   }
@@ -3391,6 +3396,9 @@ public:
   const FieldDecl *findCountedByField() const;
 
 private:
+  bool IsC4Embed = false;
+
+private:
   void setLazyInClassInitializer(LazyDeclStmtPtr NewInit);
 
 public:
@@ -3437,6 +3445,9 @@ public:
   /// Retrieves the canonical declaration of this field.
   FieldDecl *getCanonicalDecl() override { return getFirstDecl(); }
   const FieldDecl *getCanonicalDecl() const { return getFirstDecl(); }
+
+  bool isC4Embed() const { return IsC4Embed; }
+  void setC4Embed(bool B) { IsC4Embed = B; }
 
   // Implement isa/cast/dyncast/etc.
   static bool classof(const Decl *D) { return classofKind(D->getKind()); }

@@ -2948,15 +2948,61 @@ InitListChecker::CheckDesignatedInitializer(const InitializedEntity &Entity,
     if (!KnownField) {
       const IdentifierInfo *FieldName = D->getFieldName();
       ValueDecl *VD = SemaRef.tryLookupUnambiguousFieldDecl(RD, FieldName);
-      if (auto *FD = dyn_cast_if_present<FieldDecl>(VD)) {
-        KnownField = FD;
-      } else if (auto *IFD = dyn_cast_if_present<IndirectFieldDecl>(VD)) {
-        // In verify mode, don't modify the original.
-        if (VerifyOnly)
-          DIE = CloneDesignatedInitExpr(SemaRef, DIE);
-        ExpandAnonymousFieldDesignator(SemaRef, DIE, DesigIdx, IFD);
-        D = DIE->getDesignator(DesigIdx);
-        KnownField = cast<FieldDecl>(*IFD->chain_begin());
+      if (!VD && SemaRef.getLangOpts().C4()) {
+        FieldDecl *FoundEmbedField = nullptr;
+        FieldDecl *FoundSubField = nullptr;
+        for (FieldDecl *FD : RD->fields()) {
+          if (FD->isC4Embed()) {
+            QualType EmbedTy = FD->getType();
+            if (const RecordType *EmbedRecTy = EmbedTy->getAs<RecordType>()) {
+              RecordDecl *EmbedRD = EmbedRecTy->getDecl();
+              if (ValueDecl *SubVD = SemaRef.tryLookupUnambiguousFieldDecl(EmbedRD, FieldName)) {
+                if (FieldDecl *SubFD = dyn_cast_or_null<FieldDecl>(SubVD)) {
+                  if (FoundEmbedField) {
+                    FoundEmbedField = nullptr;
+                    FoundSubField = nullptr;
+                    break;
+                  }
+                  FoundEmbedField = FD;
+                  FoundSubField = SubFD;
+                }
+              }
+            }
+          }
+        }
+
+        if (FoundEmbedField) {
+          typedef DesignatedInitExpr::Designator Designator;
+          SmallVector<Designator, 2> Replacements;
+          Replacements.push_back(Designator::CreateFieldDesignator(
+              FoundEmbedField->getIdentifier(), D->getDotLoc(), D->getFieldLoc()));
+          Replacements.back().setFieldDecl(FoundEmbedField);
+
+          Replacements.push_back(Designator::CreateFieldDesignator(
+              FieldName, SourceLocation(), SourceLocation()));
+          Replacements.back().setFieldDecl(FoundSubField);
+
+          if (VerifyOnly)
+            DIE = CloneDesignatedInitExpr(SemaRef, DIE);
+
+          DIE->ExpandDesignator(SemaRef.Context, DesigIdx, &Replacements[0],
+                                &Replacements[0] + Replacements.size());
+
+          D = DIE->getDesignator(DesigIdx);
+          KnownField = FoundEmbedField;
+        }
+      }
+      if (!KnownField) {
+        if (auto *FD = dyn_cast_if_present<FieldDecl>(VD)) {
+          KnownField = FD;
+        } else if (auto *IFD = dyn_cast_if_present<IndirectFieldDecl>(VD)) {
+          // In verify mode, don't modify the original.
+          if (VerifyOnly)
+            DIE = CloneDesignatedInitExpr(SemaRef, DIE);
+          ExpandAnonymousFieldDesignator(SemaRef, DIE, DesigIdx, IFD);
+          D = DIE->getDesignator(DesigIdx);
+          KnownField = cast<FieldDecl>(*IFD->chain_begin());
+        }
       }
       if (!KnownField) {
         if (VerifyOnly) {

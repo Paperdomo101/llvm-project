@@ -255,6 +255,7 @@ PUNCTUATOR(hash,                "#")
 PUNCTUATOR(hashhash,            "##")
 PUNCTUATOR(hashat,              "#@")
 // C4
+PUNCTUATOR(lessminus,           "<-")
 PUNCTUATOR(atdot,               "@.")
 PUNCTUATOR(hashdot,             "#.")
 PUNCTUATOR(cashdot,             "$.")

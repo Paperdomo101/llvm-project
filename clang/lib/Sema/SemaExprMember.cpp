@@ -1238,6 +1238,43 @@ Sema::PerformMemberExprBaseConversion(Expr *Base, bool IsArrow) {
 ///
 /// The ObjCImpDecl bit is a gross hack that will need to be properly
 /// fixed for ObjC++.
+static FieldDecl *findEmbeddedMemberWithMemberName(const RecordDecl *RD, DeclarationName Name,
+                                                   Sema &S, NamedDecl *&FoundSubMember,
+                                                   bool &IsAmbiguous) {
+  FieldDecl *FoundEmbedField = nullptr;
+  for (FieldDecl *FD : RD->fields()) {
+    if (FD->isC4Embed()) {
+      QualType EmbedTy = FD->getType();
+      if (const RecordType *EmbedRecTy = EmbedTy->getAs<RecordType>()) {
+        RecordDecl *EmbedRD = EmbedRecTy->getDecl();
+        LookupResult SubR(S, Name, SourceLocation(), Sema::LookupMemberName);
+        S.LookupQualifiedName(SubR, EmbedRD);
+        if (!SubR.empty()) {
+          if (FoundEmbedField) {
+            IsAmbiguous = true;
+            FoundSubMember = nullptr;
+            return nullptr;
+          }
+          FoundEmbedField = FD;
+          FoundSubMember = SubR.getRepresentativeDecl();
+        } else {
+          NamedDecl *SubSubMember = nullptr;
+          if (findEmbeddedMemberWithMemberName(EmbedRD, Name, S, SubSubMember, IsAmbiguous)) {
+            if (FoundEmbedField) {
+              IsAmbiguous = true;
+              FoundSubMember = nullptr;
+              return nullptr;
+            }
+            FoundEmbedField = FD;
+            FoundSubMember = SubSubMember;
+          }
+        }
+      }
+    }
+  }
+  return FoundEmbedField;
+}
+
 static ExprResult LookupMemberExpr(Sema &S, LookupResult &R,
                                    ExprResult &BaseExpr, bool &IsArrow,
                                    SourceLocation OpLoc, CXXScopeSpec &SS,
@@ -1324,6 +1361,28 @@ static ExprResult LookupMemberExpr(Sema &S, LookupResult &R,
     if (LookupMemberExprInRecord(S, R, BaseExpr.get(), BaseType, OpLoc, IsArrow,
                                  SS, HasTemplateArgs, TemplateKWLoc))
       return ExprError();
+
+    if (R.empty() && S.getLangOpts().C4() && !SS.isSet()) {
+      RecordDecl *RD = BaseType->getAsRecordDecl();
+      NamedDecl *FoundSubMember = nullptr;
+      bool IsAmbiguous = false;
+      if (FieldDecl *FD = findEmbeddedMemberWithMemberName(RD, MemberName, S, FoundSubMember, IsAmbiguous)) {
+        DeclAccessPair FoundDecl = DeclAccessPair::make(FD, FD->getAccess());
+        DeclarationNameInfo MemberNameInfo(FD->getDeclName(), OpLoc);
+        ExprResult MemberRef = S.BuildFieldReferenceExpr(
+            BaseExpr.get(), IsArrow, OpLoc, SS, FD, FoundDecl, MemberNameInfo);
+        if (!MemberRef.isInvalid()) {
+          R.addDecl(FoundSubMember);
+          R.resolveKind();
+          BaseExpr = MemberRef.get();
+          IsArrow = false;
+        }
+      } else if (IsAmbiguous) {
+        S.Diag(MemberLoc, diag::err_ambiguous_member_multiple_embeds)
+            << MemberName << BaseType;
+        return ExprError();
+      }
+    }
 
     // Returning valid-but-null is how we indicate to the caller that
     // the lookup result was filled in. If typo correction was attempted and

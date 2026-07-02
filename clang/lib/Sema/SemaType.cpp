@@ -5870,6 +5870,28 @@ TypeSourceInfo *Sema::GetTypeForDeclarator(Declarator &D) {
     }
   }
 
+  // === C4: wrap a function's return type in a pointer when the DeclSpec carries
+  // isC4Reference (representing reference return &T).
+  if (getLangOpts().C4() && TInfo &&
+      D.getDeclSpec().isC4Reference() &&
+      D.getDeclSpec().getTypeSpecType() != DeclSpec::TST_error) {
+    QualType FT = TInfo->getType();
+    if (const FunctionType *Fn = FT->getAs<FunctionType>()) {
+      QualType RetTy = Fn->getReturnType();
+      if (!RetTy->isPointerType()) {
+        QualType WrappedRet = Context.getPointerType(RetTy);
+        QualType NewFnTy;
+        if (const auto *FPT = dyn_cast<FunctionProtoType>(Fn))
+          NewFnTy = Context.getFunctionType(WrappedRet, FPT->getParamTypes(),
+                                            FPT->getExtProtoInfo());
+        else
+          NewFnTy = Context.getFunctionNoProtoType(WrappedRet,
+                                                   Fn->getExtInfo());
+        TInfo = Context.getTrivialTypeSourceInfo(NewFnTy, D.getBeginLoc());
+      }
+    }
+  }
+
   return TInfo;
 }
 

@@ -6711,6 +6711,14 @@ def ext_forward_ref_enum_def : Extension<
 
 def err_redefinition_of_enumerator : Error<"redefinition of enumerator %0">;
 def err_duplicate_member : Error<"duplicate member %0">;
+def err_multiple_c4_embed_same_type : Error<
+  "cannot have multiple `<-` members of the same type">;
+def err_ambiguous_member_multiple_embeds : Error<
+  "ambiguous member %0 accessed from multiple embedded fields of %1">;
+def err_ambiguous_member_multiple_embed_params : Error<
+  "ambiguous member %0 found in multiple embedded parameters of %1">;
+def warn_c4_decl_shadow_embed : Warning<
+  "declaration %0 is shadowing '%1'">, InGroup<Shadow>;
 def err_misplaced_ivar : Error<
   "instance variables may not be placed in %select{categories|class extension}0">;
 def warn_ivars_in_interface : Warning<

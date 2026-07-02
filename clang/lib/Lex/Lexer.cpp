@@ -4484,6 +4484,9 @@ LexStart:
       }
       CurPtr = ConsumeChar(CurPtr, SizeTmp, Result);
       Kind = tok::lessequal;
+    } else if (LangOpts.C4() && Char == '-') {
+      CurPtr = ConsumeChar(CurPtr, SizeTmp, Result);
+      Kind = tok::lessminus;
     } else if (LangOpts.Digraphs && Char == ':') {     // '<:' -> '['
       if (LangOpts.CPlusPlus11 &&
           getCharAndSize(CurPtr + SizeTmp, SizeTmp2) == ':') {

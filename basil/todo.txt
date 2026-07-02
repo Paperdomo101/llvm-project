@@ -4,40 +4,6 @@
 # ____________________________
 
 
-		## <-
-		```
-		Vector3 { float x, y, z; }
-
-		is_vector3_finite (&Vector3 vector) bool {
-		    return isfinite(vector.x)
-		        && isfinite(vector.y)
-		        && isfinite(vector.z)
-		}
-
-		is_vector3_finite (<- &Vector3 vector) bool {
-		    return isfinite(x) && isfinite(y) && isfinite(z)
-		}
-
-		Vector3_Like {
-			<- Vector3;
-		}
-
-		Player {
-			<- Vector3 position;
-			<- Vector3 velocity; // error: cannot have multiple `<-` members of the same type
-			int health;
-		}
-
-		Player joe = {.x = 5, .y = 2, .health = 72}
-		joe.position = {5, 6, 8}
-
-		Vector3_Like v3like;
-		some_function_that_takes_vector3(joe.position)
-		some_function_that_takes_vector3(v3like) // error: type mismatch (cast v3like to Vector3)
-		some_function_that_takes_vector3(v3like as Vector3) // OK!
-		some_function_that_takes_vector3({v3like.{x,y,z}}) // also OK!
-		```
-
     ## Loop ranges
     ```
     for 0..10 {...}
@@ -182,6 +148,40 @@
 
 # ===|===|=== DONE ===|===|===
 # ____________________________
+
+		## <-
+		```
+		Vector3 { float x, y, z; }
+
+		is_vector3_finite (&Vector3 vector) bool {
+		    return isfinite(vector.x)
+		        && isfinite(vector.y)
+		        && isfinite(vector.z)
+		}
+
+		is_vector3_finite (<- &Vector3 vector) bool {
+		    return isfinite(x) && isfinite(y) && isfinite(z)
+		}
+
+		Vector3_Like {
+			<- Vector3;
+		}
+
+		Player {
+			<- Vector3 position;
+			<- Vector3 velocity; // error: cannot have multiple `<-` members of the same type
+			int health;
+		}
+
+		Player joe = {.x = 5, .y = 2, .health = 72}
+		joe.position = {5, 6, 8}
+
+		Vector3_Like v3like;
+		some_function_that_takes_vector3(joe.position)
+		some_function_that_takes_vector3(v3like) // error: type mismatch (cast v3like to Vector3)
+		some_function_that_takes_vector3(v3like as Vector3) // OK!
+		some_function_that_takes_vector3({v3like.{x,y,z}}) // also OK!
+		```
 
 
     ## C4 structs

@@ -1,0 +1,36 @@
+Vector3 {
+    float x, y, z;
+}
+Vector2 {
+    float x, y;
+}
+
+// Error 1: multiple embedded members of the same type
+Player {
+    <- Vector3 position;
+    <- Vector3 velocity;
+}
+
+// Error 2: ambiguous member access in struct
+Player2 {
+    <- Vector3 position;
+    <- Vector2 velocity;
+}
+
+void test_ambiguous(Player2 p) {
+    p.x = 1.0;
+}
+
+// Error 3: ambiguous member in parameter list
+void test_param_ambiguous(<- &Vector3 v3, <- &Vector2 v2) {
+    x = 1.0;
+}
+
+is_vector3_finite(<- &Vector3 vector) int {
+    float x = 10;
+    return x > 0 && y > 0 && z > 0;  
+}
+
+main() int {
+    return 0;
+}

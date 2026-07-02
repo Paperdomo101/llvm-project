@@ -4267,6 +4267,18 @@ StmtResult Sema::BuildReturnStmt(SourceLocation ReturnLoc, Expr *RetValExp,
     // In C++ the return statement is handled via a copy initialization,
     // the C version of which boils down to CheckSingleAssignmentConstraints.
     if (!HasDependentReturnType && !RetValExp->isTypeDependent()) {
+      // C4: Auto-address injection for C4 reference return types.
+      if (getLangOpts().C4() && RetValExp && !RetValExp->getType()->isPointerType()) {
+        if (const FunctionDecl *CurFD = getCurFunctionDecl()) {
+          if (IsC4ReferenceReturnType(CurFD)) {
+            ExprResult AddrOf = CreateBuiltinUnaryOp(SourceLocation(), UO_AddrOf, RetValExp);
+            if (!AddrOf.isInvalid()) {
+              RetValExp = AddrOf.get();
+            }
+          }
+        }
+      }
+
       // we have a non-void function with an expression, continue checking
       InitializedEntity Entity =
           InitializedEntity::InitializeResult(ReturnLoc, RetType);

@@ -79,10 +79,11 @@ enum TokenKey : unsigned {
   KEYFIXEDPOINT = 0x10000000,
   KEYDEFERTS = 0x20000000,
   KEYNOHLSL = 0x40000000,
-  KEYMAX = KEYNOHLSL, // The maximum key
+  KEYC4 = 0x80000000,
+  KEYMAX = KEYC4, // The maximum key
   KEYALLCXX = KEYCXX | KEYCXX11 | KEYCXX20,
   KEYALL = (KEYMAX | (KEYMAX - 1)) & ~KEYNOMS18 & ~KEYNOOPENCL & ~KEYNOZOS &
-           ~KEYNOHLSL // KEYNOMS18, KEYNOOPENCL, KEYNOZOS, KEYNOHLSL excluded.
+           ~KEYNOHLSL & ~KEYC4 // KEYNOMS18, KEYNOOPENCL, KEYNOZOS, KEYNOHLSL, KEYC4 excluded.
 };
 
 /// How a keyword is treated in the selected standard. This enum is ordered

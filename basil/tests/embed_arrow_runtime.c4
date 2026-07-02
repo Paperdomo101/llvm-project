@@ -1,0 +1,46 @@
+Vector3 {
+    float x, y, z;
+}
+
+is_vector3_finite(<- &Vector3 vector) int {
+    return x > 0 && y > 0 && z > 0;
+}
+
+Vector3_Like {
+    <- Vector3;
+}
+
+Player {
+    <- Vector3 position;
+    int health;
+}
+
+main() int {
+    Player joe = {.x = 5, .y = 2, .health = 72};
+
+    // Verify member resolution via dot access on named embed
+    if (joe.x != 5 || joe.y != 2) {
+        return 1;
+    }
+
+    joe.position = {5, 6, 8};
+
+    // Verify parameter member injection
+    if (!is_vector3_finite(joe.position)) {
+        return 2;
+    }
+
+    Vector3_Like v3like;
+    // Verify member resolution via dot access on anonymous embed
+    v3like.x = 10;
+    v3like.y = 20;
+    v3like.z = 30;
+
+    // Verify 'as' cast from container to embedded struct type
+    Vector3 v3 = v3like as Vector3;
+    if (v3.x != 10 || v3.y != 20 || v3.z != 30) {
+        return 3;
+    }
+
+    return 0;
+}

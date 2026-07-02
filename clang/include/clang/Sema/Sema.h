@@ -2699,7 +2699,7 @@ public:
                                                        QualType StructTy,
                                                        const RecordDecl *RD);
 
-
+  bool IsC4ReferenceReturnType(const FunctionDecl *FD) const;
 
   // END C4
 
