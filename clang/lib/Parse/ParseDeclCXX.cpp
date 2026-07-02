@@ -2227,7 +2227,7 @@ void Parser::ParseClassSpecifier(tok::TokenKind TagTokKind,
   //
   // After a type-specifier, we don't expect a semicolon. This only happens in
   // C, since definitions are not permitted in this context in C++.
-  if (TUK == TagUseKind::Definition &&
+  if (TUK == TagUseKind::Definition && !getLangOpts().C4() &&
       (getLangOpts().CPlusPlus || !isTypeSpecifier(DSC)) &&
       (TemplateInfo.Kind != ParsedTemplateKind::NonTemplate || !isValidAfterTypeSpecifier(false))) {
     if (Tok.isNot(tok::semi)) {

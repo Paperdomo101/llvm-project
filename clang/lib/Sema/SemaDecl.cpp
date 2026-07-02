@@ -2727,7 +2727,7 @@ void Sema::MergeTypedefNameDecl(Scope *S, TypedefNameDecl *New,
   }
 
   // Modules always permit redefinition of typedefs, as does C11.
-  if (getLangOpts().Modules || getLangOpts().C11)
+  if (getLangOpts().Modules || getLangOpts().C11 || getLangOpts().C4())
     return;
 
   // If we have a redefinition of a typedef in C, emit a warning.  This warning
@@ -19683,14 +19683,38 @@ CreateNewDecl:
   } else if (SkipBody && SkipBody->ShouldSkip) {
     return SkipBody->Previous;
   } else {
-    if (getLangOpts().C4() && Name && New && !New->isInvalidDecl() &&
-        Context.getSourceManager().isInMainFile(New->getLocation())) {
-      if (auto *RD = dyn_cast<RecordDecl>(New)) {
-        if (RD->isStruct() || RD->isUnion()) {
-          QualType T = Context.getTagType(ElaboratedTypeKeyword::None, std::nullopt, RD, /*OwnsTag=*/false);
-          TypeSourceInfo *TInfo = Context.getTrivialTypeSourceInfo(T, NameLoc);
-          TypedefDecl *NewTD = TypedefDecl::Create(Context, CurContext, KWLoc, NameLoc, Name, TInfo);
-          PushOnScopeChains(NewTD, S, true);
+    if (getLangOpts().C4() && Name && New && !New->isInvalidDecl()) {
+      SourceLocation LocToCheck = New->getLocation();
+      SourceManager &SM = Context.getSourceManager();
+      FileID MainFID = SM.getMainFileID();
+      bool IsC4MainFile = false;
+      if (auto FE = SM.getFileEntryRefForID(MainFID)) {
+        IsC4MainFile = FE->getName().ends_with(".c4") || FE->getName().ends_with(".h4") ||
+                       FE->getName().ends_with(".civ") || FE->getName().ends_with(".hiv");
+      }
+      if (IsC4MainFile &&
+          !SM.isInSystemHeader(SM.getSpellingLoc(LocToCheck)) &&
+          !SM.isInSystemHeader(SM.getExpansionLoc(LocToCheck)) &&
+          !SM.isInSystemHeader(LocToCheck)) {
+        if (auto *RD = dyn_cast<RecordDecl>(New)) {
+          if (RD->isStruct() || RD->isUnion()) {
+            // Check if there is already a typedef with the same name in the current scope
+            LookupResult Prev(*this, Name, NameLoc, LookupOrdinaryName, RedeclarationKind::ForVisibleRedeclaration);
+            LookupName(Prev, S);
+            bool AlreadyTypedeffed = false;
+            for (NamedDecl *D : Prev) {
+              if (isa<TypedefNameDecl>(D)) {
+                AlreadyTypedeffed = true;
+                break;
+              }
+            }
+            if (!AlreadyTypedeffed) {
+              QualType T = Context.getTagType(ElaboratedTypeKeyword::None, std::nullopt, RD, /*OwnsTag=*/false);
+              TypeSourceInfo *TInfo = Context.getTrivialTypeSourceInfo(T, NameLoc);
+              TypedefDecl *NewTD = TypedefDecl::Create(Context, CurContext, KWLoc, NameLoc, Name, TInfo);
+              PushOnScopeChains(NewTD, S, true);
+            }
+          }
         }
       }
     }

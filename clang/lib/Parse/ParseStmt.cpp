@@ -117,6 +117,9 @@ bool Parser::ParseLHSVar(LHSVarInfo &Out, bool SuppressDiags) {
 // C4
 
 bool Parser::isTypeInferredAssignment() {
+  if (!isC4File())
+    return false;
+
   TentativeParsingAction TPA(*this);
 
   while (true) {
@@ -2173,8 +2176,10 @@ StmtResult Parser::ParseSwitchStatement(SourceLocation *TrailingElseLoc,
   if (C99orCXX)
     getCurScope()->decrementMSManglingNumber();
 
+  bool IsC4File = isC4File();
+
   StmtResult Body;
-  if (getLangOpts().C4()) {
+  if (IsC4File) {
     if (Tok.isNot(tok::l_brace)) {
       Diag(Tok, diag::err_expected) << tok::l_brace;
       Body = StmtError();
@@ -3563,7 +3568,23 @@ void Parser::ParseMicrosoftIfExistsStatement(StmtVector &Stmts) {
   Braces.consumeClose();
 }
 
+bool Parser::isC4File() {
+  if (!getLangOpts().C4())
+    return false;
+  SourceLocation Loc = Tok.getLocation();
+  SourceManager &SM = PP.getSourceManager();
+  PresumedLoc PLoc = SM.getPresumedLoc(SM.getSpellingLoc(Loc));
+  if (!PLoc.isValid())
+    return false;
+  llvm::StringRef Filename = PLoc.getFilename();
+  return Filename.ends_with(".c4") || Filename.ends_with(".h4") ||
+         Filename.ends_with(".civ") || Filename.ends_with(".hiv");
+}
+
 bool Parser::isC4CaseLabel() {
+  if (!isC4File())
+    return false;
+
   unsigned Offset = 0;
   bool HasQuestion = false;
   while (true) {

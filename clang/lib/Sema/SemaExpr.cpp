@@ -6539,6 +6539,32 @@ Sema::ConvertArgumentsForCall(CallExpr *Call, Expr *Fn,
   return false;
 }
 
+// C4 helper – Sema member so it is visible across translation units.
+bool Sema::TryC4ResolveDotExpr(Expr *&E, QualType TargetType) {
+  if (TargetType.isNull()) return false;
+  auto *ULE = dyn_cast<UnresolvedLookupExpr>(E);
+  if (!ULE) return false;
+  const EnumType *ET =
+      TargetType.getCanonicalType()->getAs<EnumType>();
+  if (!ET) return false;
+  EnumDecl *ExpectedED = ET->getDecl();
+  EnumConstantDecl *Match = nullptr;
+  for (NamedDecl *D : ULE->decls()) {
+    auto *ECD = dyn_cast<EnumConstantDecl>(D);
+    if (!ECD) return false; // not all candidates are enum constants
+    if (cast<EnumDecl>(ECD->getDeclContext()) == ExpectedED) {
+      if (Match) return false; // ambiguous
+      Match = ECD;
+    }
+  }
+  if (!Match) return false;
+  ExprResult DR = BuildDeclRefExpr(Match, Match->getType(),
+                                   VK_PRValue, E->getExprLoc());
+  if (DR.isInvalid()) return false;
+  E = DR.get();
+  return true;
+}
+
 bool Sema::GatherArgumentsForCall(SourceLocation CallLoc, FunctionDecl *FDecl,
                                   const FunctionProtoType *Proto,
                                   unsigned FirstParam, ArrayRef<Expr *> Args,
@@ -6654,6 +6680,10 @@ bool Sema::GatherArgumentsForCall(SourceLocation CallLoc, FunctionDecl *FDecl,
                         : diag::warn_obt_discarded_at_function_boundary)
             << Arg->getType() << ProtoArgType;
       }
+
+      // C4: resolve implicit dot ambiguity (.BASIC) using the parameter type.
+      if (getLangOpts().C4())
+        TryC4ResolveDotExpr(Arg, ProtoArgType);
 
       ExprResult ArgE = PerformCopyInitialization(
           Entity, SourceLocation(), Arg, IsListInitialization, AllowExplicit);
@@ -10658,6 +10688,15 @@ AssignConvertType Sema::CheckSingleAssignmentConstraints(QualType LHSType,
   // to put the updated value.
   ExprResult LocalRHS = CallerRHS;
   ExprResult &RHS = ConvertRHS ? CallerRHS : LocalRHS;
+
+  // C4: if the RHS is an UnresolvedLookupExpr over enum constants (produced by
+  // an implicit dot like `.BASIC` when multiple enums share the name), resolve
+  // it to the unique enumerator that belongs to the LHS enum type.
+  if (getLangOpts().C4() && ConvertRHS && !LHSType.isNull()) {
+    Expr *RHSExpr = RHS.get();
+    if (TryC4ResolveDotExpr(RHSExpr, LHSType.getUnqualifiedType()))
+      RHS = RHSExpr;
+  }
 
   if (const auto *LHSPtrType = LHSType->getAs<PointerType>()) {
     if (const auto *RHSPtrType = RHS.get()->getType()->getAs<PointerType>()) {
@@ -16312,7 +16351,8 @@ ExprResult Sema::ActOnC4SymbolOf(StringRef Name, SourceLocation DollarLoc,
 // .MemberName → look up enum constant in current scope
 ExprResult Sema::ActOnC4ImplicitDot(SourceLocation DotLoc,
                                      IdentifierInfo *MemberII,
-                                     SourceLocation MemberLoc) {
+                                     SourceLocation MemberLoc,
+                                     QualType PreferredType) {
   // Unqualified lookup of the identifier as an ordinary name.
   LookupResult R(*this, MemberII, MemberLoc, LookupOrdinaryName);
   LookupName(R, getCurScope());
@@ -16320,25 +16360,53 @@ ExprResult Sema::ActOnC4ImplicitDot(SourceLocation DotLoc,
     Diag(MemberLoc, diag::err_undeclared_use) << MemberII->getName();
     return ExprError();
   }
+
+  // If the preferred/expected type is a known enum type, filter the lookup
+  // results to only the enumerator belonging to that enum.  This resolves
+  // ambiguity when two C4 enums share a member name (e.g. ScreenFlags.BASIC
+  // vs DisplayModes.BASIC) and the call-site context tells us which enum is
+  // expected.
+  if (!PreferredType.isNull()) {
+    QualType Canonical = PreferredType.getCanonicalType();
+    if (const EnumType *ET = Canonical->getAs<EnumType>()) {
+      EnumDecl *ExpectedED = ET->getDecl();
+      // Walk the result set; if exactly one result belongs to the expected
+      // enum, use it directly.
+      EnumConstantDecl *Match = nullptr;
+      bool Ambiguous = false;
+      for (auto *D : R) {
+        if (auto *ECD = dyn_cast<EnumConstantDecl>(D)) {
+          if (cast<EnumDecl>(ECD->getDeclContext()) == ExpectedED) {
+            if (Match) { Ambiguous = true; break; }
+            Match = ECD;
+          }
+        }
+      }
+      if (Match && !Ambiguous)
+        return BuildDeclRefExpr(Match, Match->getType(), VK_PRValue, MemberLoc);
+    }
+  }
+
   return BuildDeclarationNameExpr(CXXScopeSpec(), R, /*NeedsADL=*/false);
 }
 
 // .{M1, M2} → bitwise OR of enum members
 ExprResult Sema::ActOnC4DotOrGroup(SourceLocation DotLoc,
                                     ArrayRef<IdentifierInfo *> Members,
-                                    ArrayRef<SourceLocation> MemberLocs) {
+                                    ArrayRef<SourceLocation> MemberLocs,
+                                    QualType PreferredType) {
   if (Members.empty()) {
     Diag(DotLoc, diag::err_expected_expression);
     return ExprError();
   }
 
   // Look up the first member.
-  ExprResult Result = ActOnC4ImplicitDot(DotLoc, Members[0], MemberLocs[0]);
+  ExprResult Result = ActOnC4ImplicitDot(DotLoc, Members[0], MemberLocs[0], PreferredType);
   if (Result.isInvalid()) return ExprError();
 
   // OR in remaining members.
   for (unsigned i = 1, e = Members.size(); i < e; ++i) {
-    ExprResult Rhs = ActOnC4ImplicitDot(DotLoc, Members[i], MemberLocs[i]);
+    ExprResult Rhs = ActOnC4ImplicitDot(DotLoc, Members[i], MemberLocs[i], PreferredType);
     if (Rhs.isInvalid()) return ExprError();
     Result = CreateBuiltinBinOp(MemberLocs[i], BO_Or, Result.get(), Rhs.get());
     if (Result.isInvalid()) return ExprError();

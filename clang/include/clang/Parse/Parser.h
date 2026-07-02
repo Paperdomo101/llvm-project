@@ -7429,6 +7429,7 @@ public:
                                 bool MissingCase = false,
                                 ExprResult Expr = ExprResult());
   bool isC4CaseLabel();
+  bool isC4File();
 
   /// ParseDefaultStatement
   /// \verbatim

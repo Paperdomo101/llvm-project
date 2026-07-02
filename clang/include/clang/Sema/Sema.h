@@ -2646,11 +2646,19 @@ public:
                              SourceLocation NameLoc);
 
   ExprResult ActOnC4ImplicitDot(SourceLocation DotLoc, IdentifierInfo *MemberII,
-                                SourceLocation MemberLoc);
+                                SourceLocation MemberLoc,
+                                QualType PreferredType = QualType());
 
   ExprResult ActOnC4DotOrGroup(SourceLocation DotLoc,
                                ArrayRef<IdentifierInfo *> Members,
-                               ArrayRef<SourceLocation> MemberLocs);
+                               ArrayRef<SourceLocation> MemberLocs,
+                               QualType PreferredType = QualType());
+
+  /// C4 helper: if E is an UnresolvedLookupExpr whose candidates are all
+  /// EnumConstantDecls, and TargetType names an enum, replaces E with a
+  /// DeclRefExpr for the unique enumerator from that enum.  Returns true on
+  /// success.  Safe to call on any expression in any C4 context.
+  bool TryC4ResolveDotExpr(Expr *&E, QualType TargetType);
 
   ExprResult ActOnC4AsCast(ExprResult LHS, ParsedType DestType,
                            SourceLocation AsLoc);

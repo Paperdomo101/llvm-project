@@ -6986,6 +6986,18 @@ void SemaCodeCompletion::CodeCompleteC4ImplicitDot(Scope *S,
   if (!CodeCompleter)
     return;
 
+  // ── Fallback: if the parser couldn't provide a preferred type (common for
+  // function-call arguments where PreferredType isn't populated at parse time),
+  // try to infer it from the innermost switch condition.
+  if (PreferredTy.isNull()) {
+    FunctionScopeInfo *FSI = SemaRef.getCurFunction();
+    if (FSI && !FSI->SwitchStack.empty()) {
+      if (const Expr *Cond =
+              FSI->SwitchStack.back().getPointer()->getCond())
+        PreferredTy = Cond->getType();
+    }
+  }
+
   // ── Case A: known enum type ──────────────────────────────────────────────
   if (!PreferredTy.isNull()) {
     QualType Ty = PreferredTy.getNonReferenceType().getUnqualifiedType();
@@ -7034,6 +7046,39 @@ void SemaCodeCompletion::CodeCompleteC4ImplicitDot(Scope *S,
                              CodeCompleter->loadExternal());
   Results.ExitScope();
 
+  HandleCodeCompleteResults(&SemaRef, CodeCompleter,
+                            Results.getCompletionContext(), Results.data(),
+                            Results.size());
+}
+
+// Complete after `EnumName.` in C4 qualified enum access (e.g. DisplayModes.<TAB>).
+void SemaCodeCompletion::CodeCompleteC4QualifiedEnum(Scope *S,
+                                                     IdentifierInfo *EnumII) {
+  if (!CodeCompleter)
+    return;
+
+  // Look up the enum type by name.
+  LookupResult R(SemaRef, EnumII, SourceLocation(), Sema::LookupOrdinaryName);
+  SemaRef.LookupName(R, S);
+  EnumDecl *ED = nullptr;
+  for (NamedDecl *D : R) {
+    // The name might be a typedef resolving to the enum.
+    if (auto *TD = dyn_cast<TypedefNameDecl>(D)) {
+      if (const auto *ET = TD->getUnderlyingType()->getAs<EnumType>())
+        ED = ET->getDecl();
+    } else if (auto *EnD = dyn_cast<EnumDecl>(D)) {
+      ED = EnD;
+    }
+    if (ED) break;
+  }
+  if (!ED)
+    return;
+
+  ResultBuilder Results(SemaRef, CodeCompleter->getAllocator(),
+                        CodeCompleter->getCodeCompletionTUInfo(),
+                        CodeCompletionContext::CCC_Expression);
+  AddEnumerators(Results, getASTContext(), ED, SemaRef.CurContext,
+                 CoveredEnumerators());
   HandleCodeCompleteResults(&SemaRef, CodeCompleter,
                             Results.getCompletionContext(), Results.data(),
                             Results.size());

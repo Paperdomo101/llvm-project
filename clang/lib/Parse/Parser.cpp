@@ -302,6 +302,9 @@ bool Parser::TryConsumeOptionalSemi() {
 // Returns true if the token stream looks like: Identifier ':' (not '::')
 // followed by a type specifier or '{', indicating a C4 enum declaration.
 bool Parser::isC4EnumDeclaration() {
+  if (!isC4File())
+    return false;
+
   if (!Tok.is(tok::identifier)) return false;
 
   TentativeParsingAction TPA(*this);

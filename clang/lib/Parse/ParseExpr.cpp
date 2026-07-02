@@ -1221,11 +1221,19 @@ Parser::ParseCastExpression(CastParseKind ParseKind, bool isAddressOfOperand,
   // is not rejected as an invalid expression before we can consume the '.X'.
   if (getLangOpts().C4() && SavedKind == tok::identifier &&
       NextToken().is(tok::period) &&
-      GetLookAheadToken(2).is(tok::identifier)) {
+      (GetLookAheadToken(2).is(tok::identifier) ||
+       GetLookAheadToken(2).is(tok::code_completion))) {
     if (Actions.IsC4EnumName(Tok.getIdentifierInfo())) {
       IdentifierInfo *EnumII = Tok.getIdentifierInfo();
       SourceLocation EnumLoc = ConsumeToken();  // consume enum name
       ConsumeToken();                            // consume '.'
+      // === C4: CODE COMPLETION AFTER 'EnumName.' ===
+      if (Tok.is(tok::code_completion)) {
+        cutOffParsing();
+        Actions.CodeCompletion().CodeCompleteC4QualifiedEnum(
+            getCurScope(), EnumII);
+        return ExprError();
+      }
       IdentifierInfo *MemberII = Tok.getIdentifierInfo();
       SourceLocation MemberLoc = ConsumeToken(); // consume member name
       Res = Actions.ActOnC4EnumMemberAccess(EnumLoc, EnumII, MemberLoc, MemberII);
@@ -1286,13 +1294,13 @@ Parser::ParseCastExpression(CastParseKind ParseKind, bool isAddressOfOperand,
           return ExprError();
         }
         ConsumeBrace();
-        return Actions.ActOnC4DotOrGroup(DotLoc, Members, MemberLocs);
+        return Actions.ActOnC4DotOrGroup(DotLoc, Members, MemberLocs, DotExpectedTy);
       }
 
       if (Tok.is(tok::identifier)) {
         IdentifierInfo *MemberII = Tok.getIdentifierInfo();
         SourceLocation MemberLoc = ConsumeToken();
-        return Actions.ActOnC4ImplicitDot(DotLoc, MemberII, MemberLoc);
+        return Actions.ActOnC4ImplicitDot(DotLoc, MemberII, MemberLoc, DotExpectedTy);
       }
 
       // Not a valid implicit dot

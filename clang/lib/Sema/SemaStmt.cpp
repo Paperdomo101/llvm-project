@@ -502,6 +502,15 @@ Sema::ActOnCaseExpr(SourceLocation CaseLoc, ExprResult Val) {
     return ExprError();
   QualType CondType = CondExpr->getType();
 
+  // C4: if the case expression is an ambiguous implicit dot (.BASIC) over
+  // multiple same-named enumerators, resolve it against the switch condition's
+  // enum type before the integer-constant check runs.
+  if (getLangOpts().C4()) {
+    Expr *V = Val.get();
+    if (TryC4ResolveDotExpr(V, CondType))
+      Val = V;
+  }
+
   auto CheckAndFinish = [&](Expr *E) {
     if (CondType->isDependentType() || E->isTypeDependent())
       return ExprResult(E);

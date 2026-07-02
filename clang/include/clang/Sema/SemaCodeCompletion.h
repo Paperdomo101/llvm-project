@@ -117,6 +117,8 @@ public:
   /// If \p PreferredType is a known enum type, only its members are shown.
   /// Otherwise all enum constants visible in scope are offered.
   void CodeCompleteC4ImplicitDot(Scope *S, QualType PreferredType);
+  /// Complete members after `EnumName.` in C4 qualified enum access.
+  void CodeCompleteC4QualifiedEnum(Scope *S, IdentifierInfo *EnumII);
   void CodeCompleteTag(Scope *S, unsigned TagSpec);
   void CodeCompleteTypeQualifiers(DeclSpec &DS);
   void CodeCompleteFunctionQualifiers(DeclSpec &DS, Declarator &D,

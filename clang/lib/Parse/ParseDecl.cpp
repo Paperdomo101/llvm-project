@@ -1978,8 +1978,7 @@ Parser::DeclGroupPtrTy Parser::ParseSimpleDeclaration(
   // and re-parses, which would corrupt the following declaration) when we
   // know the semicolon is optional.
   bool C4BraceTerminatedDecl =
-      getLangOpts().C4() &&
-      Context == DeclaratorContext::File &&
+      isC4File() &&
       DS.hasTagDefinition() && DS.isTypeSpecOwned();
   if (!C4BraceTerminatedDecl && DS.hasTagDefinition() &&
       DiagnoseMissingSemiAfterTagDefinition(DS, AS_none, DSContext))
@@ -1992,7 +1991,7 @@ Parser::DeclGroupPtrTy Parser::ParseSimpleDeclaration(
   // C99 6.7.2.3p6: Handle "struct-or-union identifier;", "enum { X };"
   // declaration-specifiers init-declarator-list[opt] ';'
   bool IsSemi = Tok.is(tok::semi);
-  bool ForceFreeStanding = !IsSemi && getLangOpts().C4() && DS.isC4NamedStructFreestanding();
+  bool ForceFreeStanding = !IsSemi && isC4File() && DS.isC4NamedStructFreestanding();
   if (IsSemi || ForceFreeStanding) {
     ProhibitAttributes(DeclAttrs);
     DeclEnd = Tok.getLocation();
@@ -2469,8 +2468,7 @@ Parser::DeclGroupPtrTy Parser::ParseDeclGroup(ParsingDeclSpec &DS,
   // file scope can omit the trailing ';' when there is no declarator
   // (no variable name after the closing brace).
   bool C4SemiOptional =
-      getLangOpts().C4() &&
-      Context == DeclaratorContext::File &&
+      isC4File() &&
       D.getIdentifier() == nullptr &&
       DS.isTypeSpecOwned() &&
       (DS.getTypeSpecType() == DeclSpec::TST_struct ||
@@ -3462,6 +3460,8 @@ void Parser::ParseDeclarationSpecifiers(
 
 
   while (true) {
+    if (isC4File() && DS.hasTagDefinition())
+      break;
     bool isInvalid = false;
     bool isStorageClass = false;
     const char *PrevSpec = nullptr;

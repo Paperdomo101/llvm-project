@@ -1,5 +1,7 @@
 // tests/enum_collision.c4
-// Verify that enum members do not collide across different C4 enums.
+// Verify that enum members do not collide across different C4 enums,
+// and that implicit dot syntax (.MEMBER) correctly disambiguates using the
+// preferred/expected type from the call site context.
 
 ScreenFlags : unsigned char {
     BASIC               = 0,
@@ -17,8 +19,23 @@ DisplayModes : unsigned char {
     PIXEL_CROPPED,
 }
 
+set_display_mode(DisplayModes mode) void {}
+set_screen_flags(ScreenFlags flags) void {}
+
 main() int {
+    // Qualified access must always work.
     if (ScreenFlags.BASIC != 0) return 1;
     if (DisplayModes.BASIC != 0) return 2;
+
+    // Implicit dot must pick the correct enum member from context.
+    set_display_mode(.BASIC);   // must resolve to DisplayModes.BASIC (== 0)
+    set_screen_flags(.BASIC);   // must resolve to ScreenFlags.BASIC  (== 0)
+
+    DisplayModes m = .BASIC;   // must resolve to DisplayModes.BASIC
+    ScreenFlags  f = .BASIC;   // must resolve to ScreenFlags.BASIC
+
+    if (m != DisplayModes.BASIC) return 3;
+    if (f != ScreenFlags.BASIC)  return 4;
+
     return 0;
 }

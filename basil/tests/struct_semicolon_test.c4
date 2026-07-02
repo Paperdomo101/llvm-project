@@ -1,0 +1,19 @@
+// tests/struct_semicolon_test.c4
+// Verify that C4 structs don't require trailing semicolons and are properly typedeffed.
+
+GlobalTime {
+    float delta_time, delta_scale,
+    float world_time, world_scale,
+    double total_time,
+} // no semicolon here
+
+typedef struct GlobalTime GlobalTime; // explicit typedef redefinition
+
+extern GlobalTime Time;
+
+GlobalTime Time = { 0.016, 1.0, 1.2, 1.0, 1.2 };
+
+main() int {
+    if (Time.delta_time != 0.016f) return 1;
+    return 0;
+}
