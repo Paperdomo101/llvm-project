@@ -368,6 +368,22 @@ CompilerTest custom_test_suite[] = {
         "C4 Embed Arrow Runtime",
         "tests/embed_arrow_runtime.c4", true
     },
+    {
+        "Struct Arithmetic Without Cast",
+        "tests/struct_arith_no_cast_runtime.c4", true
+    },
+    {
+        "Method Assignment Operator ::= (runtime)",
+        "tests/colon_colon_equal_runtime.c4", true
+    },
+    {
+        "General Expressions in Swizzle (runtime)",
+        "tests/swizzle_expressions_runtime.c4", true
+    },
+    {
+        "Static Local Type-inferred Variables (runtime)",
+        "tests/static_type_inferred_runtime.c4", true
+    },
 };
 
 bool run_compiler_tests(const char *compiler_path) {

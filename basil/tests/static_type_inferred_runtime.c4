@@ -1,0 +1,15 @@
+// test local static type-inferred variables (static var :=)
+
+int get_counter() {
+    static frame_counter := 0;
+    frame_counter = frame_counter + 1;
+    return frame_counter;
+}
+
+int main() {
+    if (get_counter() != 1) return 1;
+    if (get_counter() != 2) return 2;
+    if (get_counter() != 3) return 3;
+
+    return 0;
+}

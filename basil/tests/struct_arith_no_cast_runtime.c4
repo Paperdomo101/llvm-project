@@ -1,0 +1,14 @@
+// test struct arithmetic without cast (e.g. position + {0, 1, 0})
+
+typedef struct { float x, y, z; } Vector3;
+
+int main() {
+    Vector3 position = {1.0f, 2.0f, 3.0f};
+    Vector3 next_pos = position + {0.0f, 1.5f, -1.0f};
+
+    if (next_pos.x != 1.0f) return 1;
+    if (next_pos.y != 3.5f) return 2;
+    if (next_pos.z != 2.0f) return 3;
+
+    return 0;
+}

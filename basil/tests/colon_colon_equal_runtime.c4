@@ -1,0 +1,24 @@
+// test ::= operator
+
+typedef struct { float x, y, z; } Vector3;
+
+Clamp(Vector3 v, float min, float max) Vector3 {
+    if (v.x < min) v.x = min;
+    if (v.x > max) v.x = max;
+    if (v.y < min) v.y = min;
+    if (v.y > max) v.y = max;
+    if (v.z < min) v.z = min;
+    if (v.z > max) v.z = max;
+    return v;
+}
+
+int main() {
+    Vector3 tick_t = { 0.5f, 2.0f, -1.0f };
+    tick_t ::= Clamp(0.0f, 1.0f);
+
+    if (tick_t.x != 0.5f) return 1;
+    if (tick_t.y != 1.0f) return 2;
+    if (tick_t.z != 0.0f) return 3;
+
+    return 0;
+}
