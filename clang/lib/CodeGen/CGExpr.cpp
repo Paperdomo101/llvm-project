@@ -5044,13 +5044,12 @@ LValue CodeGenFunction::EmitArraySubscriptExpr(const ArraySubscriptExpr *E,
       C4IdxVal = IndexVal;
 
       // 2. Load the implicit 'count' component from the parent structure instance
-      LValue BaseLV = EmitLValue(BaseExpr);
-
-      // If the base expression itself evaluates to a reference pointer under the hood,
-      // emit a native pointer load to fetch the stack memory frame address safely!
+      LValue BaseLV;
       if (BaseExpr->getType()->isPointerType()) {
         Address PtrAddr = EmitPointerWithAlignment(BaseExpr);
         BaseLV = MakeAddrLValue(PtrAddr, BaseExpr->getType()->getPointeeType());
+      } else {
+        BaseLV = EmitLValue(BaseExpr);
       }
 
       FieldDecl *SizeField = nullptr;

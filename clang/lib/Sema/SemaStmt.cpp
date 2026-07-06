@@ -3930,10 +3930,20 @@ Sema::ActOnReturnStmt(SourceLocation ReturnLoc, Expr *RetValExp,
 
     // C4 INFERRED RETURN TYPE ON COMPOUND LITERAL
     if (RetValExp && isa<InitListExpr>(RetValExp)) {
-        // Automatically resolve the expected return type of the active function
-        QualType FnReturnType = CurContext->isFunctionOrMethod()
-                                ? cast<FunctionDecl>(CurContext)->getReturnType()
-                                : QualType();
+        // Automatically resolve the expected return type of the active function, method, or block/lambda
+        QualType FnReturnType;
+        if (const auto *FSI = getCurFunction()) {
+            if (const auto *CSI = dyn_cast<CapturingScopeInfo>(FSI)) {
+                FnReturnType = CSI->ReturnType;
+            }
+        }
+        if (FnReturnType.isNull()) {
+            if (const FunctionDecl *FD = getCurFunctionDecl()) {
+                FnReturnType = FD->getReturnType();
+            } else if (const ObjCMethodDecl *MD = getCurMethodDecl()) {
+                FnReturnType = MD->getReturnType();
+            }
+        }
 
         if (!FnReturnType.isNull()) {
             // Force-convert the bare initializer list into an implicit compound assignment

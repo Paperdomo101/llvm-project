@@ -4989,6 +4989,7 @@ static TypeSourceInfo *GetFullTypeForDeclarator(TypeProcessingState &state,
               AreDeclaratorChunksValid = false;
             }
           } else if (D.getContext() != DeclaratorContext::LambdaExpr &&
+                     D.getContext() != DeclaratorContext::BlockLiteral &&
                      (T.hasQualifiers() || !isa<AutoType>(T) ||
                       cast<AutoType>(T)->getKeyword() !=
                           AutoTypeKeyword::Auto ||

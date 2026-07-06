@@ -3,21 +3,65 @@
 # ===|===|=== TODO ===|===|===
 # ____________________________
 
+		## position + {0, 1, 0} struct arith without cast
+
+		## ::=
+		```
+		tick_t = tick_t::Clamp(0, 1)
+		tick_t ::= Clamp(0, 1)
+		```
+
+		## top.{x, y, z} = position.{x, y + 1, z} // expressions in swizzle
+
+
+		## static var :=
+		```
+		static frame_counter := 0;
+		```
+
+		## loop keyword
+		```
+		loop 0..10 { ... }
+		loop if a > 0 { ... }
+		loop i := 0..10 { ... }
+		loop i := 0; i < 10; ++i { ... }
+
+		loop ->} 0..10 {
+
+		}
+		```
 
     ## Loop ranges
     ```
     for 0..10 {...}
-    for i := 0..2..10 {...}
-    for i := 0..-10 {...}
-    for b..bobs {...}
-    for &b..bobs {...}
-    for ^b..bobs {...}
+    for 0..2..10 {...}
+    for i := 0..2..10 {...}  // equivalent: for i := 0; i < 10; i += 2 {...}
+    for i := 0..-10 {...}    // equivalent: for i := 0; i > -10; i-- {...}
+    for b..bobs {...}				 // equivalent: for _ := 0; _ > #.bobs; _++ {
+    												 //							    b := bobs[_]
+    												 //							}
+    for i := b..bobs {...}	 // equivalent: for i := 0; i > #.bobs; i++ {
+    												 //							    b := bobs[i]
+    												 //							}
+    for ^b..bobs {...}       // equivalent: for _ := 0; _ > #.bobs; _++ {
+    												 //							    b := &bobs[_]
+    												 //							}
+    for &b..bobs {...}       // equivalent: for _ := 0; _ > #.bobs; _++ {
+    												 //							    &Bob b = bobs[_]
+    												 //							}
     ```
 
 
-    ## type-of operator ?.
+    ## type-of operator %.
     ```
-    bobtype := ?.bob
+    bobtype := %.bob
+    ```
+
+    ## nullcheck operator ?.
+    ```
+    ?.bob::do_things()
+    // equivalent:
+    if (bob) bob::do_thing()
     ```
 
     ## string-of operator $.
@@ -72,6 +116,21 @@
     }
     ```
 
+    ## unions
+    ```
+    numerical -< {
+		    int, float, double
+		}
+		unsigned_numerical -< {
+		    unsigned int,
+		    unsigned char,
+		    size_t,
+		}
+
+		printl([? unsigned_numerical] something, __C4_Type type = ?.something) {
+
+		}
+		```
 
     ## default members
     ```

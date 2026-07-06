@@ -4244,7 +4244,9 @@ ExprResult Parser::ParseBlockLiteralExpression() {
         for (unsigned i = 0, e = ParamInfo.getNumTypeObjects(); i != e; ++i) {
           DeclaratorChunk &Chunk = ParamInfo.getTypeObject(i);
           if (Chunk.Kind == DeclaratorChunk::Function) {
+            Chunk.Fun.HasTrailingReturnType = true;
             Chunk.Fun.TrailingReturnType = T;
+            Chunk.Fun.TrailingReturnTypeLoc = TrailingDeclarator.getBeginLoc();
             break;
           }
         }
@@ -4302,7 +4304,9 @@ ExprResult Parser::ParseBlockLiteralExpression() {
         for (unsigned i = 0, e = ParamInfo.getNumTypeObjects(); i != e; ++i) {
           DeclaratorChunk &Chunk = ParamInfo.getTypeObject(i);
           if (Chunk.Kind == DeclaratorChunk::Function) {
+            Chunk.Fun.HasTrailingReturnType = true;
             Chunk.Fun.TrailingReturnType = T;
+            Chunk.Fun.TrailingReturnTypeLoc = TrailingDeclarator.getBeginLoc();
             break;
           }
         }

@@ -19240,13 +19240,9 @@ bool Sema::DiagnoseAssignmentResult(AssignConvertType ConvTy,
     }
     // ----------------------------------------
 
-    if (PureDst->isRecordType() && PureSrc->isRecordType()) {
+    if (isC4ArrayType(PureDst) && isC4ArrayType(PureSrc)) {
       const RecordDecl *DstRD = PureDst->getAsRecordDecl();
       const RecordDecl *SrcRD = PureSrc->getAsRecordDecl();
-
-      if (DstRD && SrcRD && DstRD->getIdentifier() == nullptr && SrcRD->getIdentifier() == nullptr) {
-        if (DstRD->lookup(&Context.Idents.get(C4_ARRAY_SIZE_FIELD)).isSingleResult() &&
-            SrcRD->lookup(&Context.Idents.get(C4_ARRAY_SIZE_FIELD)).isSingleResult()) {
 
           FieldDecl *DstDataField = *DstRD->field_begin();
           FieldDecl *SrcDataField = *SrcRD->field_begin();
@@ -19266,8 +19262,6 @@ bool Sema::DiagnoseAssignmentResult(AssignConvertType ConvTy,
           if (Complained) *Complained = true;
           ConvTy = AssignConvertType::Compatible;
           return true;
-        }
-      }
     }
   }
   // ==========================================================
