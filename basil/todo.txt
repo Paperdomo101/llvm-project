@@ -3,21 +3,6 @@
 # ===|===|=== TODO ===|===|===
 # ____________________________
 
-		## position + {0, 1, 0} struct arith without cast
-
-		## ::=
-		```
-		tick_t = tick_t::Clamp(0, 1)
-		tick_t ::= Clamp(0, 1)
-		```
-
-		## top.{x, y, z} = position.{x, y + 1, z} // expressions in swizzle
-
-
-		## static var :=
-		```
-		static frame_counter := 0;
-		```
 
 		## loop keyword
 		```
@@ -64,10 +49,18 @@
     if (bob) bob::do_thing()
     ```
 
-    ## string-of operator $.
+    ## symbol-of operator $.
     ```
-    bob := 5;
-    $.bob // "5"
+    add_them (int a, b) int {
+    		"adding %s and %s...\n"::printf($.a, $.b)
+      	return a + b;
+    }
+    bob := 4;
+    int neil = 20;
+    result := add_them(neil, bob) // adding neil and bob...
+    "%s: %d\n"::printf($.result, result) // result: 24
+
+    $.bob // "bob"
     ```
 
 
@@ -207,6 +200,22 @@
 
 # ===|===|=== DONE ===|===|===
 # ____________________________
+
+		## position + {0, 1, 0} struct arith without cast
+
+		## ::=
+		```
+		tick_t = tick_t::Clamp(0, 1)
+		tick_t ::= Clamp(0, 1)
+		```
+
+		## top.{x, y, z} = position.{x, y + 1, z} // expressions in swizzle
+
+
+		## static var :=
+		```
+		static frame_counter := 0;
+		```
 
 		## <-
 		```

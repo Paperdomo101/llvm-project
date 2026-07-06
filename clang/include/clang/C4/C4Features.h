@@ -8,6 +8,7 @@ enum class ArrayKind { None, C4, C };
 
   struct LHSVarInfo {
       bool IsConst = false;
+      bool IsStatic = false;
       ArrayKind Kind = ArrayKind::None;
       clang::IdentifierInfo *Ident = nullptr;
       clang::SourceLocation IdentLoc;

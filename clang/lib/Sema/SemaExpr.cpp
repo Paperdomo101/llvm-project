@@ -2842,6 +2842,30 @@ ExprResult Sema::ActOnIdExpression(Scope *S, CXXScopeSpec &SS,
   IdentifierInfo *II = Name.getAsIdentifierInfo();
   SourceLocation NameLoc = NameInfo.getLoc();
 
+  if (getLangOpts().C4() && II && !SS.isSet() && !C4ActiveSwizzles.empty()) {
+    auto &Swizzle = C4ActiveSwizzles.back();
+    if (Swizzle.Base) {
+      QualType BaseType = Swizzle.Base->getType();
+      if (Swizzle.OpKind == tok::arrow) {
+        if (const auto *PT = BaseType->getAs<PointerType>()) {
+          BaseType = PT->getPointeeType();
+        }
+      }
+      if (const auto *RT = BaseType->getAs<RecordType>()) {
+        RecordDecl *RD = RT->getDecl();
+        DeclarationName FieldName(II);
+        RecordDecl::lookup_result Fields = RD->lookup(FieldName);
+        if (!Fields.empty()) {
+          UnqualifiedId MemberId;
+          MemberId.setIdentifier(II, NameLoc);
+          CXXScopeSpec EmptySS;
+          return ActOnMemberAccessExpr(S, Swizzle.Base, Swizzle.OpLoc, Swizzle.OpKind,
+                                       EmptySS, SourceLocation(), MemberId, nullptr);
+        }
+      }
+    }
+  }
+
   if (II && II->isEditorPlaceholder()) {
     // FIXME: When typed placeholders are supported we can create a typed
     // placeholder expression node.
@@ -16923,6 +16947,32 @@ ExprResult Sema::CreateBuiltinBinOp(SourceLocation OpLoc,
   if (LHS.isUsable() && RHS.isUsable()) {
     QualType LHSType = LHS.get()->getType();
     QualType RHSType = RHS.get()->getType();
+
+    if (getLangOpts().C4()) {
+      if (LHSType->isRecordType() && !isC4ArrayType(LHSType) && !RHSType->isRecordType()) {
+        Expr *RHSExpr = RHS.get()->IgnoreParenNoopCasts(Context);
+        if (isa<InitListExpr>(RHSExpr)) {
+          SourceLocation Loc = RHSExpr->getBeginLoc();
+          TypeSourceInfo *TInfo = Context.getTrivialTypeSourceInfo(LHSType, Loc);
+          ExprResult CL = BuildCompoundLiteralExpr(Loc, TInfo, Loc, RHS.get());
+          if (!CL.isInvalid()) {
+            RHS = CL;
+            RHSType = CL.get()->getType();
+          }
+        }
+      } else if (!LHSType->isRecordType() && RHSType->isRecordType() && !isC4ArrayType(RHSType)) {
+        Expr *LHSExpr = LHS.get()->IgnoreParenNoopCasts(Context);
+        if (isa<InitListExpr>(LHSExpr)) {
+          SourceLocation Loc = LHSExpr->getBeginLoc();
+          TypeSourceInfo *TInfo = Context.getTrivialTypeSourceInfo(RHSType, Loc);
+          ExprResult CL = BuildCompoundLiteralExpr(Loc, TInfo, Loc, LHS.get());
+          if (!CL.isInvalid()) {
+            LHS = CL;
+            LHSType = CL.get()->getType();
+          }
+        }
+      }
+    }
 
     // 1. Isolate operations running on struct layouts.
     // Allow both struct-struct (same type) and struct-scalar (arithmetic RHS).

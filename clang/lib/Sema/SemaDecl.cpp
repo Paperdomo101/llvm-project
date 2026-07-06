@@ -7120,10 +7120,11 @@ StmtResult Sema::ActOnTypeInferredAssignment(Scope *S, LHSVarInfo Var, Expr *Ini
   }
 
   // 8. Create VarDecl.
+  StorageClass SC = Var.IsStatic ? SC_Static : SC_None;
   VarDecl *NewVD = VarDecl::Create(Context, CurContext, Var.IdentLoc, Var.IdentLoc,
                                    Var.Ident, FinalType,
                                    Context.getTrivialTypeSourceInfo(FinalType, Var.IdentLoc),
-                                   SC_None);
+                                   SC);
   // setLocalExternDecl() is only appropriate for 'extern X' in local scope.
   // At file scope, the variable should have normal external linkage.
   if (!isa<TranslationUnitDecl>(CurContext))
@@ -7235,10 +7236,11 @@ StmtResult Sema::ActOnMultiTypeInferredAssignment(Scope *S,
       }
     }
 
+    StorageClass SC = Vars[i].IsStatic ? SC_Static : SC_None;
     VarDecl *NewVD = VarDecl::Create(Context, CurContext, Vars[i].IdentLoc, Vars[i].IdentLoc,
                                      Vars[i].Ident, FinalType,
                                      Context.getTrivialTypeSourceInfo(FinalType, Vars[i].IdentLoc),
-                                     SC_None);
+                                     SC);
     NewVD->setLocalExternDecl();
     PushOnScopeChains(NewVD, S);
     CheckShadow(S, NewVD);

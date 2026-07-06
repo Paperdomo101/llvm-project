@@ -2701,6 +2701,20 @@ public:
 
   bool IsC4ReferenceReturnType(const FunctionDecl *FD) const;
 
+  struct C4SwizzleContext {
+    Expr *Base;
+    SourceLocation OpLoc;
+    tok::TokenKind OpKind;
+  };
+  SmallVector<C4SwizzleContext, 4> C4ActiveSwizzles;
+
+  void C4PushActiveSwizzle(Expr *Base, SourceLocation OpLoc, tok::TokenKind OpKind) {
+    C4ActiveSwizzles.push_back({Base, OpLoc, OpKind});
+  }
+  void C4PopActiveSwizzle() {
+    C4ActiveSwizzles.pop_back();
+  }
+
   // END C4
 
   // Checks that reinterpret casts don't have undefined behavior.

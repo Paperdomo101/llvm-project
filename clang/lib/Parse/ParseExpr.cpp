@@ -399,7 +399,16 @@ Parser::ParseRHSOfBinaryExpression(ExprResult LHS, prec::Level MinPrec) {
 
 
     if (OpToken.is(tok::coloncolon)) {
-        LHS = ParseMethodDispatch(LHS, OpToken);
+        if (getLangOpts().C4() && Tok.is(tok::equal)) {
+            ExprResult LHSVar = LHS;
+            ConsumeToken(); // consume '='
+            ExprResult MethodCall = ParseMethodDispatch(LHSVar, OpToken);
+            if (MethodCall.isInvalid())
+                return ExprError();
+            LHS = Actions.ActOnBinOp(getCurScope(), OpToken.getLocation(), tok::equal, LHSVar.get(), MethodCall.get());
+        } else {
+            LHS = ParseMethodDispatch(LHS, OpToken);
+        }
 
         if (LHS.isInvalid())
             return ExprError();
@@ -2796,36 +2805,34 @@ Parser::ParsePostfixExpressionSuffix(ExprResult LHS) {
           // If the next token is an opening brace, intercept it immediately and bypass
           // Clang's default single-identifier member access engine.
           if (Tok.is(tok::l_brace)) {
+            struct C4SwizzleRAII {
+              Sema &Actions;
+              bool Pushed;
+              C4SwizzleRAII(Sema &Actions, Expr *Base, SourceLocation OpLoc, tok::TokenKind OpKind)
+                : Actions(Actions), Pushed(false) {
+                if (Base) {
+                  Actions.C4PushActiveSwizzle(Base, OpLoc, OpKind);
+                  Pushed = true;
+                }
+              }
+              ~C4SwizzleRAII() {
+                if (Pushed) {
+                  Actions.C4PopActiveSwizzle();
+                }
+              }
+            };
 
-              // OPTIONAL DEFENSIVE GUARD: Make sure we aren't accidentally eating a standard block
-              // or macro byproduct by validating that the prior token wasn't a closing paren or macro artifact.
             SourceLocation LBraceLoc = ConsumeBrace(); // Consume '{'
             SmallVector<Expr *, 4> ExpandedMembers;
 
+            C4SwizzleRAII SwizzleRAII(Actions, OrigLHS, OpLoc, OpKind);
+
             while (true) {
-              if (Tok.isNot(tok::identifier)) {
-                // If it's not an identifier, don't just fail blindly.
-                // Return an error or break if your feature allows trailing characters.
-                Diag(Tok, diag::err_expected_member_name_or_semi);
+              ExprResult MemberExpr = ParseAssignmentExpression();
+              if (MemberExpr.isInvalid())
                 return ExprError();
-              }
 
-              IdentifierInfo *MemberName = Tok.getIdentifierInfo();
-              SourceLocation MemberLoc = ConsumeToken();
-
-              // Build an independent lookup name structure for this specific field
-              UnqualifiedId Name;
-              Name.setIdentifier(MemberName, MemberLoc);
-
-              // Build a single MemberAccessExpr for the active field using our resolved OpKind
-              CXXScopeSpec EmptySS;
-              ExprResult MemberExpr = Actions.ActOnMemberAccessExpr(
-                  getCurScope(), OrigLHS, OpLoc, OpKind, EmptySS,
-                  SourceLocation(), Name, CurParsedObjCImpl ? CurParsedObjCImpl->Dcl : nullptr);
-
-              if (!MemberExpr.isInvalid()) {
-                ExpandedMembers.push_back(MemberExpr.get());
-              }
+              ExpandedMembers.push_back(MemberExpr.get());
 
               if (Tok.is(tok::comma)) {
                 ConsumeToken();

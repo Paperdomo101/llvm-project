@@ -60,10 +60,17 @@ StmtResult Parser::ParseStatement(SourceLocation *TrailingElseLoc,
 bool Parser::ParseLHSVar(LHSVarInfo &Out, bool SuppressDiags) {
   Out = LHSVarInfo();
 
-  // Optional 'const'
-  if (Tok.is(tok::kw_const)) {
-    Out.IsConst = true;
-    ConsumeToken();
+  // Optional 'const' and 'static' in any order
+  while (true) {
+    if (Tok.is(tok::kw_const)) {
+      Out.IsConst = true;
+      ConsumeToken();
+    } else if (Tok.is(tok::kw_static)) {
+      Out.IsStatic = true;
+      ConsumeToken();
+    } else {
+      break;
+    }
   }
 
   // Optional '[]' (unsized) or '[N]' (sized) before identifier (C4)
@@ -244,7 +251,7 @@ StmtResult Parser::ParseStatementOrDeclaration(StmtVector &Stmts,
     }
   }
 
-  if (Tok.is(tok::kw_const) || Tok.is(tok::l_square) || Tok.is(tok::identifier)) {
+  if (Tok.isOneOf(tok::kw_const, tok::kw_static, tok::l_square, tok::identifier)) {
       if (isTypeInferredAssignment()) {
         StmtResult AssignmentRes = ParseTypeInferredAssignment();
         if (AssignmentRes.isUsable()) {
