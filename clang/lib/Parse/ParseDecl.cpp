@@ -6130,7 +6130,7 @@ bool Parser::isDeclarationSpecifier(
       // Avoid misidentifying C++11 [[attr]] attribute specifiers.
       const Token &Next = NextToken();
       if (Next.is(tok::r_square) || Next.is(tok::numeric_constant) ||
-          Next.is(tok::identifier))
+          Next.is(tok::identifier) || Next.is(tok::hashdot))
         return true;
     }
     return false;

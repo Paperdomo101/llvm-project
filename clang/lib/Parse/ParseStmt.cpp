@@ -80,9 +80,12 @@ bool Parser::ParseLHSVar(LHSVarInfo &Out, bool SuppressDiags) {
       Out.Kind = ArrayKind::C4;
       ConsumeBracket(); // '['
       ConsumeBracket(); // ']'
-    } else if ((NextToken().is(tok::numeric_constant) || NextToken().is(tok::identifier)) &&
-               PP.LookAhead(1).is(tok::r_square)) {
-      // Sized [N] or [size] C4 array prefix: parse the size expression during real
+    } else if (((NextToken().is(tok::numeric_constant) || NextToken().is(tok::identifier)) &&
+                PP.LookAhead(1).is(tok::r_square)) ||
+               (NextToken().is(tok::hashdot) &&
+                PP.LookAhead(1).is(tok::identifier) &&
+                PP.LookAhead(2).is(tok::r_square))) {
+      // Sized [N] or [size] or [#.board] C4 array prefix: parse the size expression during real
       // parsing; in tentative mode (SuppressDiags=true) just consume tokens.
       Out.Kind = ArrayKind::C4;
       ConsumeBracket(); // '['
@@ -93,7 +96,9 @@ bool Parser::ParseLHSVar(LHSVarInfo &Out, bool SuppressDiags) {
         if (SizeResult.isUsable())
           Out.SizeExpr = SizeResult.get();
       } else {
-        ConsumeToken(); // consume the numeric literal token (tentative check only)
+        ConsumeToken(); // consume the numeric literal, identifier or hashdot token
+        if (Tok.is(tok::identifier))
+          ConsumeToken();
       }
       if (Tok.is(tok::r_square))
         ConsumeBracket(); // ']'
@@ -414,9 +419,12 @@ Retry:
     if (NextToken().is(tok::r_square)) {
       // [] — unsized C4 array
       IsC4Decl = true;
-    } else if ((NextToken().is(tok::numeric_constant) || NextToken().is(tok::identifier)) &&
-               PP.LookAhead(1).is(tok::r_square)) {
-      // [N] or [size] — sized C4 array (single-token expression).
+    } else if (((NextToken().is(tok::numeric_constant) || NextToken().is(tok::identifier)) &&
+                PP.LookAhead(1).is(tok::r_square)) ||
+               (NextToken().is(tok::hashdot) &&
+                PP.LookAhead(1).is(tok::identifier) &&
+                PP.LookAhead(2).is(tok::r_square))) {
+      // [N], [size] or [#.board] — sized C4 array.
       IsC4Decl = true;
     }
 
@@ -1735,6 +1743,7 @@ struct MisleadingIndentationChecker {
 Parser::ParsedCondition Parser::ParseCondition(SourceLocation StmtLoc,
                                                Sema::ConditionKind Kind) {
   ParsedCondition Result;
+  Result.Cond = Actions.ConditionError();
   Result.HasDelimitedCondition = false;
 
   // In C++ mode, delegate entirely to the original Clang condition parser.

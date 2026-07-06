@@ -12163,7 +12163,24 @@ QualType ASTContext::mergeTypes(QualType LHS, QualType RHS, bool OfBlockPointer,
   case Type::FunctionNoProto:
     return mergeFunctionTypes(LHS, RHS, OfBlockPointer, Unqualified,
                               /*AllowCXX=*/false, IsConditionalOperator);
-  case Type::Record:
+  case Type::Record: {
+    if (LangOpts.C4()) {
+      const RecordDecl *LRecord = LHS->castAs<RecordType>()->getDecl();
+      const RecordDecl *RRecord = RHS->castAs<RecordType>()->getDecl();
+      if (LRecord->hasAttr<C4BoundsCheckedArrayAttr>() &&
+          RRecord->hasAttr<C4BoundsCheckedArrayAttr>()) {
+        const C4BoundsCheckedArrayAttr *LAttr = LRecord->getAttr<C4BoundsCheckedArrayAttr>();
+        const C4BoundsCheckedArrayAttr *RAttr = RRecord->getAttr<C4BoundsCheckedArrayAttr>();
+        QualType LElem = LAttr->getElementType();
+        QualType RElem = RAttr->getElementType();
+        QualType MergedElem = mergeTypes(LElem, RElem, OfBlockPointer, Unqualified, BlockReturnType, IsConditionalOperator);
+        if (!MergedElem.isNull()) {
+          return LHS;
+        }
+      }
+    }
+    return mergeTagDefinitions(LHS, RHS);
+  }
   case Type::Enum:
     return mergeTagDefinitions(LHS, RHS);
   case Type::Builtin:
