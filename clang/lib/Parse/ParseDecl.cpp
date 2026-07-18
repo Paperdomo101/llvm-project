@@ -6136,12 +6136,20 @@ bool Parser::isDeclarationSpecifier(
     if (Next.is(tok::caret) || Next.is(tok::l_square))
       return true;  // ^^ or ^[ — stacked C4 pointer / C4 array pointer
     // Type keywords: ^int, ^float, ^struct Foo, ^const int, etc.
-    return Next.isOneOf(
+    if (Next.isOneOf(
         tok::kw_int,      tok::kw_float,    tok::kw_double,  tok::kw_char,
         tok::kw_long,     tok::kw_short,    tok::kw_signed,  tok::kw_unsigned,
         tok::kw_void,     tok::kw__Bool,    tok::kw_struct,  tok::kw_union,
         tok::kw_enum,     tok::kw_const,    tok::kw_volatile,tok::kw_restrict,
-        tok::kw__Atomic,  tok::kw___attribute, tok::kw_typedef);
+        tok::kw__Atomic,  tok::kw___attribute, tok::kw_typedef))
+      return true;
+    if (Next.is(tok::identifier)) {
+      if (auto *II = Next.getIdentifierInfo()) {
+        if (Actions.getTypeName(*II, Next.getLocation(), getCurScope()))
+          return true;
+      }
+    }
+    return false;
   }
   // ===================================================
 

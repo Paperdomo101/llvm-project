@@ -16,25 +16,6 @@
 		}
 		```
 
-    ## Loop ranges
-    ```
-    for 0..10 {...}
-    for 0..2..10 {...}
-    for i := 0..2..10 {...}  // equivalent: for i := 0; i < 10; i += 2 {...}
-    for i := 0..-10 {...}    // equivalent: for i := 0; i > -10; i-- {...}
-    for b..bobs {...}				 // equivalent: for _ := 0; _ > #.bobs; _++ {
-    												 //							    b := bobs[_]
-    												 //							}
-    for i := b..bobs {...}	 // equivalent: for i := 0; i > #.bobs; i++ {
-    												 //							    b := bobs[i]
-    												 //							}
-    for ^b..bobs {...}       // equivalent: for _ := 0; _ > #.bobs; _++ {
-    												 //							    b := &bobs[_]
-    												 //							}
-    for &b..bobs {...}       // equivalent: for _ := 0; _ > #.bobs; _++ {
-    												 //							    &Bob b = bobs[_]
-    												 //							}
-    ```
 
 
     ## type-of operator %.
@@ -187,6 +168,28 @@
 
 # ===|===|=== DONE ===|===|===
 # ____________________________
+
+
+		## Loop ranges
+    ```
+    for 0..10 {...}
+    for 0..2..10 {...}
+    for i := 0..2..10 {...}  // equivalent: for i := 0; i < 10; i += 2 {...}
+    for i := 0..-10 {...}    // equivalent: for i := 0; i > -10; i-- {...}
+    for b..bobs {...}				 // equivalent: for _ := 0; _ > #.bobs; _++ {
+    												 //							    b := bobs[_]
+    												 //							}
+    for i := b..bobs {...}	 // equivalent: for i := 0; i > #.bobs; i++ {
+    												 //							    b := bobs[i]
+    												 //							}
+    for ^b..bobs {...}       // equivalent: for _ := 0; _ > #.bobs; _++ {
+    												 //							    b := &bobs[_]
+    												 //							}
+    for &b..bobs {...}       // equivalent: for _ := 0; _ > #.bobs; _++ {
+    												 //							    &Bob b = bobs[_]
+    												 //							}
+    ```
+
 
 
     ## string-of operator $.

@@ -2403,11 +2403,16 @@ StmtResult Sema::ActOnC4RangeForStmt(SourceLocation ForLoc, SourceLocation LPare
   if (!Step) {
     bool IsNegative = false;
     if (Start && Limit) {
-      Expr::EvalResult StartResult, LimitResult;
-      if (Start->EvaluateAsRValue(StartResult, Context) &&
-          Limit->EvaluateAsRValue(LimitResult, Context)) {
-        if (StartResult.Val.isInt() && LimitResult.Val.isInt()) {
-          if (LimitResult.Val.getInt() < StartResult.Val.getInt()) {
+      auto IsSafeToEvaluate = [](Expr *E) {
+        if (!E) return false;
+        E = E->IgnoreParenImpCasts();
+        return isa<IntegerLiteral>(E) || isa<CharacterLiteral>(E) || isa<CXXBoolLiteralExpr>(E);
+      };
+      if (IsSafeToEvaluate(Start) && IsSafeToEvaluate(Limit)) {
+        auto StartVal = Start->getIntegerConstantExpr(Context);
+        auto LimitVal = Limit->getIntegerConstantExpr(Context);
+        if (StartVal && LimitVal) {
+          if (*LimitVal < *StartVal) {
             IsNegative = true;
           }
         }
@@ -2418,10 +2423,16 @@ StmtResult Sema::ActOnC4RangeForStmt(SourceLocation ForLoc, SourceLocation LPare
 
   bool StepIsNegative = false;
   if (Step) {
-    Expr::EvalResult StepResult;
-    if (Step->EvaluateAsRValue(StepResult, Context)) {
-      if (StepResult.Val.isInt() && StepResult.Val.getInt().isNegative()) {
-        StepIsNegative = true;
+    auto IsSafeToEvaluate = [](Expr *E) {
+      if (!E) return false;
+      E = E->IgnoreParenImpCasts();
+      return isa<IntegerLiteral>(E) || isa<CharacterLiteral>(E) || isa<UnaryOperator>(E);
+    };
+    if (IsSafeToEvaluate(Step)) {
+      if (auto StepVal = Step->getIntegerConstantExpr(Context)) {
+        if (StepVal->isNegative()) {
+          StepIsNegative = true;
+        }
       }
     }
   }

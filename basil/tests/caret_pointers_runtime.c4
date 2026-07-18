@@ -30,6 +30,11 @@ static void fail_null(const char *msg) {
 #define CHECK_NOTNULL(ptr, msg) \
     do { if (!(ptr)) fail_null(msg); } while(0)
 
+struct Node {
+    int value;
+    ^Node next;
+};
+
 // ---------------------------------------------------------------------------
 // Helper functions that accept pointer-typed parameters
 // ---------------------------------------------------------------------------
@@ -315,6 +320,18 @@ main () int {
         CHECK(#.stack, 4, "S13: stack count incremented to 4");
 
         printf("[PASS] Scenario 13: Tightest binding of #. size operator\n");
+    }
+    // =========================================================================
+    // SCENARIO 14: Lambda parameters starting with C4 pointer user-defined types (^Node)
+    // =========================================================================
+    {
+        Node n = { 42, NULL };
+        print := ^(^Node head) int {
+            return (*head).value;
+        };
+        CHECK(print(^n), 42, "S14: lambda called with ^Node param");
+
+        printf("[PASS] Scenario 14: Lambda parameters with C4 pointer user-defined types\n");
     }
 
     printf("\n[SUCCESS] All pointer-syntax and sized-array tests passed!\n");
