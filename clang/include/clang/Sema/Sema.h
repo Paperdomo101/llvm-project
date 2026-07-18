@@ -3702,6 +3702,12 @@ public:
   /// correctly named definition after the renamed definition.
   llvm::SmallPtrSet<const NamedDecl *, 4> TypoCorrectedFunctionDefinitions;
 
+  /// Keeps track of LabelDecls created to target loop variables for named break/continue in C4.
+  llvm::SmallPtrSet<const LabelDecl *, 8> C4LoopVarLabels;
+
+  /// Maps a loop variable to its pseudo-label used for named loop control.
+  llvm::DenseMap<const VarDecl *, LabelDecl *> C4LoopVarLabelMap;
+
   /// A cache of the flags available in enumerations with the flag_enum
   /// attribute.
   mutable llvm::DenseMap<const EnumDecl *, llvm::APInt> FlagBitsCache;
@@ -9752,6 +9758,11 @@ public:
   /// create a new label if the lookup fails.
   LabelDecl *LookupExistingLabel(IdentifierInfo *II, SourceLocation IdentLoc);
 
+  /// Check if the identifier is a loop variable of an enclosing loop.
+  bool IsLoopVar(Scope *S, IdentifierInfo *II);
+  LabelDecl *LookupOrCreateC4LoopVarLabel(Scope *S, IdentifierInfo *II, SourceLocation Loc);
+
+
   /// Look up the constructors for the given class.
   DeclContextLookupResult LookupConstructors(CXXRecordDecl *Class);
 
@@ -11262,6 +11273,19 @@ public:
                           Stmt *First, ConditionResult Second,
                           FullExprArg Third, SourceLocation RParenLoc,
                           Stmt *Body);
+
+  StmtResult ActOnC4RangeForStmt(SourceLocation ForLoc, SourceLocation LParenLoc,
+                                 Stmt *First, Expr *Start, Expr *Step, Expr *Limit,
+                                 bool Exclusive, SourceLocation RParenLoc,
+                                 Stmt *Body);
+
+  VarDecl *ActOnC4ArrayIterationVar(Scope *S, IdentifierInfo *II, SourceLocation Loc,
+                                    bool IsRef, bool IsPtr, Expr *ArrayExpr);
+
+  StmtResult ActOnC4RangeForStmt(SourceLocation ForLoc, SourceLocation LParenLoc,
+                                 Stmt *First, VarDecl *ElementVar, Expr *ArrayExpr,
+                                 bool Exclusive, SourceLocation RParenLoc,
+                                 Stmt *Body);
 
   /// In an Objective C collection iteration statement:
   ///   for (x in y)

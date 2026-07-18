@@ -2732,6 +2732,269 @@ StmtResult Parser::ParseForStatement(SourceLocation *TrailingElseLoc,
     T->consumeOpen();
   }
 
+  bool IsRangeLoop = false;
+  if (getLangOpts().C4Mode) {
+    unsigned LookAhead = 0;
+    tok::TokenKind Terminator = HasParens ? tok::r_paren : tok::l_brace;
+    while (true) {
+      const Token &AheadTok = GetLookAheadToken(LookAhead);
+      if (AheadTok.isOneOf(tok::eof, tok::semi) || AheadTok.is(Terminator)) {
+        break;
+      }
+      if (AheadTok.is(tok::period) && GetLookAheadToken(LookAhead + 1).is(tok::period)) {
+        IsRangeLoop = true;
+        break;
+      }
+      LookAhead++;
+    }
+  }
+
+  if (IsRangeLoop) {
+    StmtResult FirstPart;
+    ExprResult Start, Step, Limit;
+    bool Exclusive = false;
+    bool HasStep = false;
+    SourceLocation LParenLoc = HasParens && T ? T->getOpenLocation() : SourceLocation();
+    SourceLocation RParenLoc = HasParens && T ? T->getCloseLocation() : SourceLocation();
+
+    bool HasColonEqual = false;
+    unsigned LookIndex = 0;
+    while (true) {
+      const Token &Ahead = GetLookAheadToken(LookIndex);
+      if (Ahead.isOneOf(tok::eof, tok::l_brace, tok::r_paren, tok::semi)) break;
+      if (Ahead.is(tok::colonequal)) {
+        HasColonEqual = true;
+        break;
+      }
+      LookIndex++;
+    }
+
+    bool HasEqual = false;
+    unsigned LookEq = 0;
+    while (true) {
+      const Token &Ahead = GetLookAheadToken(LookEq);
+      if (Ahead.isOneOf(tok::eof, tok::l_brace, tok::r_paren, tok::semi)) break;
+      if (Ahead.is(tok::period) && GetLookAheadToken(LookEq + 1).is(tok::period)) break;
+      if (Ahead.is(tok::equal)) {
+        HasEqual = true;
+        break;
+      }
+      LookEq++;
+    }
+
+    bool IsArrayIteration = false;
+    IdentifierInfo *ElementII = nullptr;
+    SourceLocation ElementLoc;
+    bool IsRef = false;
+    bool IsPtr = false;
+    ExprResult ArrayExpr;
+
+    auto ParseRangeOrArray = [&]() -> bool {
+      Token MaybeAmpOrCaret = Tok;
+      Token MaybeIdent = GetLookAheadToken(1);
+      Token MaybeDot1 = GetLookAheadToken(2);
+      Token MaybeDot2 = GetLookAheadToken(3);
+
+      if ((MaybeAmpOrCaret.is(tok::amp) || MaybeAmpOrCaret.is(tok::caret)) &&
+          MaybeIdent.is(tok::identifier) &&
+          MaybeDot1.is(tok::period) && MaybeDot2.is(tok::period)) {
+        IsArrayIteration = true;
+        IsRef = MaybeAmpOrCaret.is(tok::amp);
+        IsPtr = MaybeAmpOrCaret.is(tok::caret);
+        ElementII = MaybeIdent.getIdentifierInfo();
+        ElementLoc = MaybeIdent.getLocation();
+        ConsumeToken(); // eat '&' or '^'
+        ConsumeToken(); // eat identifier
+      }
+      else if (Tok.is(tok::identifier) &&
+               GetLookAheadToken(1).is(tok::period) &&
+               GetLookAheadToken(2).is(tok::period)) {
+        IdentifierInfo *II = Tok.getIdentifierInfo();
+        bool IsDeclared = Actions.LookupSingleName(getCurScope(), II, Tok.getLocation(), Sema::LookupOrdinaryName) != nullptr;
+        if (!IsDeclared) {
+          IsArrayIteration = true;
+          ElementII = II;
+          ElementLoc = Tok.getLocation();
+          ConsumeToken(); // eat identifier
+        }
+      }
+
+      if (IsArrayIteration) {
+        if (Tok.is(tok::period) && NextToken().is(tok::period)) {
+          ConsumeToken(); // '.'
+          ConsumeToken(); // '.'
+          if (Tok.is(tok::less)) {
+            Exclusive = true;
+            ConsumeToken(); // '<'
+          }
+        } else {
+          Diag(Tok, diag::err_expected) << tok::period;
+          return false;
+        }
+        ArrayExpr = ParseAssignmentExpression();
+        if (ArrayExpr.isInvalid()) return false;
+        return true;
+      }
+
+      Start = ParseAssignmentExpression();
+      if (Start.isInvalid()) return false;
+
+      if (Tok.is(tok::period) && NextToken().is(tok::period)) {
+        ConsumeToken(); // '.'
+        ConsumeToken(); // '.'
+        if (Tok.is(tok::less)) {
+          Exclusive = true;
+          ConsumeToken(); // '<'
+        }
+      } else {
+        Diag(Tok, diag::err_expected) << tok::period;
+        return false;
+      }
+
+      tok::TokenKind Terminator = HasParens ? tok::r_paren : tok::l_brace;
+      if (Tok.is(Terminator)) {
+        return true;
+      }
+
+      ExprResult NextExpr = ParseAssignmentExpression();
+      if (NextExpr.isInvalid()) return false;
+
+      if (Tok.is(tok::period) && NextToken().is(tok::period)) {
+        ConsumeToken(); // '.'
+        ConsumeToken(); // '.'
+        if (Tok.is(tok::less)) {
+          Exclusive = true;
+          ConsumeToken(); // '<'
+        }
+        HasStep = true;
+        Step = NextExpr;
+        if (Tok.is(Terminator)) {
+          return true;
+        }
+        Limit = ParseAssignmentExpression();
+        if (Limit.isInvalid()) return false;
+      } else {
+        Limit = NextExpr;
+      }
+      return true;
+    };
+
+    if (HasColonEqual) {
+      IdentifierInfo *II = Tok.getIdentifierInfo();
+      SourceLocation IdLoc = ConsumeToken();
+      ConsumeToken(); // eat ':='
+
+
+      if (!ParseRangeOrArray()) return StmtError();
+
+      if (!IsArrayIteration) {
+        LHSVarInfo LHSVar;
+        LHSVar.Ident = II;
+        LHSVar.IdentLoc = IdLoc;
+        LHSVar.Kind = ArrayKind::None;
+        LHSVar.IsConst = false;
+        LHSVar.IsStatic = false;
+        LHSVar.SizeExpr = nullptr;
+        FirstPart = Actions.ActOnTypeInferredAssignment(getCurScope(), LHSVar, Start.get());
+        if (FirstPart.isInvalid()) return StmtError();
+      } else {
+        LHSVarInfo LHSVar;
+        LHSVar.Ident = II;
+        LHSVar.IdentLoc = IdLoc;
+        LHSVar.Kind = ArrayKind::None;
+        LHSVar.IsConst = false;
+        LHSVar.IsStatic = false;
+        LHSVar.SizeExpr = nullptr;
+        ExprResult Zero = Actions.ActOnIntegerConstant(ForLoc, 0);
+        FirstPart = Actions.ActOnTypeInferredAssignment(getCurScope(), LHSVar, Zero.get());
+        if (FirstPart.isInvalid()) return StmtError();
+      }
+    }
+    else if (HasEqual && isForInitDeclaration()) {
+      DeclSpec DS(AttrFactory);
+      ParsedTemplateInfo TemplateInfo;
+      ParseDeclarationSpecifiers(DS, TemplateInfo);
+
+      Declarator D(DS, ParsedAttributesView::none(), DeclaratorContext::ForInit);
+      ParseDeclarator(D);
+
+      if (Tok.is(tok::equal)) {
+        ConsumeToken(); // eat '='
+      } else {
+        Diag(Tok, diag::err_expected) << tok::equal;
+        return StmtError();
+      }
+
+      if (!ParseRangeOrArray()) return StmtError();
+
+      if (!IsArrayIteration) {
+        Decl *TheDecl = Actions.ActOnDeclarator(getCurScope(), D);
+        if (TheDecl) {
+          Actions.AddInitializerToDecl(TheDecl, Start.get(), /*DirectInit=*/false);
+          Actions.ActOnUninitializedDecl(TheDecl);
+          FirstPart = Actions.ActOnDeclStmt(Actions.ConvertDeclToDeclGroup(TheDecl), D.getBeginLoc(), Tok.getLocation());
+        } else {
+          return StmtError();
+        }
+      } else {
+        ExprResult Zero = Actions.ActOnIntegerConstant(ForLoc, 0);
+        Decl *TheDecl = Actions.ActOnDeclarator(getCurScope(), D);
+        if (TheDecl) {
+          Actions.AddInitializerToDecl(TheDecl, Zero.get(), /*DirectInit=*/false);
+          Actions.ActOnUninitializedDecl(TheDecl);
+          FirstPart = Actions.ActOnDeclStmt(Actions.ConvertDeclToDeclGroup(TheDecl), D.getBeginLoc(), Tok.getLocation());
+        } else {
+          return StmtError();
+        }
+      }
+    }
+    else {
+      if (!ParseRangeOrArray()) return StmtError();
+      FirstPart = StmtResult();
+    }
+
+    if (HasParens) {
+      if (T) T->consumeClose();
+    } else {
+      if (Tok.isNot(tok::l_brace)) {
+        Diag(Tok, diag::err_expected) << tok::l_brace;
+        return StmtError();
+      }
+    }
+
+    getCurScope()->EnterLoopBody(PrecedingLabel);
+
+    ParseScope InnerScope(this, Scope::DeclScope, C99orCXXorObjC,
+                          Tok.is(tok::l_brace));
+
+    if (C99orCXXorObjC)
+      getCurScope()->decrementMSManglingNumber();
+
+    VarDecl *ElementVar = nullptr;
+    if (IsArrayIteration) {
+      ElementVar = Actions.ActOnC4ArrayIterationVar(getCurScope(), ElementII, ElementLoc, IsRef, IsPtr, ArrayExpr.get());
+      if (!ElementVar) return StmtError();
+    }
+
+    MisleadingIndentationChecker MIChecker(*this, MSK_for, ForLoc);
+
+    StmtResult Body(ParseStatement(TrailingElseLoc));
+    if (Body.isUsable())
+      MIChecker.Check();
+
+    InnerScope.Exit();
+    ForScope.Exit();
+
+    if (Body.isInvalid())
+      return StmtError();
+
+    if (IsArrayIteration) {
+      return Actions.ActOnC4RangeForStmt(ForLoc, LParenLoc, FirstPart.get(), ElementVar, ArrayExpr.get(), Exclusive, RParenLoc, Body.get());
+    } else {
+      return Actions.ActOnC4RangeForStmt(ForLoc, LParenLoc, FirstPart.get(), Start.get(), Step.get(), Limit.get(), Exclusive, RParenLoc, Body.get());
+    }
+  }
+
   ExprResult Value;
   bool ForEach = false;
   StmtResult FirstPart;
@@ -3135,8 +3398,11 @@ StmtResult Parser::ParseBreakOrContinueStatement(bool IsContinue) {
   if (Tok.is(tok::identifier)) {
     Target =
         Actions.LookupExistingLabel(Tok.getIdentifierInfo(), Tok.getLocation());
+    if (!Target && getLangOpts().C4Mode) {
+      Target = Actions.LookupOrCreateC4LoopVarLabel(getCurScope(), Tok.getIdentifierInfo(), Tok.getLocation());
+    }
     LabelLoc = ConsumeToken();
-    if (!getLangOpts().NamedLoops)
+    if (!getLangOpts().NamedLoops && !getLangOpts().C4Mode)
       // TODO: Make this a compatibility/extension warning instead once the
       // syntax of this feature is finalised.
       Diag(LabelLoc, diag::err_c2y_labeled_break_continue) << IsContinue;

@@ -2288,6 +2288,10 @@ static void CheckPoppedLabel(LabelDecl *L, Sema &S,
     Diagnose = !L->isResolvedMSAsmLabel();
   else
     Diagnose = L->getStmt() == nullptr;
+  if (Diagnose) {
+    if (S.getLangOpts().C4Mode && S.C4LoopVarLabels.count(L))
+      Diagnose = false;
+  }
   if (Diagnose)
     DiagReceiver(L->getLocation(), S.PDiag(diag::err_undeclared_label_use)
                                        << L);

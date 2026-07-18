@@ -400,6 +400,10 @@ CompilerTest custom_test_suite[] = {
         "String-Of Operator $. (runtime)",
         "tests/string_of_operator_runtime.c4", true
     },
+    {
+        "Range Loops and Named Loop Controls (runtime)",
+        "tests/ranges.c4", true
+    },
 };
 
 bool run_compiler_tests(const char *compiler_path) {

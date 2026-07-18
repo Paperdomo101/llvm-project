@@ -6,6 +6,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+Helper_func(int a) int {
+    return a + 5;
+}
+
 main () int {
     // ── int → float ──────────────────────────────────────────────────────────
     f := 10 as float;
@@ -45,6 +49,10 @@ main () int {
     // ── as inside an expression ───────────────────────────────────────────────
     sum := 1 as float + 2 as float;
     if (sum < 2.9f || sum > 3.1f) { puts("[FAIL] as in expr"); exit(1); }
+
+    // ── method dispatch as cast ───────────────────────────────────────────────
+    val := 10::Helper_func() as float;
+    if (val < 14.9f || val > 15.1f) { puts("[FAIL] method dispatch as cast"); exit(1); }
 
     puts("[PASS] `as` cast tests passed.");
     return 0;

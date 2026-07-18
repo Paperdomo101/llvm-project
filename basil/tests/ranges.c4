@@ -9,17 +9,31 @@ main () int {
     for i := 0..9 { } // range can be assigned
     for i := 0..<10 { }
     for i := 0..-10 { }
-    for i := 0..2..10 { }
-    for i := 0.. { } // count up forever starting from 0
-    for i := 0..-1.. { } // count down forever starting from 0
+    for i := 0..2..10 { }   // equivalent: for i := 0; i < 10; i += 2 {...}
+    for i := 0.. { break; } // count up forever starting from 0
+    for i := 0..-1.. { break; } // count down forever starting from 0
 
-    for b..bob {
-        // b is a copy
+
+    for i := 0..1..10 { // range format is start..step..limit (step is optional)
+        for int j = 0..40 {
+            if j % 3 { continue; } // skips the inner loop
+            if j == 9 { continue i; } // skips the loop that defined 'i'
+            if i == 5 { break i; } // break the loop that defined 'i'
+        }
     }
-    for &b..bob {
-        // b is a reference
-    }
-    for ^b..bob {
-        // b is a pointer
-    }
+
+    [] bobs := { "one", "two", "three", "four", "five" }
+
+    for i := b..bobs {   }	 // equivalent: for i := 0; i > #.bobs; i++ {
+                             //				    b := bobs[i]
+                             //				}
+    for b..bobs {			 // equivalent: for _ := 0; _ > #.bobs; _++ {
+        // b is a copy       //					b := bobs[_]
+    }						 //				}
+    for ^b..bobs {			 // equivalent: for _ := 0; _ > #.bobs; _++ {
+        // b is a pointer    //					b := &bobs[_]
+    }   					 //				}
+    for &b..bobs {           // equivalent: for _ := 0; _ > #.bobs; _++ {
+        // b is a reference  //					&Bob b = bobs[_]
+    }						 //				}
 }

@@ -2329,6 +2329,253 @@ StmtResult Sema::ActOnForStmt(SourceLocation ForLoc, SourceLocation LParenLoc,
               Body, ForLoc, LParenLoc, RParenLoc);
 }
 
+bool Sema::IsLoopVar(Scope *S, IdentifierInfo *II) {
+  for (Scope *Scope = S; Scope; Scope = Scope->getParent()) {
+    if (Scope->isFunctionScope())
+      break;
+    if (Scope->isBreakOrContinueScope()) {
+      for (const auto *D : Scope->decls()) {
+        if (const auto *VD = dyn_cast<VarDecl>(D)) {
+          if (VD->getDeclName().getAsIdentifierInfo() == II) {
+            return true;
+          }
+        }
+      }
+    }
+  }
+  return false;
+}
+
+LabelDecl *Sema::LookupOrCreateC4LoopVarLabel(Scope *S, IdentifierInfo *II, SourceLocation Loc) {
+  VarDecl *VD = nullptr;
+  for (Scope *Scope = S; Scope; Scope = Scope->getParent()) {
+    if (Scope->isFunctionScope())
+      break;
+    if (Scope->isBreakOrContinueScope()) {
+      for (const auto *D : Scope->decls()) {
+        if (auto *Var = dyn_cast<VarDecl>(D)) {
+          if (Var->getDeclName().getAsIdentifierInfo() == II) {
+            VD = const_cast<VarDecl *>(Var);
+            break;
+          }
+        }
+      }
+      if (VD) break;
+    }
+  }
+
+  if (!VD) return nullptr;
+
+  auto It = C4LoopVarLabelMap.find(VD);
+  if (It != C4LoopVarLabelMap.end()) {
+    return It->second;
+  }
+
+  LabelDecl *LD = LabelDecl::Create(Context, CurContext, Loc, II);
+  C4LoopVarLabelMap[VD] = LD;
+  C4LoopVarLabels.insert(LD);
+  return LD;
+}
+
+StmtResult Sema::ActOnC4RangeForStmt(SourceLocation ForLoc, SourceLocation LParenLoc,
+                                     Stmt *First, Expr *Start, Expr *Step, Expr *Limit,
+                                     bool Exclusive, SourceLocation RParenLoc,
+                                     Stmt *Body) {
+  VarDecl *LoopVar = nullptr;
+  if (First) {
+    if (auto *DS = dyn_cast<DeclStmt>(First)) {
+      if (DS->isSingleDecl()) {
+        LoopVar = dyn_cast<VarDecl>(DS->getSingleDecl());
+      }
+    }
+  }
+
+  if (!LoopVar) {
+    QualType VarType = Start ? Start->getType() : Context.IntTy;
+    if (VarType.isNull() || VarType->isDependentType()) VarType = Context.IntTy;
+    IdentifierInfo *II = &Context.Idents.get("__range_var");
+    LoopVar = VarDecl::Create(Context, CurContext, ForLoc, ForLoc, II, VarType,
+                              Context.getTrivialTypeSourceInfo(VarType, ForLoc), SC_None);
+    if (Start) LoopVar->setInit(Start);
+    First = new (Context) DeclStmt(DeclGroupRef(LoopVar), ForLoc, ForLoc);
+  }
+
+  if (!Step) {
+    bool IsNegative = false;
+    if (Start && Limit) {
+      Expr::EvalResult StartResult, LimitResult;
+      if (Start->EvaluateAsRValue(StartResult, Context) &&
+          Limit->EvaluateAsRValue(LimitResult, Context)) {
+        if (StartResult.Val.isInt() && LimitResult.Val.isInt()) {
+          if (LimitResult.Val.getInt() < StartResult.Val.getInt()) {
+            IsNegative = true;
+          }
+        }
+      }
+    }
+    Step = ActOnIntegerConstant(ForLoc, IsNegative ? -1 : 1).get();
+  }
+
+  bool StepIsNegative = false;
+  if (Step) {
+    Expr::EvalResult StepResult;
+    if (Step->EvaluateAsRValue(StepResult, Context)) {
+      if (StepResult.Val.isInt() && StepResult.Val.getInt().isNegative()) {
+        StepIsNegative = true;
+      }
+    }
+  }
+
+  BinaryOperatorKind CondOp = StepIsNegative ? (Exclusive ? BO_GT : BO_GE)
+                                             : (Exclusive ? BO_LT : BO_LE);
+
+  ExprResult VarRef = BuildDeclRefExpr(LoopVar, LoopVar->getType(), VK_LValue, ForLoc);
+  if (VarRef.isInvalid()) return StmtError();
+  ExprResult VarRRef = DefaultLvalueConversion(VarRef.get());
+  if (VarRRef.isInvalid()) return StmtError();
+
+  ExprResult Cond = BuildBinOp(getCurScope(), ForLoc, CondOp, VarRRef.get(), Limit);
+  if (Cond.isInvalid()) return StmtError();
+
+  ExprResult VarRefInc = BuildDeclRefExpr(LoopVar, LoopVar->getType(), VK_LValue, ForLoc);
+  if (VarRefInc.isInvalid()) return StmtError();
+  ExprResult Inc = BuildBinOp(getCurScope(), ForLoc, BO_AddAssign, VarRefInc.get(), Step);
+  if (Inc.isInvalid()) return StmtError();
+
+  ConditionResult CondResult = ActOnCondition(getCurScope(), ForLoc, Cond.get(), Sema::ConditionKind::Boolean, /*MissingOK=*/false);
+  FullExprArg IncArg = MakeFullDiscardedValueExpr(Inc.get());
+
+  StmtResult R = ActOnForStmt(ForLoc, LParenLoc, First, CondResult, IncArg, RParenLoc, Body);
+  if (R.isUsable() && LoopVar) {
+    auto It = C4LoopVarLabelMap.find(LoopVar);
+    if (It != C4LoopVarLabelMap.end()) {
+      LabelDecl *LD = It->second;
+      LabelStmt *LS = new (Context) LabelStmt(ForLoc, LD, R.get());
+      LD->setStmt(LS);
+    }
+  }
+  return R;
+}
+
+VarDecl *Sema::ActOnC4ArrayIterationVar(Scope *S, IdentifierInfo *II, SourceLocation Loc,
+                                        bool IsRef, bool IsPtr, Expr *ArrayExpr) {
+  if (!ArrayExpr) return nullptr;
+  QualType ArrayTy = ArrayExpr->getType();
+  if (!isC4ArrayType(ArrayTy)) {
+    Diag(ArrayExpr->getExprLoc(), diag::err_expected) << "C4 array type for iteration";
+    return nullptr;
+  }
+  QualType ElementTy = getElementTypeFromC4Array(ArrayTy);
+  if (ElementTy.isNull()) {
+    Diag(ArrayExpr->getExprLoc(), diag::err_expected) << "valid C4 array element type";
+    return nullptr;
+  }
+
+  QualType VarType = ElementTy;
+  if (IsRef) {
+    VarType = Context.getLValueReferenceType(ElementTy);
+  } else if (IsPtr) {
+    VarType = Context.getPointerType(ElementTy);
+  }
+
+  VarDecl *NewVD = VarDecl::Create(Context, CurContext, Loc, Loc, II, VarType,
+                                   Context.getTrivialTypeSourceInfo(VarType, Loc), SC_None);
+  PushOnScopeChains(NewVD, S);
+  return NewVD;
+}
+
+StmtResult Sema::ActOnC4RangeForStmt(SourceLocation ForLoc, SourceLocation LParenLoc,
+                                     Stmt *First, VarDecl *ElementVar, Expr *ArrayExpr,
+                                     bool Exclusive, SourceLocation RParenLoc,
+                                     Stmt *Body) {
+  VarDecl *IndexVar = nullptr;
+  if (First) {
+    if (auto *DS = dyn_cast<DeclStmt>(First)) {
+      if (DS->isSingleDecl()) {
+        IndexVar = dyn_cast<VarDecl>(DS->getSingleDecl());
+      }
+    }
+  }
+  if (!IndexVar) {
+    IdentifierInfo *II = &Context.Idents.get("__index");
+    IndexVar = VarDecl::Create(Context, CurContext, ForLoc, ForLoc, II, Context.IntTy,
+                               Context.getTrivialTypeSourceInfo(Context.IntTy, ForLoc), SC_None);
+    ExprResult Zero = ActOnIntegerConstant(ForLoc, 0);
+    IndexVar->setInit(Zero.get());
+    First = new (Context) DeclStmt(DeclGroupRef(IndexVar), ForLoc, ForLoc);
+  }
+
+  QualType ArrayTy = ArrayExpr->getType();
+  RecordDecl *RD = ArrayTy->getAs<RecordType>()->getDecl();
+  FieldDecl *CountField = nullptr;
+  FieldDecl *ItemsField = nullptr;
+  for (auto *Field : RD->fields()) {
+    if (Field->getName() == C4_ARRAY_SIZE_FIELD) {
+      CountField = Field;
+    } else if (Field->getName() == C4_ARRAY_DATA_FIELD) {
+      ItemsField = Field;
+    }
+  }
+
+  if (!CountField || !ItemsField) {
+    return StmtError();
+  }
+
+  MemberExpr *CountAccess = MemberExpr::CreateImplicit(Context, ArrayExpr, /*IsArrow=*/false, CountField, CountField->getType(), VK_LValue, OK_Ordinary);
+  ExprResult CountRVal = DefaultLvalueConversion(CountAccess);
+
+  ExprResult IndexRef = BuildDeclRefExpr(IndexVar, IndexVar->getType(), VK_LValue, ForLoc);
+  if (IndexRef.isInvalid()) return StmtError();
+  ExprResult IndexRVal = DefaultLvalueConversion(IndexRef.get());
+  if (IndexRVal.isInvalid()) return StmtError();
+
+  ExprResult Cond = BuildBinOp(getCurScope(), ForLoc, BO_LT, IndexRVal.get(), CountRVal.get());
+  if (Cond.isInvalid()) return StmtError();
+
+  ExprResult IndexRefInc = BuildDeclRefExpr(IndexVar, IndexVar->getType(), VK_LValue, ForLoc);
+  if (IndexRefInc.isInvalid()) return StmtError();
+  ExprResult Inc = BuildBinOp(getCurScope(), ForLoc, BO_AddAssign, IndexRefInc.get(), ActOnIntegerConstant(ForLoc, 1).get());
+  if (Inc.isInvalid()) return StmtError();
+
+  MemberExpr *ItemsAccess = MemberExpr::CreateImplicit(Context, ArrayExpr, /*IsArrow=*/false, ItemsField, ItemsField->getType(), VK_LValue, OK_Ordinary);
+  ExprResult ElementExpr = CreateBuiltinArraySubscriptExpr(ItemsAccess, ForLoc, IndexRVal.get(), ForLoc);
+  if (ElementExpr.isInvalid()) return StmtError();
+
+  if (ElementVar->getType()->isReferenceType()) {
+    ElementVar->setInit(ElementExpr.get());
+  } else if (ElementVar->getType()->isPointerType()) {
+    ExprResult ElementAddr = BuildUnaryOp(getCurScope(), ForLoc, UO_AddrOf, ElementExpr.get());
+    if (ElementAddr.isInvalid()) return StmtError();
+    ElementVar->setInit(ElementAddr.get());
+  } else {
+    ElementVar->setInit(ElementExpr.get());
+  }
+
+  if (auto *CS = dyn_cast_or_null<CompoundStmt>(Body)) {
+    DeclStmt *ElementDS = new (Context) DeclStmt(DeclGroupRef(ElementVar), ForLoc, ForLoc);
+    SmallVector<Stmt*, 8> BodyStmts;
+    BodyStmts.push_back(ElementDS);
+    for (auto *S : CS->body()) {
+      BodyStmts.push_back(S);
+    }
+    Body = CompoundStmt::Create(Context, BodyStmts, FPOptionsOverride(), CS->getLBracLoc(), CS->getRBracLoc());
+  }
+
+  ConditionResult CondResult = ActOnCondition(getCurScope(), ForLoc, Cond.get(), Sema::ConditionKind::Boolean, /*MissingOK=*/false);
+  FullExprArg IncArg = MakeFullDiscardedValueExpr(Inc.get());
+
+  StmtResult R = ActOnForStmt(ForLoc, LParenLoc, First, CondResult, IncArg, RParenLoc, Body);
+  if (R.isUsable() && ElementVar) {
+    auto It = C4LoopVarLabelMap.find(ElementVar);
+    if (It != C4LoopVarLabelMap.end()) {
+      LabelDecl *LD = It->second;
+      LabelStmt *LS = new (Context) LabelStmt(ForLoc, LD, R.get());
+      LD->setStmt(LS);
+    }
+  }
+  return R;
+}
+
 StmtResult Sema::ActOnForEachLValueExpr(Expr *E) {
   // Reduce placeholder expressions here.  Note that this rejects the
   // use of pseudo-object l-values in this position.
@@ -3322,10 +3569,24 @@ static Scope *FindLabeledBreakContinueScope(Sema &S, Scope *CurScope,
       return nullptr;
     }
 
-    if (Scope->isBreakOrContinueScope() &&
-        Scope->getPrecedingLabel() == Target) {
-      Found = Scope;
-      break;
+    if (Scope->isBreakOrContinueScope()) {
+      if (Scope->getPrecedingLabel() == Target) {
+        Found = Scope;
+        break;
+      }
+      bool MatchesVar = false;
+      for (const auto *D : Scope->decls()) {
+        if (const auto *VD = dyn_cast<VarDecl>(D)) {
+          if (VD->getDeclName().getAsIdentifierInfo() == Target->getIdentifier()) {
+            MatchesVar = true;
+            break;
+          }
+        }
+      }
+      if (MatchesVar) {
+        Found = Scope;
+        break;
+      }
     }
   }
 

@@ -413,6 +413,12 @@ Parser::ParseRHSOfBinaryExpression(ExprResult LHS, prec::Level MinPrec) {
         if (LHS.isInvalid())
             return ExprError();
 
+        if (getLangOpts().C4()) {
+            LHS = ParsePostfixExpressionSuffix(LHS);
+            if (LHS.isInvalid())
+                return ExprError();
+        }
+
         NextTokPrec =
             getBinOpPrecedence(
                 Tok.getKind(),
