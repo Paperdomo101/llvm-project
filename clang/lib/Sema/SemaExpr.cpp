@@ -2963,6 +2963,9 @@ ExprResult Sema::ActOnIdExpression(Scope *S, CXXScopeSpec &SS,
                                                VK_LValue, NameLoc);
         if (!ParamRef.isInvalid()) {
           bool IsArrow = FoundEmbedParam->getType()->isPointerType();
+          ParamRef = PerformMemberExprBaseConversion(ParamRef.get(), IsArrow);
+          if (ParamRef.isInvalid())
+            return ExprError();
           LookupResult MemberR(*this, R.getLookupNameInfo(), LookupMemberName);
           MemberR.addDecl(FoundSubMember);
           MemberR.resolveKind();
@@ -6599,6 +6602,10 @@ Sema::ConvertArgumentsForCall(CallExpr *Call, Expr *Fn,
 
 
 
+  if (getLangOpts().C4() && TotalNumArgs > Call->getNumArgs()) {
+    Call->setNumArgsUnsafe(TotalNumArgs);
+  }
+
   for (unsigned i = 0; i < TotalNumArgs; ++i)
     Call->setArg(i, AllArgs[i]);
 
@@ -6791,11 +6798,47 @@ bool Sema::GatherArgumentsForCall(SourceLocation CallLoc, FunctionDecl *FDecl,
     } else {
       assert(Param && "can't use default arguments without a known callee");
 
-      ExprResult ArgExpr = BuildCXXDefaultArgExpr(CallLoc, FDecl, Param);
-      if (ArgExpr.isInvalid())
-        return true;
+      if (getLangOpts().C4() && FDecl && Param->getName().starts_with("__c4_str_")) {
+        StringRef TargetName = Param->getName().substr(9);
+        Expr *TargetArg = nullptr;
+        for (unsigned j = 0; j < FDecl->getNumParams(); ++j) {
+          ParmVarDecl *PVD = FDecl->getParamDecl(j);
+          if (PVD->getName() == TargetName) {
+            if (j < Args.size()) {
+              TargetArg = Args[j];
+            }
+            break;
+          }
+        }
+        std::string ArgStr = "";
+        if (TargetArg) {
+          SourceRange Range = TargetArg->getSourceRange();
+          SourceManager &SM = Context.getSourceManager();
+          bool Invalid = false;
+          StringRef Text = Lexer::getSourceText(CharSourceRange::getTokenRange(Range), SM, getLangOpts(), &Invalid);
+          if (!Invalid) {
+            ArgStr = Text.str();
+          } else {
+            ArgStr = "expr";
+          }
+        } else {
+          ArgStr = "null";
+        }
+        llvm::APInt LengthI(32, ArgStr.size() + 1);
+        QualType StrTy = Context.adjustStringLiteralBaseType(Context.CharTy.withConst());
+        StrTy = Context.getConstantArrayType(StrTy, LengthI, nullptr, ArraySizeModifier::Normal, 0);
+        SmallVector<SourceLocation, 1> TokLocs;
+        TokLocs.push_back(CallLoc);
+        Expr *StrLit = StringLiteral::Create(Context, ArgStr, StringLiteralKind::Ordinary, false, StrTy, TokLocs);
+        QualType DecayedTy = Context.getPointerType(Context.CharTy.withConst());
+        Arg = ImpCastExprToType(StrLit, DecayedTy, CK_ArrayToPointerDecay).get();
+      } else {
+        ExprResult ArgExpr = BuildCXXDefaultArgExpr(CallLoc, FDecl, Param);
+        if (ArgExpr.isInvalid())
+          return true;
 
-      Arg = ArgExpr.getAs<Expr>();
+        Arg = ArgExpr.getAs<Expr>();
+      }
     }
 
     // Check for array bounds violations for each argument to the call. This
@@ -16452,6 +16495,33 @@ ExprResult Sema::ActOnC4SymbolOf(StringRef Name, SourceLocation DollarLoc,
   TokLocs.push_back(DollarLoc);
   return StringLiteral::Create(Context, Name, StringLiteralKind::Ordinary,
                                /*Pascal=*/false, StrTy, TokLocs);
+}
+
+ExprResult Sema::ActOnC4StringOf(IdentifierInfo *II, SourceLocation DollarLoc,
+                                 SourceLocation NameLoc) {
+  FunctionDecl *FD = getCurFunctionDecl();
+  if (!FD) {
+    Diag(NameLoc, diag::err_c4_string_of_outside_function);
+    return ExprError();
+  }
+
+  std::string HiddenName = "__c4_str_" + II->getName().str();
+  IdentifierInfo *HiddenII = &Context.Idents.get(HiddenName);
+  ParmVarDecl *HiddenPVD = nullptr;
+  for (unsigned i = 0, n = FD->getNumParams(); i < n; ++i) {
+    ParmVarDecl *PVD = FD->getParamDecl(i);
+    if (PVD->getIdentifier() == HiddenII) {
+      HiddenPVD = PVD;
+      break;
+    }
+  }
+
+  if (!HiddenPVD) {
+    Diag(NameLoc, diag::err_c4_string_of_expects_parameter) << II;
+    return ExprError();
+  }
+
+  return BuildDeclRefExpr(HiddenPVD, HiddenPVD->getType(), VK_LValue, NameLoc);
 }
 
 // .MemberName → look up enum constant in current scope

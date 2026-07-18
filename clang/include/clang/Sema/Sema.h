@@ -2645,6 +2645,9 @@ public:
   ExprResult ActOnC4SymbolOf(StringRef Name, SourceLocation DollarLoc,
                              SourceLocation NameLoc);
 
+  ExprResult ActOnC4StringOf(IdentifierInfo *II, SourceLocation DollarLoc,
+                             SourceLocation NameLoc);
+
   ExprResult ActOnC4ImplicitDot(SourceLocation DotLoc, IdentifierInfo *MemberII,
                                 SourceLocation MemberLoc,
                                 QualType PreferredType = QualType());

@@ -3406,38 +3406,6 @@ void Parser::ParseDeclarationSpecifiers(
     DeclSpec &DS, ParsedTemplateInfo &TemplateInfo, AccessSpecifier AS,
     DeclSpecContext DSContext, LateParsedAttrList *LateAttrs,
     ImplicitTypenameContext AllowImplicitTypename) {
-  // C4: Identifier followed by '{' at top/block scope -> auto-inject 'struct'.
-  // Named struct (not '_') gets C4NamedStructFreestanding set so the caller
-  // can return it as a free-standing typedef without a trailing ';'.
-  if (getLangOpts().C4() && Tok.is(tok::identifier) && NextToken().is(tok::l_brace) &&
-      (DSContext == DeclSpecContext::DSC_top_level || DSContext == DeclSpecContext::DSC_normal)) {
-    IdentifierInfo *II = Tok.getIdentifierInfo();
-    SourceLocation Loc = Tok.getLocation();
-    if (II->isStr("_")) {
-      // Anonymous: inject just 'struct' (no name, no freestanding flag).
-      Token StructTok;
-      StructTok.startToken();
-      StructTok.setKind(tok::kw_struct);
-      StructTok.setLocation(Loc);
-      auto Toks = std::make_unique<Token[]>(1);
-      Toks[0] = StructTok;
-      PP.EnterTokenStream(std::move(Toks), 1, /*DisableMacroExpansion=*/true, /*IsReinject=*/true);
-      PP.Lex(Tok);
-    } else {
-      // Named: inject 'struct Name' and mark this DS as a C4 freestanding struct.
-      DS.setC4NamedStructFreestanding();
-      Token StructTok;
-      StructTok.startToken();
-      StructTok.setKind(tok::kw_struct);
-      StructTok.setLocation(Loc);
-      Token IdentTok = Tok;
-      auto Toks = std::make_unique<Token[]>(2);
-      Toks[0] = StructTok;
-      Toks[1] = IdentTok;
-      PP.EnterTokenStream(std::move(Toks), 2, /*DisableMacroExpansion=*/true, /*IsReinject=*/true);
-      PP.Lex(Tok);
-    }
-  }
   if (DS.getSourceRange().isInvalid()) {
     // Start the range at the current token but make the end of the range
     // invalid.  This will make the entire range invalid unless we successfully
@@ -3462,6 +3430,23 @@ void Parser::ParseDeclarationSpecifiers(
   while (true) {
     if (isC4File() && DS.hasTagDefinition())
       break;
+    if (getLangOpts().C4() && Tok.is(tok::identifier) && NextToken().is(tok::l_brace) &&
+        (DSContext == DeclSpecContext::DSC_top_level ||
+         DSContext == DeclSpecContext::DSC_normal ||
+         DSContext == DeclSpecContext::DSC_type_specifier) &&
+        !Actions.getTypeName(*Tok.getIdentifierInfo(), Tok.getLocation(), getCurScope())) {
+      IdentifierInfo *II = Tok.getIdentifierInfo();
+      if (II->isStr("_")) {
+        Tok.setKind(tok::kw_struct);
+      } else {
+        DS.setC4NamedStructFreestanding();
+        Token IdentTok = Tok;
+        auto Toks = std::make_unique<Token[]>(1);
+        Toks[0] = IdentTok;
+        PP.EnterTokenStream(std::move(Toks), 1, /*DisableMacroExpansion=*/true, /*IsReinject=*/true);
+        Tok.setKind(tok::kw_struct);
+      }
+    }
     bool isInvalid = false;
     bool isStorageClass = false;
     const char *PrevSpec = nullptr;
@@ -6130,7 +6115,8 @@ bool Parser::isDeclarationSpecifier(
       // Avoid misidentifying C++11 [[attr]] attribute specifiers.
       const Token &Next = NextToken();
       if (Next.is(tok::r_square) || Next.is(tok::numeric_constant) ||
-          Next.is(tok::identifier) || Next.is(tok::hashdot))
+          Next.is(tok::identifier) || Next.is(tok::hashdot) ||
+          (Next.is(tok::hashhash) && PP.LookAhead(1).is(tok::period)))
         return true;
     }
     return false;

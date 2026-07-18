@@ -516,6 +516,7 @@ public:
   }
 
   bool isC4Reference() const { return IsC4Reference; }
+  SourceLocation getC4ReferenceLoc() const { return C4ReferenceLoc; }
 
   void SetIsC4Embed(bool b, SourceLocation loc) {
     IsC4Embed = b;

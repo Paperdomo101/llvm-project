@@ -835,6 +835,8 @@ Parser::ParseC4MacroMethodDispatch(ExprResult Receiver,
 
 
 
+
+
     auto Toks = std::make_unique<Token[]>(SyntheticToks.size());
     std::copy(SyntheticToks.begin(), SyntheticToks.end(), Toks.get());
     PP.EnterTokenStream(std::move(Toks), SyntheticToks.size(),
@@ -905,7 +907,7 @@ ExprResult Parser::ParseMethodDispatch(
     }
 
     if (TargetMI) {
-        return ParseC4MacroMethodDispatch(Receiver, II, ILoc, TargetMI);
+        return ParseC4MacroMethodDispatch(Receiver, CurrII, ILoc, TargetMI);
     }
 
     // ── Normal (non-macro) path ───────────────────────────────────────────
@@ -1263,6 +1265,19 @@ Parser::ParseCastExpression(CastParseKind ParseKind, bool isAddressOfOperand,
     StringRef Name = Tok.getIdentifierInfo()->getName();
     SourceLocation NameLoc = ConsumeToken(); // consume identifier
     return Actions.ActOnC4SymbolOf(Name, DollarLoc, NameLoc);
+  }
+  // ============================================================
+
+  // === C4: STRING-OF OPERATOR ($.identifier) ===
+  case tok::cashdot: {
+    SourceLocation DollarLoc = ConsumeToken(); // consume '$.'
+    if (Tok.isNot(tok::identifier)) {
+      Diag(Tok, diag::err_expected) << tok::identifier;
+      return ExprError();
+    }
+    IdentifierInfo *II = Tok.getIdentifierInfo();
+    SourceLocation NameLoc = ConsumeToken(); // consume identifier
+    return Actions.ActOnC4StringOf(II, DollarLoc, NameLoc);
   }
   // ============================================================
 

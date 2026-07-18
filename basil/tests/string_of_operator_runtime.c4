@@ -1,0 +1,20 @@
+// tests/string_of_operator_runtime.c4
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+print_int_var (int var) {
+    if (strcmp($.var, "some_int") != 0 && strcmp($.var, "10") != 0) {
+        printf("Fail: $.var is %s\n", $.var);
+        exit(1);
+    }
+}
+
+main () int {
+    some_int := 20;
+    print_int_var(some_int);
+    print_int_var(10);
+
+    printf("String-of operator runtime test passed!\n");
+    return 0;
+}

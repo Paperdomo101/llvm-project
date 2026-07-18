@@ -15,11 +15,29 @@ Player {
     int health;
 }
 
+fill_out_by_ref (<- &Vector3 v) {
+    x = 40;
+    y = -5;
+    z = x + y;
+}
+
+#include <stdio.h>
+
 main() int {
+
     Player joe = {.x = 5, .y = 2, .health = 72};
 
-    // Verify member resolution via dot access on named embed
+    // Verify member resolution via dot access on named embed before update
     if (joe.x != 5 || joe.y != 2) {
+        return 1;
+    }
+
+    "{%g, %g, %g}\n"::printf(joe.position.{x, y, z}) // {5, 2, 0}
+    joe.position::fill_out_by_ref()
+    "{%g, %g, %g}\n"::printf(joe.position.{x, y, z}) // expected {40, -5, 35}
+
+    // Verify member resolution via dot access on named embed after update
+    if (joe.x != 40 || joe.y != -5) {
         return 1;
     }
 

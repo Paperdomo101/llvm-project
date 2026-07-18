@@ -49,19 +49,6 @@
     if (bob) bob::do_thing()
     ```
 
-    ## symbol-of operator $.
-    ```
-    add_them (int a, b) int {
-    		"adding %s and %s...\n"::printf($.a, $.b)
-      	return a + b;
-    }
-    bob := 4;
-    int neil = 20;
-    result := add_them(neil, bob) // adding neil and bob...
-    "%s: %d\n"::printf($.result, result) // result: 24
-
-    $.bob // "bob"
-    ```
 
 
 		## New ternary
@@ -200,6 +187,21 @@
 
 # ===|===|=== DONE ===|===|===
 # ____________________________
+
+
+    ## string-of operator $.
+    ```
+    add_them (int a, b) int {
+    		"adding %s and %s...\n"::printf($.a, $.b)
+      	return a + b;
+    }
+    bob := 4;
+    int neil = 20;
+    result := add_them(neil, bob) // adding neil and bob...
+    "%s: %d\n"::printf($.result, result) // result: 24
+
+    $.bob // "bob"
+    ```
 
 		## position + {0, 1, 0} struct arith without cast
 

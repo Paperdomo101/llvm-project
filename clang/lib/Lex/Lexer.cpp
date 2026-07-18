@@ -4178,6 +4178,7 @@ LexStart:
     return LexIdentifierContinue(Result, CurPtr);
   case '$':   // $ in identifiers.
     // C4: $$. is the symbol-of operator ($$.foo → "foo")
+    //     $. is the string-of operator ($.var)
     if (LangOpts.C4Mode) {
       Char = getCharAndSize(CurPtr, SizeTmp);
       if (Char == '$') {
@@ -4190,6 +4191,11 @@ LexStart:
           MIOpt.ReadToken();
           break;
         }
+      } else if (Char == '.') {
+        Kind = tok::cashdot;
+        CurPtr = ConsumeChar(CurPtr, SizeTmp, Result);   // consume '.'
+        MIOpt.ReadToken();
+        break;
       }
     }
     if (LangOpts.DollarIdents) {

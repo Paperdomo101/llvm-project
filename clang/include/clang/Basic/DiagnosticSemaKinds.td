@@ -11279,6 +11279,11 @@ def err_blocks_disable : Error<"blocks support disabled - compile with -fblocks"
 def err_block_returning_array_function : Error<
   "block cannot return %select{array|function}0 type %1">;
 
+def err_c4_string_of_outside_function : Error<
+  "$. operator can only be used inside function bodies">;
+def err_c4_string_of_expects_parameter : Error<
+  "$. operator expects a parameter name, but %0 is not a parameter of the function">;
+
 // Builtin annotation
 def err_builtin_annotation_first_arg : Error<
   "first argument to __builtin_annotation must be an integer">;

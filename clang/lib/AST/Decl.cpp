@@ -3822,6 +3822,16 @@ void FunctionDecl::setParams(ASTContext &C,
 /// function parameters, if some of the parameters have default
 /// arguments (in C++) or are parameter packs (C++11).
 unsigned FunctionDecl::getMinRequiredArguments() const {
+  if (getASTContext().getLangOpts().C4()) {
+    unsigned NumParams = 0;
+    for (auto *Param : parameters()) {
+      if (!Param->getName().starts_with("__c4_str_")) {
+        NumParams++;
+      }
+    }
+    return NumParams;
+  }
+
   if (!getASTContext().getLangOpts().CPlusPlus)
     return getNumParams();
 

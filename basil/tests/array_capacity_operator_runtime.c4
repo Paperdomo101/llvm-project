@@ -1,0 +1,12 @@
+// tests/array_capacity_operator_runtime.c4
+#include <stdio.h>
+
+main () int {
+    [128] int board;
+    [##.board] int occupied;
+
+    if (##.occupied != 128) return 1;
+
+    printf("Array capacity operator runtime test passed!\n");
+    return 0;
+}

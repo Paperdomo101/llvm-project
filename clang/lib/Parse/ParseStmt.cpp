@@ -84,8 +84,12 @@ bool Parser::ParseLHSVar(LHSVarInfo &Out, bool SuppressDiags) {
                 PP.LookAhead(1).is(tok::r_square)) ||
                (NextToken().is(tok::hashdot) &&
                 PP.LookAhead(1).is(tok::identifier) &&
-                PP.LookAhead(2).is(tok::r_square))) {
-      // Sized [N] or [size] or [#.board] C4 array prefix: parse the size expression during real
+                PP.LookAhead(2).is(tok::r_square)) ||
+               (NextToken().is(tok::hashhash) &&
+                PP.LookAhead(1).is(tok::period) &&
+                PP.LookAhead(2).is(tok::identifier) &&
+                PP.LookAhead(3).is(tok::r_square))) {
+      // Sized [N] or [size] or [#.board] or [##.board] C4 array prefix: parse the size expression during real
       // parsing; in tentative mode (SuppressDiags=true) just consume tokens.
       Out.Kind = ArrayKind::C4;
       ConsumeBracket(); // '['
@@ -96,9 +100,15 @@ bool Parser::ParseLHSVar(LHSVarInfo &Out, bool SuppressDiags) {
         if (SizeResult.isUsable())
           Out.SizeExpr = SizeResult.get();
       } else {
-        ConsumeToken(); // consume the numeric literal, identifier or hashdot token
-        if (Tok.is(tok::identifier))
-          ConsumeToken();
+        if (Tok.is(tok::hashhash)) {
+          ConsumeToken(); // consume '##'
+          ConsumeToken(); // consume '.'
+          ConsumeToken(); // consume identifier
+        } else {
+          ConsumeToken(); // consume the numeric literal, identifier or hashdot token
+          if (Tok.is(tok::identifier))
+            ConsumeToken();
+        }
       }
       if (Tok.is(tok::r_square))
         ConsumeBracket(); // ']'
@@ -423,8 +433,12 @@ Retry:
                 PP.LookAhead(1).is(tok::r_square)) ||
                (NextToken().is(tok::hashdot) &&
                 PP.LookAhead(1).is(tok::identifier) &&
-                PP.LookAhead(2).is(tok::r_square))) {
-      // [N], [size] or [#.board] — sized C4 array.
+                PP.LookAhead(2).is(tok::r_square)) ||
+               (NextToken().is(tok::hashhash) &&
+                PP.LookAhead(1).is(tok::period) &&
+                PP.LookAhead(2).is(tok::identifier) &&
+                PP.LookAhead(3).is(tok::r_square))) {
+      // [N], [size], [#.board] or [##.board] — sized C4 array.
       IsC4Decl = true;
     }
 
@@ -538,6 +552,9 @@ Retry:
             // Create a tentative parsing guard so we can safely roll back the token stream
             TentativeParsingAction TPA(*this);
 
+            bool OldMacro = PP.isMacroExpansionDisabled();
+            PP.setMacroExpansionDisabled(true);
+
             BalancedDelimiterTracker T(*this, tok::l_brace);
             if (!T.consumeOpen()) {
                 // Skip to the matching closing brace
@@ -548,6 +565,8 @@ Retry:
                     IsMethodDispatch = true;
                 }
             }
+
+            PP.setMacroExpansionDisabled(OldMacro);
 
             // Always revert the token stream back to the starting position
             TPA.Revert();

@@ -384,6 +384,22 @@ CompilerTest custom_test_suite[] = {
         "Static Local Type-inferred Variables (runtime)",
         "tests/static_type_inferred_runtime.c4", true
     },
+    {
+        "Anonymous Local Struct Declarations (runtime)",
+        "tests/anonymous_local_structs_runtime.c4", true
+    },
+    {
+        "C4 Array Capacity Operator (runtime)",
+        "tests/array_capacity_operator_runtime.c4", true
+    },
+    {
+        "Static Global Type-inferred Variables (runtime)",
+        "tests/static_global_type_inferred_runtime.c4", true
+    },
+    {
+        "String-Of Operator $. (runtime)",
+        "tests/string_of_operator_runtime.c4", true
+    },
 };
 
 bool run_compiler_tests(const char *compiler_path) {

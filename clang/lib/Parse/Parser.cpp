@@ -1303,7 +1303,7 @@ Parser::ParseExternalDeclaration(ParsedAttributes &Attrs,
 
     // C4: Type-inferred assignment at file scope (x := expr, [] arr := expr)
     if (getLangOpts().C4() &&
-        (Tok.is(tok::kw_const) || Tok.is(tok::l_square) || Tok.is(tok::identifier))) {
+        Tok.isOneOf(tok::kw_const, tok::kw_static, tok::l_square, tok::identifier)) {
       if (isTypeInferredAssignment()) {
         StmtResult SR = ParseTypeInferredAssignment();
         if (SR.isUsable()) {
@@ -1497,11 +1497,73 @@ Parser::DeclGroupPtrTy Parser::ParseDeclarationOrFunctionDefinition(
 }
 
 Decl *Parser::ParseFunctionDefinition(ParsingDeclarator &D,
-                                      const ParsedTemplateInfo &TemplateInfo,
-                                      LateParsedAttrList *LateParsedAttrs) {
+                                       const ParsedTemplateInfo &TemplateInfo,
+                                       LateParsedAttrList *LateParsedAttrs) {
   llvm::TimeTraceScope TimeScope("ParseFunctionDefinition", [&]() {
     return Actions.GetNameForDeclarator(D).getName().getAsString();
   });
+
+  if (getLangOpts().C4() && D.isFunctionDeclarator() && Tok.is(tok::l_brace)) {
+    TentativeParsingAction TPA(*this);
+    llvm::SmallVector<const IdentifierInfo*, 8> StringOfParams;
+    int BraceCount = 0;
+    while (true) {
+      if (Tok.is(tok::l_brace)) {
+        BraceCount++;
+      } else if (Tok.is(tok::r_brace)) {
+        BraceCount--;
+        if (BraceCount == 0) {
+          break;
+        }
+      } else if (Tok.is(tok::cashdot)) {
+        ConsumeToken();
+        if (Tok.is(tok::identifier)) {
+          const IdentifierInfo *II = Tok.getIdentifierInfo();
+          if (std::find(StringOfParams.begin(), StringOfParams.end(), II) == StringOfParams.end()) {
+            StringOfParams.push_back(II);
+          }
+        }
+      } else if (Tok.is(tok::eof)) {
+        break;
+      }
+      ConsumeAnyToken();
+    }
+    TPA.Revert();
+
+    if (!StringOfParams.empty()) {
+      const DeclaratorChunk::FunctionTypeInfo &FTI = D.getFunctionTypeInfo();
+      SmallVector<DeclaratorChunk::ParamInfo, 8> NewParams;
+      bool Modified = false;
+      for (unsigned i = 0; i < FTI.NumParams; ++i) {
+        const DeclaratorChunk::ParamInfo &Param = FTI.Params[i];
+        NewParams.push_back(std::move(const_cast<DeclaratorChunk::ParamInfo &>(Param)));
+        if (Param.Ident && std::find(StringOfParams.begin(), StringOfParams.end(), Param.Ident) != StringOfParams.end()) {
+          std::string HiddenName = "__c4_str_" + Param.Ident->getName().str();
+          const IdentifierInfo *HiddenII = &Actions.Context.Idents.get(HiddenName);
+          SourceLocation NameLoc = Param.IdentLoc;
+          QualType StrTy = Actions.Context.getPointerType(Actions.Context.CharTy.withConst());
+          ParmVarDecl *HiddenPVD = ParmVarDecl::Create(
+              Actions.Context, Actions.CurContext, NameLoc, NameLoc, HiddenII,
+              StrTy, Actions.Context.getTrivialTypeSourceInfo(StrTy, NameLoc),
+              SC_None, nullptr);
+          HiddenPVD->setImplicit(true);
+          NewParams.push_back(DeclaratorChunk::ParamInfo(HiddenII, NameLoc, HiddenPVD));
+          Modified = true;
+        }
+      }
+      if (Modified) {
+        auto *ParamsArray = new DeclaratorChunk::ParamInfo[NewParams.size()];
+        std::move(NewParams.begin(), NewParams.end(), ParamsArray);
+        if (FTI.DeleteParams) {
+          delete[] FTI.Params;
+        }
+        auto &MutableFTI = const_cast<DeclaratorChunk::FunctionTypeInfo &>(FTI);
+        MutableFTI.Params = ParamsArray;
+        MutableFTI.NumParams = NewParams.size();
+        MutableFTI.DeleteParams = true;
+      }
+    }
+  }
 
   // Poison SEH identifiers so they are flagged as illegal in function bodies.
   PoisonSEHIdentifiersRAIIObject PoisonSEHIdentifiers(*this, true);

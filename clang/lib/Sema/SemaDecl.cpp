@@ -16399,18 +16399,21 @@ Decl *Sema::ActOnParamDeclarator(Scope *S, Declarator &D,
     // 1. HARDENED REFERENCE PARSING GATEWAY WITH MULTI-VARIABLE GROUPING ISOLATION
     bool IsExplicitC4Ref = false;
     if (D.getDeclSpec().isC4Reference()) {
-      std::pair<FileID, unsigned> LocInfo = Context.getSourceManager().getDecomposedLoc(C4ParamLoc);
-      bool Invalid = false;
-      StringRef Buf = Context.getSourceManager().getBufferData(LocInfo.first, &Invalid);
+      SourceLocation RefLoc = D.getDeclSpec().getC4ReferenceLoc();
+      if (RefLoc.isValid()) {
+        std::pair<FileID, unsigned> LocInfo = Context.getSourceManager().getDecomposedLoc(RefLoc);
+        bool Invalid = false;
+        StringRef Buf = Context.getSourceManager().getBufferData(LocInfo.first, &Invalid);
 
-      if (!Invalid && LocInfo.second < Buf.size()) {
-        // Look directly at the starting character token position of the parameter declaration list
-        if (Buf[LocInfo.second] == '&') {
-          // GROUPING PROTECTION: A grouped parameter like 'r2' in '(&int r1, r2)' sharing the same
-          // DeclSpec list context shares the same getBeginLoc() as 'r1'. To isolate them, we verify
-          // if the current declarator represents the very first variable in the group list sequence!
-          if (D.isFirstDeclarator()) {
-            IsExplicitC4Ref = true;
+        if (!Invalid && LocInfo.second < Buf.size()) {
+          // Look directly at the starting character token position of the parameter declaration list
+          if (Buf[LocInfo.second] == '&') {
+            // GROUPING PROTECTION: A grouped parameter like 'r2' in '(&int r1, r2)' sharing the same
+            // DeclSpec list context shares the same getBeginLoc() as 'r1'. To isolate them, we verify
+            // if the current declarator represents the very first variable in the group list sequence!
+            if (D.isFirstDeclarator()) {
+              IsExplicitC4Ref = true;
+            }
           }
         }
       }
