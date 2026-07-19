@@ -432,6 +432,14 @@ CompilerTest custom_test_suite[] = {
         "Comparison Chaining Spaced Form (|| ==, || !=, && ==) with Side Effects (runtime)",
         "tests/chain_sidefx.c4", true
     },
+    {
+        "Identifier Aliasing (AddInts / add) (runtime)",
+        "tests/alias_func.c4", true
+    },
+    {
+        "Identifier Aliasing with :: Dispatch (runtime)",
+        "tests/alias_overload.c4", true
+    },
 };
 
 bool run_compiler_tests(const char *compiler_path) {

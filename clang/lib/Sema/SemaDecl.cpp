@@ -16777,6 +16777,17 @@ Sema::ActOnStartOfFunctionDef(Scope *FnBodyScope, Declarator &D,
     }
   }
 
+  // --- C4: Identifier aliasing (AddInts / add) ---
+  if (getLangOpts().C4() && D.getC4AliasII()) {
+    if (FunctionDecl *PrimaryFD = dyn_cast_if_present<FunctionDecl>(Dcl)) {
+      // Register the alias in a side table for later resolution.
+      // Multiple functions can share the same alias name; the correct one
+      // is chosen at the call site (e.g. expr::add()) by matching the
+      // receiver type against the first parameter type.
+      C4RegisterAlias(D.getC4AliasII(), PrimaryFD);
+    }
+  }
+
   return Dcl;
 }
 

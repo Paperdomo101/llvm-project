@@ -51,21 +51,6 @@
     ```
 
 
-    ## ||==  ||!=  &&==
-
-    ```
-    if fn_with_side_effects() == '5' || == 6 || == 7 {
-
-    }
-    if result := fn_with_side_effects(); result == '5' || result == 6 || result == 7 {
-
-    }
-    if c == ' ' ||== '\t' ||== '\n' {
-
-    }
-    ```
-
-
     ## multiple returns
     ```
     bob (int a, b, ^int c) int, bool {
@@ -78,11 +63,6 @@
     a, ok := bob()
     ```
 
-    ## @. pointer dereferencing
-    ```
-    ptr := get_ptr_int()
-    @.ptr = 10; // *ptr = 10; <- equivalent
-		```
 
 
     ## unions
@@ -144,7 +124,6 @@
     ```
 
 
-
     ## enums
     // The killer feature is you can define these enums of non-integer types (they do not automatically increment if so)
 
@@ -178,6 +157,20 @@
 # ____________________________
 
 
+    ## ||==  ||!=  &&==
+
+    ```
+    if c == ' ' ||== '\t' ||== '\n' {
+
+    }
+    if fn_with_side_effects() == '5' || == 6 || == 7 {
+
+    }
+    // equivalent
+    if result := fn_with_side_effects(); result == '5' || result == 6 || result == 7 {
+
+    }
+    ```
 
     ## multi-line strings
     /"
@@ -197,6 +190,13 @@
     		self++;
     }
     ```
+
+
+    ## @. pointer dereferencing
+    ```
+    ptr := get_ptr_int()
+    @.ptr = 10; // *ptr = 10; <- equivalent
+		```
 
 
 		## Loop ranges

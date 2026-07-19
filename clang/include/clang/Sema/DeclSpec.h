@@ -2144,6 +2144,10 @@ private:
   const IdentifierInfo *C4NamedReturnII = nullptr;
   SourceLocation C4NamedReturnLoc;
 
+  // C4: Identifier aliasing (AddInts / add)
+  const IdentifierInfo *C4AliasII = nullptr;
+  SourceLocation C4AliasLoc;
+
   friend struct DeclaratorChunk;
 
 public:
@@ -2176,7 +2180,9 @@ public:
         TrailingRequiresClause(nullptr),
         InventedTemplateParameterList(nullptr),
         C4NamedReturnII(nullptr),
-        C4NamedReturnLoc() {
+        C4NamedReturnLoc(),
+        C4AliasII(nullptr),
+        C4AliasLoc() {
     assert(llvm::all_of(DeclarationAttrs,
                         [](const ParsedAttr &AL) {
                           return (AL.isStandardAttributeSyntax() ||
@@ -2882,6 +2888,13 @@ public:
   }
   const IdentifierInfo *getC4NamedReturnII() const { return C4NamedReturnII; }
   SourceLocation getC4NamedReturnLoc() const { return C4NamedReturnLoc; }
+
+  void setC4Alias(const IdentifierInfo *II, SourceLocation Loc) {
+    C4AliasII = II;
+    C4AliasLoc = Loc;
+  }
+  const IdentifierInfo *getC4AliasII() const { return C4AliasII; }
+  SourceLocation getC4AliasLoc() const { return C4AliasLoc; }
 
   void setFunctionDefinitionKind(FunctionDefinitionKind Val) {
     FunctionDefinition = static_cast<unsigned>(Val);

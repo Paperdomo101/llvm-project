@@ -2914,6 +2914,18 @@ ExprResult Sema::ActOnIdExpression(Scope *S, CXXScopeSpec &SS,
     LookupParsedName(R, S, &SS, /*ObjectType=*/QualType(),
                      /*AllowBuiltinCreation=*/!IvarLookupFollowUp);
 
+    // --- C4: Alias resolution for direct calls (add(...) without ::) ---
+    // Only auto-resolve when there is exactly one candidate (unambiguous).
+    // For multiple candidates, the caller must use :: dispatch with a typed
+    // receiver to disambiguate (e.g. 10::add(5) vs v::add(v2)).
+    if (getLangOpts().C4() && R.empty() && II && !SS.isSet()) {
+      auto It = C4AliasMap.find(II);
+      if (It != C4AliasMap.end() && It->second.size() == 1) {
+        R.addDecl(It->second[0]);
+        R.resolveKind();
+      }
+    }
+
     // If the result might be in a dependent base class, this is a dependent
     // id-expression.
     if (R.wasNotFoundInCurrentInstantiation() || SS.isInvalid())

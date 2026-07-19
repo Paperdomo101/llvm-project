@@ -3572,7 +3572,12 @@ void Parser::ParseDeclarationSpecifiers(
         if (!DS.hasTypeSpecifier() &&
             DSContext != DeclSpecContext::DSC_normal && // FIX: Prevent intercepting your right-side lookups
             Tok.is(tok::identifier) &&
-            GetLookAheadToken(1).is(tok::l_paren)) {
+            (GetLookAheadToken(1).is(tok::l_paren) ||
+             // C4: identifier aliasing (AddInts / add (...))
+             (getLangOpts().C4() &&
+              GetLookAheadToken(1).is(tok::slash) &&
+              GetLookAheadToken(2).is(tok::identifier) &&
+              GetLookAheadToken(3).is(tok::l_paren)))) {
 
 
             // Safety 1: Never apply this feature inside system header files
@@ -7273,6 +7278,18 @@ void Parser::ParseDirectDeclarator(Declarator &D) {
   // Don't parse attributes unless we have parsed an unparenthesized name.
   if (D.hasName() && !D.getNumTypeObjects())
     MaybeParseCXX11Attributes(D);
+
+  // --- C4: Identifier aliasing (e.g. AddInts / add) ---
+  if (getLangOpts().C4() && D.hasName() && D.getIdentifier() &&
+      Tok.is(tok::slash)) {
+    ConsumeToken(); // consume '/'
+    if (Tok.is(tok::identifier)) {
+      D.setC4Alias(Tok.getIdentifierInfo(), Tok.getLocation());
+      ConsumeToken();
+    } else {
+      Diag(Tok, diag::err_expected) << tok::identifier;
+    }
+  }
 
   while (true) {
     if (Tok.is(tok::l_paren)) {

@@ -957,16 +957,60 @@ ExprResult Parser::ParseMethodDispatch(
 
     Name.setIdentifier(ResolvedII, ILoc);
 
-    ExprResult Callee =
-        Actions.ActOnIdExpression(
-            getCurScope(),
-            ScopeSpec,
-            TemplateKWLoc,
-            Name,
-            true,
-            false,
-            nullptr,
-            false);
+    // --- C4: Resolve aliased function names by receiver type ---
+    // Check the alias map BEFORE the normal lookup so we don't get
+    // spurious "undeclared function" diagnostics.  When a typed receiver
+    // is present (:: dispatch), filter by matching the receiver type
+    // against the first parameter type.
+    ExprResult Callee(true);
+    if (getLangOpts().C4()) {
+      auto It = Actions.C4AliasMap.find(II);
+      if (It != Actions.C4AliasMap.end()) {
+        if (Receiver.isUsable()) {
+          // :: dispatch — filter by receiver type
+          QualType RecvType = Receiver.get()->getType();
+          if (!RecvType.isNull()) {
+            FunctionDecl *Match = nullptr;
+            for (FunctionDecl *Cand : It->second) {
+              if (Cand->getNumParams() > 0) {
+                QualType FirstParamTy = Cand->getParamDecl(0)->getType();
+                if (Actions.getASTContext().hasSameUnqualifiedType(
+                        RecvType, FirstParamTy)) {
+                  if (Match) {
+                    Diag(ILoc, diag::err_ovl_ambiguous_call) << II;
+                    return ExprError();
+                  }
+                  Match = Cand;
+                }
+              }
+            }
+            if (Match) {
+              Callee = Actions.BuildDeclRefExpr(
+                  Match, Match->getType(), VK_PRValue, ILoc);
+            }
+          }
+        }
+        // Direct call (no receiver): only resolve if exactly one candidate
+        if (Callee.isInvalid() && It->second.size() == 1) {
+          Callee = Actions.BuildDeclRefExpr(
+              It->second[0], It->second[0]->getType(), VK_PRValue, ILoc);
+        }
+      }
+    }
+
+    // Fall back to normal lookup if no alias matched
+    if (Callee.isInvalid()) {
+      Callee =
+          Actions.ActOnIdExpression(
+              getCurScope(),
+              ScopeSpec,
+              TemplateKWLoc,
+              Name,
+              true,
+              false,
+              nullptr,
+              false);
+    }
 
     if (Callee.isInvalid())
         return ExprError();

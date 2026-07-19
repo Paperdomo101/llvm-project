@@ -2718,6 +2718,16 @@ public:
     C4ActiveSwizzles.pop_back();
   }
 
+  // C4: identifier aliasing — maps alias name → list of primary FunctionDecls.
+  // Used to resolve expr::alias_name() dispatch by matching receiver type
+  // against the first parameter type of each candidate.
+  llvm::DenseMap<const IdentifierInfo *,
+                 llvm::SmallVector<FunctionDecl *, 2>> C4AliasMap;
+  void C4RegisterAlias(const IdentifierInfo *AliasII, FunctionDecl *FD) {
+    C4AliasMap[AliasII].push_back(FD);
+  }
+
+
   // END C4
 
   // Checks that reinterpret casts don't have undefined behavior.
