@@ -246,6 +246,14 @@ CompilerTest custom_test_suite[] = {
         }
     },
     {
+        "C4 Enum Invalid Underlying Type (non-integral rejected, no crash)",
+        "tests/enum_invalid_underlying.c4",
+        false, 2, {
+            "non-integral type 'Color' is an invalid underlying type",
+            "integer constant expression must have integer type, not 'void'",
+        }
+    },
+    {
         "C++ Template Less-Minus Lexing Regression",
         "tests/template_less_minus.cpp",
     },
@@ -403,6 +411,18 @@ CompilerTest custom_test_suite[] = {
     {
         "Range Loops and Named Loop Controls (runtime)",
         "tests/ranges.c4", true
+    },
+    {
+        "C4 Pointer Dereferencing @. (runtime)",
+        "tests/atdot_dereference_runtime.c4", true
+    },
+    {
+        "C4 Raw Multi-line Strings (runtime)",
+        "tests/multiline_string_runtime.c4", true
+    },
+    {
+        "C4 Implicitly Returned Named Return Variables (runtime)",
+        "tests/named_return_runtime.c4", true
     },
 };
 

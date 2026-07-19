@@ -1346,6 +1346,9 @@ bool Parser::isStartOfFunctionDefinition(const ParsingDeclarator &Declarator) {
   if (Tok.is(tok::l_brace))   // int X() {}
     return true;
 
+  if (getLangOpts().C4() && Tok.is(tok::identifier) && NextToken().is(tok::l_brace))
+    return true;
+
   // Handle K&R C argument lists: int X(f) int f; {}
   if (!getLangOpts().CPlusPlus &&
       Declarator.getFunctionTypeInfo().isKNRPrototype())
@@ -1502,6 +1505,11 @@ Decl *Parser::ParseFunctionDefinition(ParsingDeclarator &D,
   llvm::TimeTraceScope TimeScope("ParseFunctionDefinition", [&]() {
     return Actions.GetNameForDeclarator(D).getName().getAsString();
   });
+
+  if (getLangOpts().C4() && Tok.is(tok::identifier) && NextToken().is(tok::l_brace)) {
+    D.setC4NamedReturn(Tok.getIdentifierInfo(), Tok.getLocation());
+    ConsumeToken();
+  }
 
   if (getLangOpts().C4() && D.isFunctionDeclarator() && Tok.is(tok::l_brace)) {
     TentativeParsingAction TPA(*this);

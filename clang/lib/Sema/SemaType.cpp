@@ -4888,10 +4888,21 @@ static TypeSourceInfo *GetFullTypeForDeclarator(TypeProcessingState &state,
       break;
     }
     case DeclaratorChunk::Function: {
-      // If the function declarator has a prototype (i.e. it is not () and
-      // does not have a K&R-style identifier list), then the arguments are part
-      // of the type, otherwise the argument list is ().
       DeclaratorChunk::FunctionTypeInfo &FTI = DeclType.Fun;
+      if (S.getLangOpts().C4() && D.getC4NamedReturnII()) {
+        const IdentifierInfo *NamedReturnII = D.getC4NamedReturnII();
+        if (T->isVoidType()) {
+          for (unsigned j = 0; j < FTI.NumParams; ++j) {
+            if (FTI.Params[j].Ident == NamedReturnII) {
+              if (ParmVarDecl *PVD = dyn_cast_if_present<ParmVarDecl>(FTI.Params[j].Param)) {
+                T = PVD->getType();
+                break;
+              }
+            }
+          }
+        }
+      }
+      // If the function declarator has a prototype (i.e. it is not () and
       IsQualifiedFunction =
           FTI.hasMethodTypeQualifiers() || FTI.hasRefQualifier();
 

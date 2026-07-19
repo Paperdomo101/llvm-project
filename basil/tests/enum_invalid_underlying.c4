@@ -1,0 +1,5 @@
+typedef struct { unsigned char r, g, b, a; } Color;
+
+Palette : Color {
+    red = {255, 0, 0, 255},
+}

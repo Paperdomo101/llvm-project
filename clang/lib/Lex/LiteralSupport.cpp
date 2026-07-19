@@ -2123,6 +2123,7 @@ void StringLiteralParser::init(ArrayRef<Token> StringToks){
   ResultPtr = &ResultBuf[0];   // Next byte to fill in.
 
   Pascal = false;
+  bool IsC4MultiLineString = false;
 
   SourceLocation UDSuffixTokLoc;
 
@@ -2140,6 +2141,15 @@ void StringLiteralParser::init(ArrayRef<Token> StringToks){
 
     const char *ThisTokBegin = ThisTokBuf;
     const char *ThisTokEnd = ThisTokBuf+ThisTokLen;
+
+    if (Features.C4() && ThisTokLen >= 4 &&
+        ThisTokBegin[0] == '/' && ThisTokBegin[1] == '"' &&
+        ThisTokEnd[-2] == '"' && ThisTokEnd[-1] == '/') {
+      ThisTokBuf++;
+      ThisTokBegin++;
+      ThisTokEnd--;
+      IsC4MultiLineString = true;
+    }
 
     // Remove an optional ud-suffix.
     if (ThisTokEnd[-1] != '"') {
@@ -2353,6 +2363,160 @@ void StringLiteralParser::init(ArrayRef<Token> StringToks){
         << (Features.CPlusPlus ? 2 : Features.C99 ? 1 : 0)
         << SourceRange(StringToks.front().getLocation(),
                        StringToks.back().getLocation());
+  }
+  
+  if (IsC4MultiLineString && !hadError) {
+    size_t Length = ResultPtr - ResultBuf.data();
+    std::string RawStr(ResultBuf.data(), Length);
+    
+    std::vector<std::string> Lines;
+    size_t Start = 0;
+    while (Start < RawStr.length()) {
+      size_t Pos = RawStr.find('\n', Start);
+      if (Pos == std::string::npos) {
+        Lines.push_back(RawStr.substr(Start));
+        break;
+      }
+      std::string Line = RawStr.substr(Start, Pos - Start);
+      if (!Line.empty() && Line.back() == '\r') {
+        Line.pop_back();
+      }
+      Lines.push_back(Line);
+      Start = Pos + 1;
+    }
+    if (RawStr.empty()) {
+      Lines.push_back("");
+    } else if (RawStr.back() == '\n') {
+      Lines.push_back("");
+    }
+
+    int FirstNonEmptyLineIdx = -1;
+    for (size_t i = 0; i < Lines.size(); ++i) {
+      bool IsEmpty = true;
+      for (char C : Lines[i]) {
+        if (C != ' ' && C != '\t') {
+          IsEmpty = false;
+          break;
+        }
+      }
+      if (!IsEmpty) {
+        FirstNonEmptyLineIdx = i;
+        break;
+      }
+    }
+
+    if (FirstNonEmptyLineIdx == -1) {
+      ResultPtr = const_cast<char*>(ResultBuf.data());
+      ResultBuf.clear();
+    } else {
+      std::string IndentPrefix = "";
+      for (char C : Lines[FirstNonEmptyLineIdx]) {
+        if (C == ' ' || C == '\t') {
+          IndentPrefix += C;
+        } else {
+          break;
+        }
+      }
+
+      // Determine BaseIndent from the last line if it is empty/whitespace-only
+      size_t BaseIndent = 0;
+      bool LastIsEmpty = false;
+      if (!Lines.empty()) {
+        LastIsEmpty = true;
+        for (char C : Lines.back()) {
+          if (C != ' ' && C != '\t') {
+            LastIsEmpty = false;
+            break;
+          }
+        }
+        if (LastIsEmpty) {
+          BaseIndent = Lines.back().length();
+        }
+      }
+
+      // Check if all non-empty lines have at least BaseIndent indentation
+      bool AllAtLeastBase = true;
+      size_t CheckLimit = Lines.empty() ? 0 : Lines.size();
+      if (!Lines.empty() && LastIsEmpty) {
+        CheckLimit = Lines.size() - 1;
+      }
+
+      for (size_t i = 0; i < CheckLimit; ++i) {
+        bool IsEmpty = true;
+        for (char C : Lines[i]) {
+          if (C != ' ' && C != '\t') {
+            IsEmpty = false;
+            break;
+          }
+        }
+        if (!IsEmpty) {
+          size_t LineIndent = 0;
+          for (char C : Lines[i]) {
+            if (C == ' ' || C == '\t') {
+              LineIndent++;
+            } else {
+              break;
+            }
+          }
+          if (LineIndent < BaseIndent) {
+            AllAtLeastBase = false;
+            break;
+          }
+        }
+      }
+
+      if (!AllAtLeastBase) {
+        IndentPrefix = "";
+      }
+
+      std::string ProcessedStr = "";
+      bool IsFirstLineOfOutput = true;
+
+      for (size_t i = 0; i < Lines.size(); ++i) {
+        if (i == 0) {
+          bool IsEmpty = true;
+          for (char C : Lines[0]) {
+            if (C != ' ' && C != '\t') {
+              IsEmpty = false;
+              break;
+            }
+          }
+          if (IsEmpty) {
+            continue;
+          }
+        }
+
+        std::string Line = Lines[i];
+        if (i == Lines.size() - 1 && LastIsEmpty) {
+          if (Line.length() >= BaseIndent) {
+            Line = Line.substr(BaseIndent);
+          } else {
+            Line = "";
+          }
+        } else {
+          if (IndentPrefix.length() > 0 && Line.compare(0, IndentPrefix.length(), IndentPrefix) == 0) {
+            Line = Line.substr(IndentPrefix.length());
+          } else if (IndentPrefix.length() > 0) {
+            size_t StripCount = 0;
+            while (StripCount < IndentPrefix.length() && StripCount < Line.length() &&
+                   (Line[StripCount] == ' ' || Line[StripCount] == '\t')) {
+              StripCount++;
+            }
+            Line = Line.substr(StripCount);
+          }
+        }
+
+        if (!IsFirstLineOfOutput) {
+          ProcessedStr += "\n";
+        }
+        ProcessedStr += Line;
+        IsFirstLineOfOutput = false;
+      }
+
+      ResultBuf.clear();
+      ResultBuf.append(ProcessedStr.begin(), ProcessedStr.end());
+      ResultPtr = const_cast<char*>(ResultBuf.data()) + ProcessedStr.length();
+    }
   }
 }
 

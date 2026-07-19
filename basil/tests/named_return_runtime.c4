@@ -1,0 +1,60 @@
+// tests/named_return_runtime.c4
+// Runtime test for C4 implicitly returned named return variables
+#include <stdio.h>
+#include <stdlib.h>
+
+static void fail(const char *msg) {
+    printf("[FAIL] %s\n", msg);
+    exit(1);
+}
+
+#define CHECK(cond, msg) \
+    do { if (!(cond)) fail(msg); } while(0)
+
+// Helper functions for named return variable testing
+
+add_and_mul(int a, int b, int c) int result {
+    result = a + b * c;
+    // implicit return result;
+}
+
+add_and_mul_bare(int a, int b, int c) int result {
+    result = a + b * c;
+    return; // bare return; should implicitly return result
+}
+
+double_param(int self) self {
+    self = self * 2;
+    // implicit return self;
+}
+
+double_param_bare(int self) self {
+    self = self * 2;
+    return; // bare return; should implicitly return self
+}
+
+main() int {
+    CHECK(add_and_mul(2, 3, 4) == 14, "3.1: implicit return of result");
+    CHECK(add_and_mul_bare(2, 3, 4) == 14, "3.2: bare return of result");
+    CHECK(double_param(10) == 20, "3.3: implicit return of self parameter");
+    CHECK(double_param_bare(10) == 20, "3.4: bare return of self parameter");
+
+    // Block/lambda literals with named return variables
+    lambda_explicit := ^(int a, int b) int result {
+        result = a + b;
+    };
+    lambda_bare := ^(int a, int b) int result {
+        result = a + b;
+        return;
+    };
+    lambda_implicit := ^(int self) self {
+        self = self * 3;
+    };
+
+    CHECK(lambda_explicit(10, 20) == 30, "3.5: lambda explicit named return");
+    CHECK(lambda_bare(10, 20) == 30, "3.6: lambda bare named return");
+    CHECK(lambda_implicit(10) == 30, "3.7: lambda implicit parameter named return");
+
+    printf("[PASS] Feature 3: implicitly returned named return variables\n");
+    return 0;
+}

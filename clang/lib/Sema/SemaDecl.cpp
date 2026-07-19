@@ -16755,6 +16755,28 @@ Sema::ActOnStartOfFunctionDef(Scope *FnBodyScope, Declarator &D,
     OpenMP().ActOnFinishedFunctionDefinitionInOpenMPDeclareVariantScope(Dcl,
                                                                         Bases);
 
+  if (getLangOpts().C4() && D.getC4NamedReturnII()) {
+    getCurFunction()->C4NamedReturnII = D.getC4NamedReturnII();
+    if (FunctionDecl *FD = dyn_cast_if_present<FunctionDecl>(Dcl)) {
+      const IdentifierInfo *NamedReturnII = D.getC4NamedReturnII();
+      bool IsParam = false;
+      for (ParmVarDecl *P : FD->parameters()) {
+        if (P->getIdentifier() == NamedReturnII) {
+          IsParam = true;
+          break;
+        }
+      }
+      if (!IsParam) {
+        VarDecl *NewVD = VarDecl::Create(Context, FD, D.getC4NamedReturnLoc(), D.getC4NamedReturnLoc(),
+                                        const_cast<IdentifierInfo*>(NamedReturnII),
+                                        FD->getReturnType(),
+                                        Context.getTrivialTypeSourceInfo(FD->getReturnType(), D.getC4NamedReturnLoc()),
+                                        SC_None);
+        PushOnScopeChains(NewVD, FnBodyScope);
+      }
+    }
+  }
+
   return Dcl;
 }
 
@@ -17361,6 +17383,46 @@ Decl *Sema::ActOnFinishFunctionBody(Decl *dcl, Stmt *Body, bool IsInstantiation,
                                     bool RetainFunctionScopeInfo) {
   FunctionScopeInfo *FSI = getCurFunction();
   FunctionDecl *FD = dcl ? dcl->getAsFunction() : nullptr;
+
+  if (getLangOpts().C4() && FD && FSI && FSI->C4NamedReturnII && Body) {
+    const IdentifierInfo *NamedReturnII = FSI->C4NamedReturnII;
+    ValueDecl *NamedReturnVD = nullptr;
+    for (ParmVarDecl *P : FD->parameters()) {
+      if (P->getIdentifier() == NamedReturnII) {
+        NamedReturnVD = P;
+        break;
+      }
+    }
+    if (!NamedReturnVD) {
+      for (Decl *D : FD->decls()) {
+        if (VarDecl *VD = dyn_cast<VarDecl>(D)) {
+          if (VD->getIdentifier() == NamedReturnII) {
+            NamedReturnVD = VD;
+            break;
+          }
+        }
+      }
+    }
+    if (NamedReturnVD) {
+      SourceLocation EndLoc = Body->getEndLoc();
+      ExprResult Ref = BuildDeclRefExpr(NamedReturnVD, NamedReturnVD->getType(), VK_LValue, EndLoc);
+      if (!Ref.isInvalid()) {
+        StmtResult RetStmt = BuildReturnStmt(EndLoc, Ref.get());
+        if (!RetStmt.isInvalid()) {
+          if (CompoundStmt *CS = dyn_cast<CompoundStmt>(Body)) {
+            SmallVector<Stmt*, 16> Stmts;
+            if (isa<VarDecl>(NamedReturnVD) && !isa<ParmVarDecl>(NamedReturnVD)) {
+              DeclStmt *NewDS = new (Context) DeclStmt(DeclGroupRef(NamedReturnVD), NamedReturnVD->getLocation(), NamedReturnVD->getLocation());
+              Stmts.push_back(NewDS);
+            }
+            Stmts.insert(Stmts.end(), CS->body_begin(), CS->body_end());
+            Stmts.push_back(RetStmt.get());
+            Body = CompoundStmt::Create(Context, Stmts, FPOptionsOverride(), CS->getLBracLoc(), CS->getRBracLoc());
+          }
+        }
+      }
+    }
+  }
 
   if (FSI->UsesFPIntrin && FD && !FD->hasAttr<StrictFPAttr>())
     FD->addAttr(StrictFPAttr::CreateImplicit(Context));

@@ -2554,22 +2554,33 @@ StmtResult Sema::ActOnC4RangeForStmt(SourceLocation ForLoc, SourceLocation LPare
 
   if (ElementVar->getType()->isReferenceType()) {
     ElementVar->setInit(ElementExpr.get());
-  } else if (ElementVar->getType()->isPointerType()) {
-    ExprResult ElementAddr = BuildUnaryOp(getCurScope(), ForLoc, UO_AddrOf, ElementExpr.get());
-    if (ElementAddr.isInvalid()) return StmtError();
-    ElementVar->setInit(ElementAddr.get());
+  } else if (const PointerType *PT = ElementVar->getType()->getAs<PointerType>()) {
+    QualType ElementTy = getElementTypeFromC4Array(ArrayTy);
+    if (!ElementTy.isNull() && Context.hasSameUnqualifiedType(PT->getPointeeType(), ElementTy)) {
+      ExprResult ElementAddr = BuildUnaryOp(getCurScope(), ForLoc, UO_AddrOf, ElementExpr.get());
+      if (ElementAddr.isInvalid()) return StmtError();
+      ElementVar->setInit(ElementAddr.get());
+    } else {
+      ElementVar->setInit(ElementExpr.get());
+    }
   } else {
     ElementVar->setInit(ElementExpr.get());
   }
 
-  if (auto *CS = dyn_cast_or_null<CompoundStmt>(Body)) {
+  {
     DeclStmt *ElementDS = new (Context) DeclStmt(DeclGroupRef(ElementVar), ForLoc, ForLoc);
     SmallVector<Stmt*, 8> BodyStmts;
     BodyStmts.push_back(ElementDS);
-    for (auto *S : CS->body()) {
-      BodyStmts.push_back(S);
+    if (Body) {
+      if (auto *CS = dyn_cast<CompoundStmt>(Body)) {
+        for (auto *S : CS->body()) {
+          BodyStmts.push_back(S);
+        }
+      } else {
+        BodyStmts.push_back(Body);
+      }
     }
-    Body = CompoundStmt::Create(Context, BodyStmts, FPOptionsOverride(), CS->getLBracLoc(), CS->getRBracLoc());
+    Body = CompoundStmt::Create(Context, BodyStmts, FPOptionsOverride(), ForLoc, ForLoc);
   }
 
   ConditionResult CondResult = ActOnCondition(getCurScope(), ForLoc, Cond.get(), Sema::ConditionKind::Boolean, /*MissingOK=*/false);
@@ -4199,6 +4210,21 @@ bool Sema::DeduceFunctionTypeFromReturnExpr(FunctionDecl *FD,
 StmtResult
 Sema::ActOnReturnStmt(SourceLocation ReturnLoc, Expr *RetValExp,
                       Scope *CurScope) {
+
+  if (getLangOpts().C4() && !RetValExp) {
+    if (const auto *FSI = getCurFunction()) {
+      if (FSI->C4NamedReturnII) {
+        LookupResult Found(*this, const_cast<IdentifierInfo*>(FSI->C4NamedReturnII), ReturnLoc, LookupOrdinaryName);
+        LookupName(Found, CurScope);
+        if (ValueDecl *VD = Found.getAsSingle<ValueDecl>()) {
+          ExprResult Ref = BuildDeclRefExpr(VD, VD->getType(), VK_LValue, ReturnLoc);
+          if (!Ref.isInvalid()) {
+            RetValExp = Ref.get();
+          }
+        }
+      }
+    }
+  }
 
     // C4 INFERRED RETURN TYPE ON COMPOUND LITERAL
     if (RetValExp && isa<InitListExpr>(RetValExp)) {

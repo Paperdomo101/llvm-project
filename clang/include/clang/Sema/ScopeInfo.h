@@ -398,6 +398,8 @@ public:
 
   virtual ~FunctionScopeInfo();
 
+  const IdentifierInfo *C4NamedReturnII = nullptr;
+
   /// Determine whether an unrecoverable error has occurred within this
   /// function. Note that this may return false even if the function body is
   /// invalid, because the errors may be suppressed if they're caused by prior

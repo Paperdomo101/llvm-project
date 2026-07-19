@@ -46,4 +46,17 @@ main () int {
     for 0..#.__func__ {
         putchar('-');
     }
+
+    [] arr := { 1, 2, 3 };
+    int sum = 0;
+    for (&val..arr) sum += val;
+    if (sum != 6) return 1;
+
+    [2]^char strings = { "hello", "world" };
+    for s..strings {
+        if (@.s == 'h') {
+            sum += 10;
+        }
+    }
+    if (sum != 16) return 1;
 }

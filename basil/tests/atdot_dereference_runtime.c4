@@ -1,0 +1,24 @@
+// tests/atdot_dereference_runtime.c4
+// Runtime test for @. pointer dereferencing
+#include <stdio.h>
+#include <stdlib.h>
+
+static void fail(const char *msg) {
+    printf("[FAIL] %s\n", msg);
+    exit(1);
+}
+
+#define CHECK(cond, msg) \
+    do { if (!(cond)) fail(msg); } while(0)
+
+main() int {
+    int x = 42;
+    ^int ptr = ^x;
+    CHECK(@.ptr == 42, "1.1: @.ptr dereference read");
+    
+    @.ptr = 99;
+    CHECK(x == 99, "1.2: @.ptr dereference write");
+
+    printf("[PASS] Feature 1: @. pointer dereferencing\n");
+    return 0;
+}

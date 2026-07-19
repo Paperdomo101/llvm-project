@@ -35,6 +35,12 @@ struct Node {
     ^Node next;
 };
 
+// Receives &^Node (reference to a ^Node pointer) and inserts at head.
+void insert_at_head(&^Node head, ^Node node_to_insert) {
+    node_to_insert.next = head;
+    head = node_to_insert;
+}
+
 // ---------------------------------------------------------------------------
 // Helper functions that accept pointer-typed parameters
 // ---------------------------------------------------------------------------
@@ -332,6 +338,23 @@ main () int {
         CHECK(print(^n), 42, "S14: lambda called with ^Node param");
 
         printf("[PASS] Scenario 14: Lambda parameters with C4 pointer user-defined types\n");
+    }
+
+    // =========================================================================
+    // SCENARIO 15: Passing pointer by reference (&^Node) without explicit &
+    // =========================================================================
+    {
+        ^Node head = NULL;
+        Node n1 = { 10, NULL };
+        Node n2 = { 20, NULL };
+        
+        insert_at_head(head, ^n1);
+        insert_at_head(head, ^n2);
+        
+        CHECK(head.value, 20, "S15: head is n2");
+        CHECK(head.next.value, 10, "S15: head.next is n1");
+
+        printf("[PASS] Scenario 15: Passing pointer by reference (&^Node)\n");
     }
 
     printf("\n[SUCCESS] All pointer-syntax and sized-array tests passed!\n");

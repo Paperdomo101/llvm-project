@@ -1,0 +1,63 @@
+// tests/multiline_string_runtime.c4
+// Runtime test for C4 raw multi-line strings
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+static void fail(const char *msg) {
+    printf("[FAIL] %s\n", msg);
+    exit(1);
+}
+
+#define CHECK(cond, msg) \
+    do { if (!(cond)) fail(msg); } while(0)
+
+main() int {
+    const char *s = /"
+            indented
+                twice_indented
+        not_indented
+    "/;
+
+    // Verify the exact string contents and formatting
+    const char *expected = "indented\n    twice_indented\nnot_indented\n";
+    CHECK(strcmp(s, expected) == 0, "2.1: multi-line string content matches spelling");
+
+    // Case 1: First line after delimiter is blank, creating a newline above the first text line.
+    const char *txt1 = /" 
+
+    This is the message...
+    And we're NOT gonna change it!
+
+     These... appear to be energy
+        resources
+    "/;
+    const char *expected1 = "\nThis is the message...\nAnd we're NOT gonna change it!\n\n These... appear to be energy\n    resources\n";
+    CHECK(strcmp(txt1, expected1) == 0, "2.2: Case 1 matching expected formatting");
+
+    // Case 2: First line after delimiter is text, creating no newline above the first text line.
+    const char *txt2 = /" 
+    This is the message...
+    And we're NOT gonna change it!
+
+     These... appear to be energy
+        resources
+    "/;
+    const char *expected2 = "This is the message...\nAnd we're NOT gonna change it!\n\n These... appear to be energy\n    resources\n";
+    CHECK(strcmp(txt2, expected2) == 0, "2.3: Case 2 matching expected formatting");
+
+    // Case 3: A line has less indentation than the first line's indentation.
+    // Indentation stripping must fallback to 0 spaces stripped.
+    const char *txt3 = /"
+    This is the message...
+        And we're NOT gonna change it!
+
+ These... appear to be energy
+    resources
+    "/;
+    const char *expected3 = "    This is the message...\n        And we're NOT gonna change it!\n\n These... appear to be energy\n    resources\n";
+    CHECK(strcmp(txt3, expected3) == 0, "2.4: Case 3 matching expected formatting (no stripping due to under-indented line)");
+
+    printf("[PASS] Feature 2: multi-line strings\n");
+    return 0;
+}

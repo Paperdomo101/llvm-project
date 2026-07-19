@@ -1875,6 +1875,26 @@ Parser::ParseCastExpression(CastParseKind ParseKind, bool isAddressOfOperand,
     return Res;
   }
 
+  case tok::atdot: {
+    if (!getLangOpts().C4()) {
+      NotCastExpr = true;
+      return ExprError();
+    }
+    if (NotPrimaryExpression)
+      *NotPrimaryExpression = true;
+    SourceLocation SavedLoc = ConsumeToken();
+    PreferredType.enterUnary(Actions, Tok.getLocation(), tok::star, SavedLoc);
+    Res = ParseCastExpression(CastParseKind::AnyCastExpr);
+    if (!Res.isInvalid()) {
+      Expr *Arg = Res.get();
+      Res = Actions.ActOnUnaryOp(getCurScope(), SavedLoc, tok::star, Arg,
+                                 isAddressOfOperand);
+      if (Res.isInvalid())
+        Res = Actions.CreateRecoveryExpr(SavedLoc, Arg->getEndLoc(), Arg);
+    }
+    return Res;
+  }
+
   case tok::star:          // unary-expression: '*' cast-expression
   case tok::plus:          // unary-expression: '+' cast-expression
   case tok::minus:         // unary-expression: '-' cast-expression
@@ -4254,12 +4274,36 @@ ExprResult Parser::ParseBlockLiteralExpression() {
 
     // ---> C4: TRAILING RETURN TYPE DETECTOR BLOCK <---
     // Check if a type declaration is immediately present using modern Clang contexts
-    if (isDeclarationSpecifier(ImplicitTypenameContext::No)) {
+    bool IsC4NamedReturn = false;
+    if (getLangOpts().C4() && Tok.is(tok::identifier) && NextToken().is(tok::l_brace)) {
+      IsC4NamedReturn = true;
+      if (auto *II = Tok.getIdentifierInfo()) {
+        if (Actions.getTypeName(*II, Tok.getLocation(), getCurScope())) {
+          IsC4NamedReturn = false;
+        }
+      }
+    }
+
+    if (getLangOpts().C4() && !IsC4NamedReturn &&
+        (isDeclarationSpecifier(ImplicitTypenameContext::No) ||
+         Tok.is(tok::caret))) {
       DeclSpec TrailingDS(AttrFactory);
+      llvm::SmallVector<SourceLocation, 4> CaretLocs;
+      while (Tok.is(tok::caret)) {
+        CaretLocs.push_back(ConsumeToken());
+      }
+
       ParseSpecifierQualifierList(TrailingDS, AS_none, DeclSpecContext::DSC_type_specifier);
 
       Declarator TrailingDeclarator(TrailingDS, ParsedAttributesView::none(),
                                     DeclaratorContext::TypeName);
+      for (SourceLocation CaretLoc : CaretLocs) {
+        TrailingDeclarator.AddTypeInfo(DeclaratorChunk::getPointer(
+                          /*TypeQuals=*/0, CaretLoc,
+                          SourceLocation(), SourceLocation(), SourceLocation(),
+                          SourceLocation(), SourceLocation()),
+                          CaretLoc);
+      }
       ParseDeclarator(TrailingDeclarator);
 
       // Call ActOnTypeName with only the single required Declarator argument
@@ -4281,6 +4325,11 @@ ExprResult Parser::ParseBlockLiteralExpression() {
       }
     }
     // ---> MODIFICATION END <---
+
+    if (getLangOpts().C4() && Tok.is(tok::identifier) && NextToken().is(tok::l_brace)) {
+      ParamInfo.setC4NamedReturn(Tok.getIdentifierInfo(), Tok.getLocation());
+      ConsumeToken();
+    }
 
     // Inform sema that we are starting a block with our final signature
     Actions.ActOnBlockArguments(CaretLoc, ParamInfo, getCurScope());
@@ -4314,12 +4363,36 @@ ExprResult Parser::ParseBlockLiteralExpression() {
 
     // ---> C4: TRAILING RETURN TYPE DETECTOR BLOCK <---
     // Check if a type declaration is immediately present using modern Clang contexts
-    if (isDeclarationSpecifier(ImplicitTypenameContext::No)) {
+    bool IsC4NamedReturn = false;
+    if (getLangOpts().C4() && Tok.is(tok::identifier) && NextToken().is(tok::l_brace)) {
+      IsC4NamedReturn = true;
+      if (auto *II = Tok.getIdentifierInfo()) {
+        if (Actions.getTypeName(*II, Tok.getLocation(), getCurScope())) {
+          IsC4NamedReturn = false;
+        }
+      }
+    }
+
+    if (getLangOpts().C4() && !IsC4NamedReturn &&
+        (isDeclarationSpecifier(ImplicitTypenameContext::No) ||
+         Tok.is(tok::caret))) {
       DeclSpec TrailingDS(AttrFactory);
+      llvm::SmallVector<SourceLocation, 4> CaretLocs;
+      while (Tok.is(tok::caret)) {
+        CaretLocs.push_back(ConsumeToken());
+      }
+
       ParseSpecifierQualifierList(TrailingDS);
 
       Declarator TrailingDeclarator(TrailingDS, ParsedAttributesView::none(),
                                     DeclaratorContext::TypeName);
+      for (SourceLocation CaretLoc : CaretLocs) {
+        TrailingDeclarator.AddTypeInfo(DeclaratorChunk::getPointer(
+                          /*TypeQuals=*/0, CaretLoc,
+                          SourceLocation(), SourceLocation(), SourceLocation(),
+                          SourceLocation(), SourceLocation()),
+                          CaretLoc);
+      }
       ParseDeclarator(TrailingDeclarator);
 
       // Call ActOnTypeName with only the single required Declarator argument
@@ -4341,6 +4414,11 @@ ExprResult Parser::ParseBlockLiteralExpression() {
       }
     }
     // ---> MODIFICATION END <---
+
+    if (getLangOpts().C4() && Tok.is(tok::identifier) && NextToken().is(tok::l_brace)) {
+      ParamInfo.setC4NamedReturn(Tok.getIdentifierInfo(), Tok.getLocation());
+      ConsumeToken();
+    }
 
     // Inform sema that we are starting a block with our final signature
     Actions.ActOnBlockArguments(CaretLoc, ParamInfo, getCurScope());

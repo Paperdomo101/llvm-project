@@ -51,31 +51,36 @@
     ```
 
 
+    ## ||==  ||!=  &&==
+
+    ```
+    if c..{' ', '\t', '\n'} && !c..{'a', 'b', 'c'} {
+
+    }
+    if c == ' ' || c == '\t' || c == '\n' {
+
+    }
+    ```
+
+
     ## multiple returns
+    ```
+    bob (int a, b, ^int c) int, bool {
+        if !c {
+        		return 0, false;
+        }
+        return a + b * *c, true;
+    }
+
+    a, ok := bob()
+    ```
 
     ## @. pointer dereferencing
-
-
-    ## multi-line strings
-    /"
-            indented
-                twice_indented
-        not_indented
-    "/
-
-    ## ||== / ||!=
     ```
-    if c == ' ' || == '\t' || == '\n' {
+    ptr := get_ptr_int()
+    @.ptr = 10; // *ptr = 10; <- equivalent
+		```
 
-    }
-    ```
-
-    ## implicit return variables
-    ```
-    bob (int a, b, c) int result {
-        result = a + b * c;
-    }
-    ```
 
     ## unions
     ```
@@ -168,6 +173,27 @@
 
 # ===|===|=== DONE ===|===|===
 # ____________________________
+
+
+
+    ## multi-line strings
+    /"
+            indented
+                twice_indented
+        not_indented
+    "/
+
+    ## implicitly returned named return variables
+    ```
+    bob (int a, b, c) int result {
+        result = a + b * c;
+        // return result; <- implicit at end of all control paths
+    }
+
+    pipeline (int self) self { // type can be omitted if the variable is also a parameter
+    		self++;
+    }
+    ```
 
 
 		## Loop ranges

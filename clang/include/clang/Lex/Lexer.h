@@ -764,6 +764,7 @@ private:
   bool LexNumericConstant    (Token &Result, const char *CurPtr);
   bool LexStringLiteral      (Token &Result, const char *CurPtr,
                               tok::TokenKind Kind);
+  bool LexC4MultiLineString  (Token &Result, const char *CurPtr);
   bool LexRawStringLiteral   (Token &Result, const char *CurPtr,
                               tok::TokenKind Kind);
   bool LexAngledStringLiteral(Token &Result, const char *CurPtr);

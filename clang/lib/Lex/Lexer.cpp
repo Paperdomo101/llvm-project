@@ -2266,6 +2266,33 @@ const char *Lexer::LexUDSuffix(Token &Result, const char *CurPtr,
   return CurPtr;
 }
 
+bool Lexer::LexC4MultiLineString(Token &Result, const char *CurPtr) {
+  // CurPtr points to the character after /"
+  while (true) {
+    unsigned SizeTmp;
+    char C = getCharAndSize(CurPtr, SizeTmp);
+    if (C == 0 && CurPtr == BufferEnd) {
+      if (!isLexingRawMode())
+        Diag(BufferPtr, diag::ext_unterminated_char_or_string) << 1;
+      FormTokenWithChars(Result, CurPtr, tok::unknown);
+      return true;
+    }
+    
+    // Check for ending terminator: "/
+    if (C == '"') {
+      unsigned SizeTmp2;
+      char NextChar = getCharAndSize(CurPtr + SizeTmp, SizeTmp2);
+      if (NextChar == '/') {
+        const char *EndPtr = CurPtr + SizeTmp + SizeTmp2;
+        FormTokenWithChars(Result, EndPtr, tok::string_literal);
+        return true;
+      }
+    }
+    
+    CurPtr = ConsumeChar(CurPtr, SizeTmp, Result);
+  }
+}
+
 /// LexStringLiteral - Lex the remainder of a string literal, after having lexed
 /// either " or L" or u8" or u" or U".
 bool Lexer::LexStringLiteral(Token &Result, const char *CurPtr,
@@ -4346,6 +4373,10 @@ LexStart:
   case '/':
     // 6.4.9: Comments
     Char = getCharAndSize(CurPtr, SizeTmp);
+    if (LangOpts.C4() && Char == '"') {
+      if (LexC4MultiLineString(Result, ConsumeChar(CurPtr, SizeTmp, Result)))
+        return true;
+    }
     if (Char == '/') {         // Line comment.
       // Even if Line comments are disabled (e.g. in C89 mode), we generally
       // want to lex this as a comment.  There is one problem with this though,
@@ -4646,6 +4677,13 @@ LexStart:
   case '@':
     // Objective C support (and C4 which also uses @).
     if (CurPtr[-1] == '@' && (LangOpts.ObjC || LangOpts.C4Mode)) {
+      unsigned SizeTmp;
+      char NextChar = getCharAndSize(CurPtr, SizeTmp);
+      if (LangOpts.C4() && NextChar == '.') {
+        CurPtr = ConsumeChar(CurPtr, SizeTmp, Result);
+        FormTokenWithChars(Result, CurPtr, tok::atdot);
+        return true;
+      }
       FormTokenWithChars(Result, CurPtr, tok::at);
       if (PP && Result.isAtPhysicalStartOfLine() && !LexingRawMode &&
           !Is_PragmaLexer) {

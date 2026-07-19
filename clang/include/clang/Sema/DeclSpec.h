@@ -2141,6 +2141,9 @@ private:
 
   Expr *PackIndexingExpr;
 
+  const IdentifierInfo *C4NamedReturnII = nullptr;
+  SourceLocation C4NamedReturnLoc;
+
   friend struct DeclaratorChunk;
 
 public:
@@ -2171,7 +2174,9 @@ public:
         HasInitializer(false), Attrs(DS.getAttributePool().getFactory()),
         DeclarationAttrs(DeclarationAttrs), AsmLabel(nullptr),
         TrailingRequiresClause(nullptr),
-        InventedTemplateParameterList(nullptr) {
+        InventedTemplateParameterList(nullptr),
+        C4NamedReturnII(nullptr),
+        C4NamedReturnLoc() {
     assert(llvm::all_of(DeclarationAttrs,
                         [](const ParsedAttr &AL) {
                           return (AL.isStandardAttributeSyntax() ||
@@ -2870,6 +2875,13 @@ public:
   bool hasPackIndexing() const { return PackIndexingExpr != nullptr; }
   Expr *getPackIndexingExpr() const { return PackIndexingExpr; }
   void setPackIndexingExpr(Expr *PI) { PackIndexingExpr = PI; }
+
+  void setC4NamedReturn(const IdentifierInfo *II, SourceLocation Loc) {
+    C4NamedReturnII = II;
+    C4NamedReturnLoc = Loc;
+  }
+  const IdentifierInfo *getC4NamedReturnII() const { return C4NamedReturnII; }
+  SourceLocation getC4NamedReturnLoc() const { return C4NamedReturnLoc; }
 
   void setFunctionDefinitionKind(FunctionDefinitionKind Val) {
     FunctionDefinition = static_cast<unsigned>(Val);

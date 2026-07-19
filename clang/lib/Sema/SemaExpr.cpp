@@ -6708,7 +6708,8 @@ bool Sema::GatherArgumentsForCall(SourceLocation CallLoc, FunctionDecl *FDecl,
         }
 
         // 2. If it is a reference parameter, convert the incoming integer to an address pointer!
-        if (IsTargetC4Reference && Arg && Arg->isGLValue() && !Arg->getType()->isPointerType()) {
+        if (IsTargetC4Reference && Arg && Arg->isGLValue() &&
+            Context.hasSameUnqualifiedType(Arg->getType(), ParamCheckTy->getPointeeType())) {
           // Use SourceLocation() so CreateBuiltinUnaryOp's reference-guard (which
           // checks OpLoc.isValid()) recognises this & as compiler-synthesised and
           // does not block forwarding a &T param to another &T param.
@@ -6724,7 +6725,8 @@ bool Sema::GatherArgumentsForCall(SourceLocation CallLoc, FunctionDecl *FDecl,
       if (!Param && getLangOpts().C4() && ProtoArgType->isPointerType()) {
         if (ProtoArgType.isLocalConstQualified() || ProtoArgType.isConstQualified() ||
             ProtoArgType.getQualifiers().hasConst()) {
-          if (Arg && Arg->isGLValue() && !Arg->getType()->isPointerType()) {
+          if (Arg && Arg->isGLValue() &&
+              Context.hasSameUnqualifiedType(Arg->getType(), ProtoArgType->getPointeeType())) {
             ExprResult InjectedAddress = CreateBuiltinUnaryOp(
                 SourceLocation(), UO_AddrOf, Arg);
             if (!InjectedAddress.isInvalid())
@@ -16702,7 +16704,14 @@ OpaquePtr<DeclGroupRef> Sema::ActOnC4EnumDeclaration(
   TypeSourceInfo *UnderlyTSI = nullptr;
   if (UnderlyingType) {
     UnderlyTy = GetTypeFromParser(UnderlyingType, &UnderlyTSI);
-    if (UnderlyTy.isNull()) UnderlyTy = Context.UnsignedIntTy;
+    if (UnderlyTy.isNull()) {
+      UnderlyTy = Context.UnsignedIntTy;
+    } else {
+      if (CheckEnumUnderlyingType(UnderlyTSI)) {
+        UnderlyTy = Context.UnsignedIntTy;
+        UnderlyTSI = Context.getTrivialTypeSourceInfo(UnderlyTy, NameLoc);
+      }
+    }
   }
   if (!UnderlyTSI)
     UnderlyTSI = Context.getTrivialTypeSourceInfo(UnderlyTy, NameLoc);
@@ -18738,6 +18747,36 @@ void Sema::ActOnBlockArguments(SourceLocation CaretLoc, Declarator &ParamInfo,
     if (AI->isInvalidDecl())
       CurBlock->TheDecl->setInvalidDecl();
   }
+
+  if (getLangOpts().C4() && ParamInfo.getC4NamedReturnII()) {
+    CurBlock->C4NamedReturnII = ParamInfo.getC4NamedReturnII();
+    const IdentifierInfo *NamedReturnII = ParamInfo.getC4NamedReturnII();
+    if (CurBlock->ReturnType.isNull() || CurBlock->ReturnType == Context.DependentTy) {
+      for (ParmVarDecl *P : CurBlock->TheDecl->parameters()) {
+        if (P->getIdentifier() == NamedReturnII) {
+          CurBlock->ReturnType = P->getType();
+          CurBlock->TheDecl->setBlockMissingReturnType(false);
+          CurBlock->HasImplicitReturnType = false;
+          break;
+        }
+      }
+    }
+    bool IsParam = false;
+    for (ParmVarDecl *P : CurBlock->TheDecl->parameters()) {
+      if (P->getIdentifier() == NamedReturnII) {
+        IsParam = true;
+        break;
+      }
+    }
+    if (!IsParam) {
+      VarDecl *NewVD = VarDecl::Create(Context, CurBlock->TheDecl, ParamInfo.getC4NamedReturnLoc(), ParamInfo.getC4NamedReturnLoc(),
+                                      const_cast<IdentifierInfo*>(NamedReturnII),
+                                      CurBlock->ReturnType,
+                                      Context.getTrivialTypeSourceInfo(CurBlock->ReturnType, ParamInfo.getC4NamedReturnLoc()),
+                                      SC_None);
+      PushOnScopeChains(NewVD, CurBlock->TheScope);
+    }
+  }
 }
 
 void Sema::ActOnBlockError(SourceLocation CaretLoc, Scope *CurScope) {
@@ -18767,6 +18806,46 @@ ExprResult Sema::ActOnBlockStmtExpr(SourceLocation CaretLoc,
 
   BlockScopeInfo *BSI = cast<BlockScopeInfo>(FunctionScopes.back());
   BlockDecl *BD = BSI->TheDecl;
+
+  if (getLangOpts().C4() && BSI->C4NamedReturnII && Body) {
+    const IdentifierInfo *NamedReturnII = BSI->C4NamedReturnII;
+    ValueDecl *NamedReturnVD = nullptr;
+    for (ParmVarDecl *P : BD->parameters()) {
+      if (P->getIdentifier() == NamedReturnII) {
+        NamedReturnVD = P;
+        break;
+      }
+    }
+    if (!NamedReturnVD) {
+      for (Decl *D : BD->decls()) {
+        if (VarDecl *VD = dyn_cast<VarDecl>(D)) {
+          if (VD->getIdentifier() == NamedReturnII) {
+            NamedReturnVD = VD;
+            break;
+          }
+        }
+      }
+    }
+    if (NamedReturnVD) {
+      SourceLocation EndLoc = Body->getEndLoc();
+      ExprResult Ref = BuildDeclRefExpr(NamedReturnVD, NamedReturnVD->getType(), VK_LValue, EndLoc);
+      if (!Ref.isInvalid()) {
+        StmtResult RetStmt = BuildReturnStmt(EndLoc, Ref.get());
+        if (!RetStmt.isInvalid()) {
+          if (CompoundStmt *CS = dyn_cast<CompoundStmt>(Body)) {
+            SmallVector<Stmt*, 16> Stmts;
+            if (isa<VarDecl>(NamedReturnVD) && !isa<ParmVarDecl>(NamedReturnVD)) {
+              DeclStmt *NewDS = new (Context) DeclStmt(DeclGroupRef(NamedReturnVD), NamedReturnVD->getLocation(), NamedReturnVD->getLocation());
+              Stmts.push_back(NewDS);
+            }
+            Stmts.insert(Stmts.end(), CS->body_begin(), CS->body_end());
+            Stmts.push_back(RetStmt.get());
+            Body = CompoundStmt::Create(Context, Stmts, FPOptionsOverride(), CS->getLBracLoc(), CS->getRBracLoc());
+          }
+        }
+      }
+    }
+  }
 
   maybeAddDeclWithEffects(BD);
 

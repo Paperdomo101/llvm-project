@@ -3430,7 +3430,7 @@ void Parser::ParseDeclarationSpecifiers(
   while (true) {
     if (isC4File() && DS.hasTagDefinition())
       break;
-    if (getLangOpts().C4() && Tok.is(tok::identifier) && NextToken().is(tok::l_brace) &&
+     if (getLangOpts().C4() && !DS.hasTypeSpecifier() && Tok.is(tok::identifier) && NextToken().is(tok::l_brace) &&
         (DSContext == DeclSpecContext::DSC_top_level ||
          DSContext == DeclSpecContext::DSC_normal ||
          DSContext == DeclSpecContext::DSC_type_specifier) &&
@@ -7824,7 +7824,18 @@ void Parser::ParseFunctionDeclarator(Declarator &D,
        D.getNumTypeObjects() > 0 &&
        D.getTypeObject(D.getNumTypeObjects() - 1).Kind == DeclaratorChunk::Function);
 
+  bool IsC4NamedReturn = false;
+  if (getLangOpts().C4() && Tok.is(tok::identifier) && NextToken().is(tok::l_brace)) {
+    IsC4NamedReturn = true;
+    if (auto *II = Tok.getIdentifierInfo()) {
+      if (Actions.getTypeName(*II, Tok.getLocation(), getCurScope())) {
+        IsC4NamedReturn = false;
+      }
+    }
+  }
+
   if (getLangOpts().C4() && TypeWasOmittedOnLeft &&
+      !IsC4NamedReturn &&
       (isDeclarationSpecifier(ImplicitTypenameContext::No) ||
        Tok.is(tok::caret))) {
 
