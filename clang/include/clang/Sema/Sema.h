@@ -2723,9 +2723,17 @@ public:
   // against the first parameter type of each candidate.
   llvm::DenseMap<const IdentifierInfo *,
                  llvm::SmallVector<FunctionDecl *, 2>> C4AliasMap;
-  void C4RegisterAlias(const IdentifierInfo *AliasII, FunctionDecl *FD) {
-    C4AliasMap[AliasII].push_back(FD);
+  void C4RegisterAlias(const IdentifierInfo *AliasII, FunctionDecl *PrimaryFD) {
+    C4AliasMap[AliasII].push_back(PrimaryFD);
+    // Remember the alias name so we can fix up implicit placeholders later
+    // (after the body is parsed).
+    C4PendingAliasFixups[PrimaryFD].push_back(AliasII);
   }
+
+  // C4: pending alias fixups — maps primary FD → alias names that need
+  // their implicit placeholder FDs updated after the body is parsed.
+  llvm::DenseMap<FunctionDecl *,
+                 llvm::SmallVector<const IdentifierInfo *, 2>> C4PendingAliasFixups;
 
 
   // END C4

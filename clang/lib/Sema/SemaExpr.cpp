@@ -2998,7 +2998,13 @@ ExprResult Sema::ActOnIdExpression(Scope *S, CXXScopeSpec &SS,
   if (R.empty() && HasTrailingLParen && II &&
       getLangOpts().implicitFunctionsAllowed()) {
     NamedDecl *D = ImplicitlyDefineFunction(NameLoc, *II, S);
-    if (D) R.addDecl(D);
+    if (D) {
+      R.addDecl(D);
+      // C4: Ensure the implicit decl is visible in the TU scope
+      // for later fixups.
+      if (getLangOpts().C4())
+        PushOnScopeChains(D, TUScope, /*AddToContext=*/false);
+    }
   }
 
   // Determine whether this name might be a candidate for
@@ -3018,37 +3024,54 @@ ExprResult Sema::ActOnIdExpression(Scope *S, CXXScopeSpec &SS,
 
     // If this name wasn't predeclared and if this is not a function
     // call, diagnose the problem.
-    DefaultFilterCCC DefaultValidator(II, SS.getScopeRep());
-    DefaultValidator.IsAddressOfOperand = IsAddressOfOperand;
-    assert((!CCC || CCC->IsAddressOfOperand == IsAddressOfOperand) &&
-           "Typo correction callback misconfigured");
-    if (CCC) {
-      // Make sure the callback knows what the typo being diagnosed is.
-      CCC->setTypoName(II);
-      if (SS.isValid())
-        CCC->setTypoNNS(SS.getScopeRep());
+    //
+    // --- C4: Handle non-call uses (function pointers, etc.) ---
+    // When an undeclared identifier is used without a trailing '(',
+    // create an implicit function declaration so it can be passed as a
+    // function pointer or otherwise referenced before its definition.
+    if (getLangOpts().C4() && R.empty() && II && !HasTrailingLParen) {
+      NamedDecl *D = ImplicitlyDefineFunction(NameLoc, *II, S);
+      if (D) {
+        R.addDecl(D);
+        PushOnScopeChains(D, TUScope, /*AddToContext=*/false);
+      }
     }
-    // FIXME: DiagnoseEmptyLookup produces bad diagnostics if we're looking for
-    // a template name, but we happen to have always already looked up the name
-    // before we get here if it must be a template name.
-    if (DiagnoseEmptyLookup(S, SS, R, CCC ? *CCC : DefaultValidator, nullptr,
-                            {}, nullptr))
-      return ExprError();
 
-    assert(!R.empty() &&
-           "DiagnoseEmptyLookup returned false but added no results");
-
-    // If we found an Objective-C instance variable, let
-    // LookupInObjCMethod build the appropriate expression to
-    // reference the ivar.
-    if (ObjCIvarDecl *Ivar = R.getAsSingle<ObjCIvarDecl>()) {
-      R.clear();
-      ExprResult E(ObjC().LookupInObjCMethod(R, S, Ivar->getIdentifier()));
-      // In a hopelessly buggy code, Objective-C instance variable
-      // lookup fails and no expression will be built to reference it.
-      if (!E.isInvalid() && !E.get())
+    if (R.empty()) {
+      DefaultFilterCCC DefaultValidator(II, SS.getScopeRep());
+      DefaultValidator.IsAddressOfOperand = IsAddressOfOperand;
+      assert((!CCC || CCC->IsAddressOfOperand == IsAddressOfOperand) &&
+             "Typo correction callback misconfigured");
+      if (CCC) {
+        // Make sure the callback knows what the typo being diagnosed is.
+        CCC->setTypoName(II);
+        if (SS.isValid())
+          CCC->setTypoNNS(SS.getScopeRep());
+      }
+      // FIXME: DiagnoseEmptyLookup produces bad diagnostics if we're looking for
+      // a template name, but we happen to have always already looked up the name
+      // before we get here if it must be a template name.
+      if (DiagnoseEmptyLookup(S, SS, R, CCC ? *CCC : DefaultValidator, nullptr,
+                              {}, nullptr))
         return ExprError();
-      return E;
+
+      assert(!R.empty() &&
+             "DiagnoseEmptyLookup returned false but added no results");
+    }
+
+    if (!R.empty()) {
+      // If we found an Objective-C instance variable, let
+      // LookupInObjCMethod build the appropriate expression to
+      // reference the ivar.
+      if (ObjCIvarDecl *Ivar = R.getAsSingle<ObjCIvarDecl>()) {
+        R.clear();
+        ExprResult E(ObjC().LookupInObjCMethod(R, S, Ivar->getIdentifier()));
+        // In a hopelessly buggy code, Objective-C instance variable
+        // lookup fails and no expression will be built to reference it.
+        if (!E.isInvalid() && !E.get())
+          return ExprError();
+        return E;
+      }
     }
   }
 
@@ -19567,6 +19590,18 @@ bool Sema::DiagnoseAssignmentResult(AssignConvertType ConvTy,
       DiagKind = diag::err_typecheck_convert_incompatible_function_pointer;
       isInvalid = true;
     } else {
+      // --- C4: Suppress for implicit out-of-order placeholders ---
+      if (getLangOpts().C4() && SrcExpr) {
+        if (auto *DRE = dyn_cast<DeclRefExpr>(SrcExpr->IgnoreParenCasts())) {
+          if (auto *FD = dyn_cast<FunctionDecl>(DRE->getDecl())) {
+            if (FD->isImplicit() && !FD->hasBody()) {
+              if (Complained)
+                *Complained = true;
+              return false;
+            }
+          }
+        }
+      }
       DiagKind = diag::ext_typecheck_convert_incompatible_function_pointer;
     }
     ConvHints.tryToFixConversion(SrcExpr, SrcType, DstType, *this);

@@ -440,6 +440,10 @@ CompilerTest custom_test_suite[] = {
         "Identifier Aliasing with :: Dispatch (runtime)",
         "tests/alias_overload.c4", true
     },
+    {
+        "Out-of-Order Function Definitions (runtime)",
+        "tests/out_of_order.c4", true
+    },
 };
 
 bool run_compiler_tests(const char *compiler_path) {

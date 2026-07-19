@@ -4512,6 +4512,15 @@ bool Sema::MergeFunctionDecl(FunctionDecl *New, NamedDecl *&OldD, Scope *S,
     PrevDiag = diag::note_previous_builtin_declaration;
   }
 
+  // --- C4: Implicit placeholders for out-of-order definitions ---
+  // When a function was called before being defined, an implicit
+  // int()-placeholder was created.  The real definition should silently
+  // override it instead of producing a "conflicting types" error.
+  if (getLangOpts().C4() && Old->isImplicit() && !Old->getBuiltinID()) {
+    // Let the new definition override the placeholder type.
+    return false;
+  }
+
   Diag(New->getLocation(), diag::err_conflicting_types) << New->getDeclName();
   Diag(OldLocation, PrevDiag) << Old << Old->getType();
   return true;
@@ -17945,6 +17954,31 @@ Decl *Sema::ActOnFinishFunctionBody(Decl *dcl, Stmt *Body, bool IsInstantiation,
   if (FD && !FD->isDeleted())
     checkTypeSupport(FD->getType(), FD->getLocation(), FD);
 
+  // --- C4: Fix up implicit placeholder FDs for out-of-order aliases ---
+  if (getLangOpts().C4() && FD && Body) {
+    auto It = C4PendingAliasFixups.find(FD);
+    if (It != C4PendingAliasFixups.end()) {
+      for (const IdentifierInfo *AliasII : It->second) {
+        IdentifierResolver::iterator I = IdResolver.begin(DeclarationName(AliasII));
+        for (; I != IdResolver.end(); ++I) {
+          if (FunctionDecl *Cand = dyn_cast<FunctionDecl>(*I)) {
+            if (Cand->isImplicit() && !Cand->hasBody()) {
+              Cand->setType(FD->getType());
+              std::string Label;
+              if (Context.getTargetInfo().getTriple().isOSBinFormatMachO())
+                Label = "_";
+              Label += AliasII->getName();
+              FD->addAttr(AsmLabelAttr::CreateImplicit(Context, Label,
+                                                       FD->getLocation()));
+              break;
+            }
+          }
+        }
+      }
+      C4PendingAliasFixups.erase(It);
+    }
+  }
+
   return dcl;
 }
 
@@ -18015,7 +18049,11 @@ NamedDecl *Sema::ImplicitlyDefineFunction(SourceLocation Loc,
 
   // Extension in C99 (defaults to error). Legal in C89, but warn about it.
   unsigned diag_id;
-  if (II.getName().starts_with("__builtin_"))
+  if (getLangOpts().C4() && !II.getName().starts_with("__builtin_")) {
+    // C4: implicit function declarations are expected for out-of-order
+    // definitions.  Downgrade to a warning that's ignored by default.
+    diag_id = diag::warn_implicit_function_decl;
+  } else if (II.getName().starts_with("__builtin_"))
     diag_id = diag::warn_builtin_unknown;
   // OpenCL v2.0 s6.9.u - Implicit function declaration is not supported.
   else if (getLangOpts().C99)
