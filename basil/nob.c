@@ -424,6 +424,14 @@ CompilerTest custom_test_suite[] = {
         "C4 Implicitly Returned Named Return Variables (runtime)",
         "tests/named_return_runtime.c4", true
     },
+    {
+        "Comparison Chaining Operators (||==, ||!=, &&==) (runtime)",
+        "tests/chain_test.c4", true
+    },
+    {
+        "Comparison Chaining Spaced Form (|| ==, || !=, && ==) with Side Effects (runtime)",
+        "tests/chain_sidefx.c4", true
+    },
 };
 
 bool run_compiler_tests(const char *compiler_path) {

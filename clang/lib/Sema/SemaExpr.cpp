@@ -17509,6 +17509,43 @@ ExprResult Sema::ActOnBinOp(Scope *S, SourceLocation TokLoc,
                             tok::TokenKind Kind,
                             Expr *LHSExpr, Expr *RHSExpr) {
 
+  // ---> C4: COMPARISON CHAINING (||==, ||!=, &&==) <---
+  if (Kind == tok::pipepipeequal || Kind == tok::pipepipeexclaimequal ||
+      Kind == tok::ampampequal) {
+    // Extract the chain LHS from the left-hand expression.
+    // Walk down through || / && to find the leaf comparison and reuse its LHS.
+    auto extractChainLHS = [](Expr *E) -> Expr * {
+      while (auto *BO = dyn_cast<BinaryOperator>(E)) {
+        if (BO->isComparisonOp())
+          return BO->getLHS();
+        if (BO->getOpcode() == BO_LOr || BO->getOpcode() == BO_LAnd)
+          E = BO->getRHS();
+        else
+          break;
+      }
+      return E;
+    };
+    Expr *ChainLHS = extractChainLHS(LHSExpr);
+
+    // Determine the comparison and logical operators to use.
+    tok::TokenKind CmpKind =
+        (Kind == tok::pipepipeexclaimequal) ? tok::exclaimequal : tok::equalequal;
+    tok::TokenKind LogicKind =
+        (Kind == tok::ampampequal) ? tok::ampamp : tok::pipepipe;
+
+    // Build the comparison: ChainLHS == RHS  (or ChainLHS != RHS)
+    ExprResult Cmp = BuildBinOp(S, TokLoc,
+        (CmpKind == tok::exclaimequal) ? BO_NE : BO_EQ,
+        ChainLHS, RHSExpr);
+    if (Cmp.isInvalid())
+      return ExprError();
+
+    // Build the logical combination: LHS || Cmp  (or LHS && Cmp)
+    return BuildBinOp(S, TokLoc,
+        (LogicKind == tok::ampamp) ? BO_LAnd : BO_LOr,
+        LHSExpr, Cmp.get());
+  }
+
   // ---> C4: PARALLEL BATCH SWIZZLE ASSIGNMENTS <---
 if (Kind == tok::equal && LHSExpr && RHSExpr && isa<ParenListExpr>(LHSExpr)) {
   auto *LHSList = cast<ParenListExpr>(LHSExpr);

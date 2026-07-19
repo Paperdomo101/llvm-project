@@ -4296,6 +4296,15 @@ LexStart:
     if (Char == '&') {
       Kind = tok::ampamp;
       CurPtr = ConsumeChar(CurPtr, SizeTmp, Result);
+      // C4: look for &&==
+      if (LangOpts.C4()) {
+        Char = getCharAndSize(CurPtr, SizeTmp);
+        if (Char == '=' && CurPtr[1] == '=') {
+          Kind = tok::ampampequal;
+          CurPtr = ConsumeChar(CurPtr, SizeTmp, Result);
+          CurPtr = ConsumeChar(CurPtr, SizeTmp, Result);
+        }
+      }
     } else if (Char == '=') {
       Kind = tok::ampequal;
       CurPtr = ConsumeChar(CurPtr, SizeTmp, Result);
@@ -4609,6 +4618,19 @@ LexStart:
         goto LexNextToken;
       Kind = tok::pipepipe;
       CurPtr = ConsumeChar(CurPtr, SizeTmp, Result);
+      // C4: look for ||== or ||!=
+      if (LangOpts.C4()) {
+        Char = getCharAndSize(CurPtr, SizeTmp);
+        if (Char == '=' && CurPtr[1] == '=') {
+          Kind = tok::pipepipeequal;
+          CurPtr = ConsumeChar(CurPtr, SizeTmp, Result);
+          CurPtr = ConsumeChar(CurPtr, SizeTmp, Result);
+        } else if (Char == '!' && CurPtr[1] == '=') {
+          Kind = tok::pipepipeexclaimequal;
+          CurPtr = ConsumeChar(CurPtr, SizeTmp, Result);
+          CurPtr = ConsumeChar(CurPtr, SizeTmp, Result);
+        }
+      }
     } else {
       Kind = tok::pipe;
     }

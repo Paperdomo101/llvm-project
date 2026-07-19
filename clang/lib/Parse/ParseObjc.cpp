@@ -952,6 +952,9 @@ IdentifierInfo *Parser::ParseObjCSelectorPiece(SourceLocation &SelectorLoc) {
   case tok::exclaimequal:
   case tok::pipepipe:
   case tok::pipeequal:
+  case tok::pipepipeequal:
+  case tok::pipepipeexclaimequal:
+  case tok::ampampequal:
   case tok::caret:
   case tok::caretequal: {
     std::string ThisTok(PP.getSpelling(Tok));

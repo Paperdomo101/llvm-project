@@ -1,0 +1,59 @@
+#include <stdio.h>
+
+int test_or_eq(int c) {
+    if (c == ' ' ||== '\t' ||== '\n') {
+        return 1;
+    }
+    return 0;
+}
+
+int test_or_ne(int c) {
+    // c != a || c != b || c != c → true as long as c is not ALL of them
+    if (c != 'a' ||!= 'b' ||!= 'c') {
+        return 1;
+    }
+    return 0;
+}
+
+int test_and_eq(int a, int b) {
+    // a == 10 && a == b (both must be 10)
+    if (a == 10 &&== b) {
+        return 1;
+    }
+    return 0;
+}
+
+int test_chain_three(int x) {
+    // x == 1 || x == 2 || x == 3
+    if (x == 1 ||== 2 ||== 3) {
+        return 1;
+    }
+    return 0;
+}
+
+int main() {
+    // ||== tests
+    printf("test_or_eq(' '): %d (expect 1)\n", test_or_eq(' '));
+    printf("test_or_eq('\\t'): %d (expect 1)\n", test_or_eq('\t'));
+    printf("test_or_eq('\\n'): %d (expect 1)\n", test_or_eq('\n'));
+    printf("test_or_eq('x'): %d (expect 0)\n", test_or_eq('x'));
+
+    // ||!= tests
+    printf("test_or_ne('a'): %d (expect 1 - a!=b is true)\n", test_or_ne('a'));
+    printf("test_or_ne('b'): %d (expect 1 - b!=a is true)\n", test_or_ne('b'));
+    printf("test_or_ne('c'): %d (expect 1 - c!=a is true)\n", test_or_ne('c'));
+    printf("test_or_ne('x'): %d (expect 1 - x!=all)\n", test_or_ne('x'));
+
+    // &&== tests
+    printf("test_and_eq(10, 10): %d (expect 1)\n", test_and_eq(10, 10));
+    printf("test_and_eq(10, 20): %d (expect 0)\n", test_and_eq(10, 20));
+    printf("test_and_eq(5, 10): %d (expect 0)\n", test_and_eq(5, 10));
+
+    // 3-element chain tests
+    printf("test_chain_three(1): %d (expect 1)\n", test_chain_three(1));
+    printf("test_chain_three(2): %d (expect 1)\n", test_chain_three(2));
+    printf("test_chain_three(3): %d (expect 1)\n", test_chain_three(3));
+    printf("test_chain_three(4): %d (expect 0)\n", test_chain_three(4));
+
+    return 0;
+}

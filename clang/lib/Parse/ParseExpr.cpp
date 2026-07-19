@@ -554,6 +554,33 @@ Parser::ParseRHSOfBinaryExpression(ExprResult LHS, prec::Level MinPrec) {
       }
     }
 
+    // --- C4: Spaced comparison chaining (|| ==, || !=, && ==) ---
+    // When we see || (or &&) followed by == (or !=), treat it as the
+    // compact chaining form (||==, ||!=, &&==) so Sema can desugar it.
+    if (getLangOpts().C4() &&
+        OpToken.isOneOf(tok::pipepipe, tok::ampamp) &&
+        Tok.isOneOf(tok::equalequal, tok::exclaimequal)) {
+      tok::TokenKind ChainKind;
+      if (OpToken.is(tok::ampamp))
+        ChainKind = tok::ampampequal;
+      else if (Tok.is(tok::exclaimequal))
+        ChainKind = tok::pipepipeexclaimequal;
+      else
+        ChainKind = tok::pipepipeequal;
+
+      ConsumeToken(); // consume the == or !=
+      ExprResult RHS = ParseCastExpression(CastParseKind::AnyCastExpr);
+      if (RHS.isInvalid()) {
+        LHS = ExprError();
+      } else {
+        LHS = Actions.ActOnBinOp(getCurScope(), OpToken.getLocation(),
+                                  ChainKind, LHS.get(), RHS.get());
+      }
+      NextTokPrec = getBinOpPrecedence(Tok.getKind(), GreaterThanIsOperator,
+                                       getLangOpts().CPlusPlus11);
+      continue;
+    }
+
     PreferredType.enterBinary(Actions, Tok.getLocation(), LHS.get(),
                               OpToken.getKind());
     // Parse another leaf here for the RHS of the operator.

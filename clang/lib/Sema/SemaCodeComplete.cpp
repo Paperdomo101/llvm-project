@@ -538,7 +538,10 @@ static QualType getPreferredTypeOfBinaryRHS(Sema &S, Expr *LHS,
     return QualType();
   // Logical operators, assume we want bool.
   case tok::ampamp:
+  case tok::ampampequal:
   case tok::pipepipe:
+  case tok::pipepipeequal:
+  case tok::pipepipeexclaimequal:
     return S.getASTContext().BoolTy;
   // Operators often used for bit manipulation are typically used with the type
   // of the left argument.
