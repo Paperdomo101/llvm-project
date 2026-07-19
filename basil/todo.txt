@@ -16,8 +16,6 @@
 		}
 		```
 
-
-
     ## type-of operator %.
     ```
     bobtype := %.bob
@@ -31,7 +29,6 @@
     ```
 
 
-
 		## New ternary
 		```
 		porth_error("early EOF" if fp::feof() or
@@ -40,14 +37,19 @@
     ```
 
 
-
-    ## identifier aliasing
+    ## member aliasing
     ```
-    Vector2Add / add (Vector2 a, b) {...}
     Color {
-    		byte r / red, g / green, b / blue, a / alpha / opacity;
+    		unsigned char
+	      	r / red,
+	      	g / green,
+	       	b / blue,
+	        a / alpha / opacity;
     }
-    Color a = {10, 30, 200, 255}, b = {200, 40, 60, 255}
+    Color a = {10, 30, 200, 255}
+    Color b = {100, 10, 50, 255}
+    a.{r, g, b} += b.{b, g, r}
+    a.opacity = 50;
     ```
 
 
@@ -156,6 +158,27 @@
 # ===|===|=== DONE ===|===|===
 # ____________________________
 
+
+    ## function aliasing
+    ```
+    AddInts / add (int a, b) int { return a + b; }
+    Vector2Add / add (Vector2 a, b) { return { a.x + b.x, a.y + b.y } }
+    ```
+
+    ## out of order functions
+    ```
+    main () int {
+    	10::add(4)::printl()
+    }
+
+    add_ints / add (int a, b) int {
+    	return a + b;
+    }
+
+    print_int / printl (int i) {
+    	"%d\n"::printf(i)
+    }
+    ```
 
     ## ||==  ||!=  &&==
 
