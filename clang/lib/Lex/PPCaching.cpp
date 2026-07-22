@@ -82,33 +82,6 @@ void Preprocessor::CachingLex(Token &Result) {
   if (CachedLexPos < CachedTokens.size()) {
     Result = CachedTokens[CachedLexPos++];
     Result.setFlag(Token::IsReinjected);
-    if (getLangOpts().C4() && Result.is(tok::identifier) && !DisableMacroExpansion) {
-      // Exit caching mode so that any macro entered by HandleIdentifier
-      // (EnterMacro) properly interacts with the include/macro stack.
-      // Without this, cached tokens become stale after macro expansion
-      // and the parser may loop infinitely in error recovery.
-      ExitCachingLexMode();
-      if (!HandleIdentifier(Result)) {
-        // HandleIdentifier returned false: a macro was entered (EnterMacro
-        // pushed a TokenLexer), but Result still holds the unexpanded macro
-        // name. Lex from the newly-entered macro to get the first expanded
-        // token, mirroring how Lexer::Lex / TokenLexer::Lex return false to
-        // re-enter the Preprocessor::Lex loop.
-        Lex(Result);
-        // Re-enter caching mode if backtracking is enabled and HandleEndOfFile
-        // didn't already restore it after the macro finished.
-        if (isBacktrackEnabled() && !InCachingLexMode()) {
-          EnterCachingLexModeUnchecked();
-          // The underlying lexer has advanced past the old cached tokens
-          // (which may correspond to the stale CachedTokens). Reset
-          // CachedLexPos to avoid replaying stale tokens.
-          CachedLexPos = CachedTokens.size();
-        }
-      } else if (isBacktrackEnabled()) {
-        // Macro was not entered, re-enter caching mode.
-        EnterCachingLexModeUnchecked();
-      }
-    }
     return;
   }
 

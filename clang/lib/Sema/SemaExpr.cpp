@@ -2859,7 +2859,13 @@ ExprResult Sema::ActOnIdExpression(Scope *S, CXXScopeSpec &SS,
           UnqualifiedId MemberId;
           MemberId.setIdentifier(II, NameLoc);
           CXXScopeSpec EmptySS;
-          return ActOnMemberAccessExpr(S, Swizzle.Base, Swizzle.OpLoc, Swizzle.OpKind,
+          Expr *BaseExpr = Swizzle.Base;
+          if (auto *DRE = dyn_cast<DeclRefExpr>(Swizzle.Base)) {
+            ExprResult Cloned = BuildDeclRefExpr(DRE->getDecl(), DRE->getType(), DRE->getValueKind(), DRE->getLocation());
+            if (Cloned.isUsable())
+              BaseExpr = Cloned.get();
+          }
+          return ActOnMemberAccessExpr(S, BaseExpr, Swizzle.OpLoc, Swizzle.OpKind,
                                        EmptySS, SourceLocation(), MemberId, nullptr);
         }
       }
@@ -17657,9 +17663,13 @@ if (Kind == tok::equal && LHSExpr && RHSExpr && isa<ParenListExpr>(LHSExpr)) {
     // --- PHASE B: Perform sequential assignments from the temps back to LHS targets ---
     for (unsigned i = 0; i < NumOps; ++i) {
       Expr *LHSTarget = LHSList->getExpr(i);
-      Expr *TmpValue = TempVarRefs[i];
+      SourceLocation SubLoc = LHSTarget ? LHSTarget->getEndLoc() : TokLoc;
 
-      ExprResult SubAssign = BuildBinOp(S, TokLoc, BO_Assign, LHSTarget, TmpValue);
+      ExprResult TmpRef = BuildDeclRefExpr(cast<VarDecl>(cast<DeclStmt>(SynthesizedAssignments[i])->getSingleDecl()),
+                                           TempVarRefs[i]->getType(), VK_LValue, SubLoc);
+      Expr *TmpValue = TmpRef.isUsable() ? TmpRef.get() : TempVarRefs[i];
+
+      ExprResult SubAssign = BuildBinOp(S, SubLoc, BO_Assign, LHSTarget, TmpValue);
       if (SubAssign.isUsable()) {
         StmtResult ExprSt = ActOnExprStmt(SubAssign.get());
         if (ExprSt.isUsable())
@@ -17668,14 +17678,17 @@ if (Kind == tok::equal && LHSExpr && RHSExpr && isa<ParenListExpr>(LHSExpr)) {
     }
 
     // --- PHASE C: Package everything cleanly inside a Statement Expression ---
+    SourceLocation StartLoc = LHSExpr->getBeginLoc();
+    SourceLocation EndLoc = RHSExpr->getEndLoc();
+
     CompoundStmt *CS = CompoundStmt::Create(Context, SynthesizedAssignments,
-                                            FPOptionsOverride(), TokLoc, TokLoc);
+                                            FPOptionsOverride(), StartLoc, EndLoc);
 
     Expr *FinalResult = new (Context) StmtExpr(
         CS,
         LHSList->getExpr(0)->getType(),
-        TokLoc,
-        TokLoc,
+        StartLoc,
+        EndLoc,
         /*TemplateDepth=*/0);
 
     return FinalResult;

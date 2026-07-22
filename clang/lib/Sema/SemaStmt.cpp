@@ -2490,7 +2490,7 @@ VarDecl *Sema::ActOnC4ArrayIterationVar(Scope *S, IdentifierInfo *II, SourceLoca
   }
 
   VarDecl *NewVD = VarDecl::Create(Context, CurContext, Loc, Loc, II, VarType,
-                                   Context.getTrivialTypeSourceInfo(VarType, Loc), SC_None);
+                                   Context.getTrivialTypeSourceInfo(VarType, SourceLocation()), SC_None);
   PushOnScopeChains(NewVD, S);
   return NewVD;
 }
@@ -2532,24 +2532,25 @@ StmtResult Sema::ActOnC4RangeForStmt(SourceLocation ForLoc, SourceLocation LPare
     return StmtError();
   }
 
+  SourceLocation ArrayLoc = ArrayExpr ? ArrayExpr->getBeginLoc() : ForLoc;
   MemberExpr *CountAccess = MemberExpr::CreateImplicit(Context, ArrayExpr, /*IsArrow=*/false, CountField, CountField->getType(), VK_LValue, OK_Ordinary);
   ExprResult CountRVal = DefaultLvalueConversion(CountAccess);
 
-  ExprResult IndexRef = BuildDeclRefExpr(IndexVar, IndexVar->getType(), VK_LValue, ForLoc);
+  ExprResult IndexRef = BuildDeclRefExpr(IndexVar, IndexVar->getType(), VK_LValue, ArrayLoc);
   if (IndexRef.isInvalid()) return StmtError();
   ExprResult IndexRVal = DefaultLvalueConversion(IndexRef.get());
   if (IndexRVal.isInvalid()) return StmtError();
 
-  ExprResult Cond = BuildBinOp(getCurScope(), ForLoc, BO_LT, IndexRVal.get(), CountRVal.get());
+  ExprResult Cond = BuildBinOp(getCurScope(), ArrayLoc, BO_LT, IndexRVal.get(), CountRVal.get());
   if (Cond.isInvalid()) return StmtError();
 
-  ExprResult IndexRefInc = BuildDeclRefExpr(IndexVar, IndexVar->getType(), VK_LValue, ForLoc);
+  ExprResult IndexRefInc = BuildDeclRefExpr(IndexVar, IndexVar->getType(), VK_LValue, ArrayLoc);
   if (IndexRefInc.isInvalid()) return StmtError();
-  ExprResult Inc = BuildBinOp(getCurScope(), ForLoc, BO_AddAssign, IndexRefInc.get(), ActOnIntegerConstant(ForLoc, 1).get());
+  ExprResult Inc = BuildBinOp(getCurScope(), ArrayLoc, BO_AddAssign, IndexRefInc.get(), ActOnIntegerConstant(ArrayLoc, 1).get());
   if (Inc.isInvalid()) return StmtError();
 
   MemberExpr *ItemsAccess = MemberExpr::CreateImplicit(Context, ArrayExpr, /*IsArrow=*/false, ItemsField, ItemsField->getType(), VK_LValue, OK_Ordinary);
-  ExprResult ElementExpr = CreateBuiltinArraySubscriptExpr(ItemsAccess, ForLoc, IndexRVal.get(), ForLoc);
+  ExprResult ElementExpr = CreateBuiltinArraySubscriptExpr(ItemsAccess, ArrayLoc, IndexRVal.get(), ArrayLoc);
   if (ElementExpr.isInvalid()) return StmtError();
 
   if (ElementVar->getType()->isReferenceType()) {
@@ -2557,7 +2558,7 @@ StmtResult Sema::ActOnC4RangeForStmt(SourceLocation ForLoc, SourceLocation LPare
   } else if (const PointerType *PT = ElementVar->getType()->getAs<PointerType>()) {
     QualType ElementTy = getElementTypeFromC4Array(ArrayTy);
     if (!ElementTy.isNull() && Context.hasSameUnqualifiedType(PT->getPointeeType(), ElementTy)) {
-      ExprResult ElementAddr = BuildUnaryOp(getCurScope(), ForLoc, UO_AddrOf, ElementExpr.get());
+      ExprResult ElementAddr = BuildUnaryOp(getCurScope(), ArrayLoc, UO_AddrOf, ElementExpr.get());
       if (ElementAddr.isInvalid()) return StmtError();
       ElementVar->setInit(ElementAddr.get());
     } else {
@@ -2568,10 +2569,13 @@ StmtResult Sema::ActOnC4RangeForStmt(SourceLocation ForLoc, SourceLocation LPare
   }
 
   {
-    DeclStmt *ElementDS = new (Context) DeclStmt(DeclGroupRef(ElementVar), ForLoc, ForLoc);
+    SourceLocation ElementLoc = ElementVar ? ElementVar->getLocation() : ForLoc;
+    DeclStmt *ElementDS = new (Context) DeclStmt(DeclGroupRef(ElementVar), ElementLoc, ElementLoc);
     SmallVector<Stmt*, 8> BodyStmts;
     BodyStmts.push_back(ElementDS);
+    SourceLocation EndLoc = ForLoc;
     if (Body) {
+      EndLoc = Body->getEndLoc();
       if (auto *CS = dyn_cast<CompoundStmt>(Body)) {
         for (auto *S : CS->body()) {
           BodyStmts.push_back(S);
@@ -2580,7 +2584,7 @@ StmtResult Sema::ActOnC4RangeForStmt(SourceLocation ForLoc, SourceLocation LPare
         BodyStmts.push_back(Body);
       }
     }
-    Body = CompoundStmt::Create(Context, BodyStmts, FPOptionsOverride(), ForLoc, ForLoc);
+    Body = CompoundStmt::Create(Context, BodyStmts, FPOptionsOverride(), ElementLoc, EndLoc);
   }
 
   ConditionResult CondResult = ActOnCondition(getCurScope(), ForLoc, Cond.get(), Sema::ConditionKind::Boolean, /*MissingOK=*/false);

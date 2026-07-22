@@ -2959,9 +2959,8 @@ Parser::ParsePostfixExpressionSuffix(ExprResult LHS) {
               return ExprError();
             }
 
-            // Bundle our collection into a ParenListExpr layout container.
-            // This is safe because its memory is flattened out inside your method/call lists later.
-            LHS = Actions.ActOnParenListExpr(LBraceLoc, Tok.getLocation(), ExpandedMembers);
+            SourceLocation GroupStartLoc = OrigLHS ? OrigLHS->getBeginLoc() : LBraceLoc;
+            LHS = Actions.ActOnParenListExpr(GroupStartLoc, Tok.getLocation(), ExpandedMembers);
             break;
           }
           // ---------------------------------------------------------
