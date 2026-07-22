@@ -285,7 +285,12 @@ TokenBuffer::spelledForExpandedToken(const syntax::Token *Expanded) const {
   // Our token could only be produced by the previous mapping.
   if (It == File.Mappings.begin()) {
     // No previous mapping, no need to modify offsets.
-    return {&File.SpelledTokens[ExpandedIndex - File.BeginExpanded],
+    unsigned SpelledIdx = ExpandedIndex - File.BeginExpanded;
+    // C4 synthetic macro tokens have no corresponding spelled tokens,
+    // which can cause the computed spelled index to be out of bounds.
+    if (SpelledIdx >= File.SpelledTokens.size())
+      return {nullptr, nullptr};
+    return {&File.SpelledTokens[SpelledIdx],
             /*Mapping=*/nullptr};
   }
   --It; // 'It' now points to last mapping that started before our token.
@@ -296,8 +301,11 @@ TokenBuffer::spelledForExpandedToken(const syntax::Token *Expanded) const {
 
   // Not part of the mapping, use the index from previous mapping to compute the
   // corresponding spelled token.
+  unsigned SpelledIdx = It->EndSpelled + (ExpandedIndex - It->EndExpanded);
+  if (SpelledIdx >= File.SpelledTokens.size())
+    return {nullptr, nullptr};
   return {
-      &File.SpelledTokens[It->EndSpelled + (ExpandedIndex - It->EndExpanded)],
+      &File.SpelledTokens[SpelledIdx],
       /*Mapping=*/nullptr};
 }
 
@@ -418,6 +426,11 @@ TokenBuffer::spelledForExpanded(llvm::ArrayRef<syntax::Token> Expanded) const {
   const syntax::Token *Last = &Expanded.back();
   auto [FirstSpelled, FirstMapping] = spelledForExpandedToken(First);
   auto [LastSpelled, LastMapping] = spelledForExpandedToken(Last);
+
+  // Tokens from C4 synthetic macros have no spelled representation,
+  // causing spelledForExpandedToken to return null.
+  if (!FirstSpelled || !LastSpelled)
+    return std::nullopt;
 
   FileID FID = SourceMgr->getFileID(FirstSpelled->location());
   // FIXME: Handle multi-file changes by trying to map onto a common root.
