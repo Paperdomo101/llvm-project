@@ -73,16 +73,19 @@ void Preprocessor::Backtrack() {
   recomputeCurLexerKind();
 }
 
-void Preprocessor::CachingLex(Token &Result) {
+bool Preprocessor::CachingLex(Token &Result) {
   if (!InCachingLexMode())
-    return;
-
-
+    return false;
 
   if (CachedLexPos < CachedTokens.size()) {
     Result = CachedTokens[CachedLexPos++];
     Result.setFlag(Token::IsReinjected);
-    return;
+    if (Result.is(tok::identifier) && Result.getIdentifierInfo() &&
+        Result.getIdentifierInfo()->hasMacroDefinition() && !DisableMacroExpansion) {
+      if (!HandleIdentifier(Result))
+        return false;
+    }
+    return true;
   }
 
   ExitCachingLexMode();
@@ -95,7 +98,7 @@ void Preprocessor::CachingLex(Token &Result) {
     ++CachedLexPos;
     if (isUnannotatedBacktrackEnabled())
       UnannotatedBacktrackTokens.back().first.push_back(Result);
-    return;
+    return true;
   }
 
   if (CachedLexPos < CachedTokens.size()) {
@@ -105,6 +108,7 @@ void Preprocessor::CachingLex(Token &Result) {
     CachedTokens.clear();
     CachedLexPos = 0;
   }
+  return true;
 }
 
 void Preprocessor::EnterCachingLexMode() {
@@ -188,4 +192,14 @@ void Preprocessor::ReplacePreviousCachedToken(ArrayRef<Token> NewToks) {
                       NewToks.end());
   CachedTokens.erase(CachedTokens.begin() + CachedLexPos - 1 + NewToks.size());
   CachedLexPos += NewToks.size() - 1;
+}
+
+void Preprocessor::ReplaceRangeInCachedTokens(unsigned StartPos, unsigned Count,
+                                                ArrayRef<Token> NewToks) {
+  if (!InCachingLexMode() || StartPos >= CachedTokens.size())
+    return;
+  unsigned EndPos = std::min<unsigned>(CachedTokens.size(), StartPos + Count);
+  CachedTokens.erase(CachedTokens.begin() + StartPos, CachedTokens.begin() + EndPos);
+  CachedTokens.insert(CachedTokens.begin() + StartPos, NewToks.begin(), NewToks.end());
+  CachedLexPos = StartPos;
 }

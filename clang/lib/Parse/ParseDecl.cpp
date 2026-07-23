@@ -5729,15 +5729,44 @@ void Parser::ParseEnumBody(SourceLocation StartLoc, Decl *EnumDecl,
   while (Tok.isNot(tok::r_brace)) {
     // Parse enumerator. If failed, try skipping till the start of the next
     // enumerator definition.
-    if (Tok.isNot(tok::identifier)) {
+    IdentifierInfo *Ident = nullptr;
+    SourceLocation IdentLoc;
+
+    if (Tok.is(tok::identifier)) {
+      Ident = Tok.getIdentifierInfo();
+      IdentLoc = ConsumeToken();
+    } else if (getLangOpts().C4() && Tok.getLocation().isMacroID()) {
+      SourceLocation ExpLoc = PP.getSourceManager().getExpansionLoc(Tok.getLocation());
+      Token RawTok;
+      if (!Lexer::getRawToken(ExpLoc, RawTok, PP.getSourceManager(), PP.getLangOpts(), false)) {
+        std::string Spelling = PP.getSpelling(RawTok);
+        auto isValidIdent = [](StringRef S) {
+          if (S.empty()) return false;
+          if (!(isalpha(S[0]) || S[0] == '_')) return false;
+          for (char c : S.drop_front()) {
+            if (!(isalnum(c) || c == '_')) return false;
+          }
+          return true;
+        };
+        if (isValidIdent(Spelling)) {
+          Ident = &PP.getIdentifierTable().get(Spelling);
+          IdentLoc = ExpLoc;
+          SourceLocation MacroExpansionLoc = ExpLoc;
+          while (Tok.getLocation().isMacroID() &&
+                 PP.getSourceManager().getExpansionLoc(Tok.getLocation()) == MacroExpansionLoc) {
+            ConsumeAnyToken();
+          }
+        }
+      }
+    }
+
+    if (!Ident) {
       Diag(Tok.getLocation(), diag::err_expected) << tok::identifier;
       if (SkipUntil(tok::comma, tok::r_brace, StopBeforeMatch) &&
           TryConsumeToken(tok::comma))
         continue;
       break;
     }
-    IdentifierInfo *Ident = Tok.getIdentifierInfo();
-    SourceLocation IdentLoc = ConsumeToken();
 
     // If attributes exist after the enumerator, parse them.
     ParsedAttributes attrs(AttrFactory);
@@ -7871,14 +7900,7 @@ void Parser::ParseFunctionDeclarator(Declarator &D,
       //     We record them as pointer chunks on D, the same way '*' is handled.
       while (Tok.is(tok::caret)) {
           SourceLocation CaretLoc = ConsumeToken(); // consume '^'
-          // Record the leading ^ as a plain pointer chunk (no qualifiers),
-          // identically to how trailing '*' pointer modifiers are handled.
-          D.AddTypeInfo(DeclaratorChunk::getPointer(
-                            /*TypeQuals=*/0, CaretLoc,
-                            SourceLocation(), SourceLocation(),
-                            SourceLocation(), SourceLocation(),
-                            SourceLocation()),
-                        Tok.getLocation());
+          TargetDS.incrementC4PointerDepth(CaretLoc);
       }
 
       // 4. Parse the base type specifier (e.g., 'char' or 'struct Arena')

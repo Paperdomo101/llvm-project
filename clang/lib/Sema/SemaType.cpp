@@ -5856,26 +5856,57 @@ TypeSourceInfo *Sema::GetTypeForDeclarator(Declarator &D) {
     }
   }
 
-  // === C4: wrap a function's return type in a bounds-checked array when
-  // the DeclSpec carries isBoundsCheckedArray, e.g. `fn() []int { }`.
-  // Done here (post-GetFullTypeForDeclarator) with a fresh trivial
-  // TypeSourceInfo so we don't desync the DeclSpec TypeLoc (which still
-  // describes the element type) from the wrapped record type — doing it
-  // inside GetFullTypeForDeclarator crashes the TypeSpecLocFiller.
+  // === C4: wrap a function's return type in a bounds-checked array / pointer when
+  // the DeclSpec carries isC4BoundsCheckedArray and/or getC4PointerDepth(), e.g. `fn() ^[]int { }`.
   if (getLangOpts().C4() && TInfo &&
-      D.getDeclSpec().isC4BoundsCheckedArray() &&
+      (D.getDeclSpec().isC4BoundsCheckedArray() || D.getDeclSpec().getC4PointerDepth() > 0) &&
       D.getDeclSpec().getTypeSpecType() != DeclSpec::TST_error) {
     QualType FT = TInfo->getType();
     if (const FunctionType *Fn = FT->getAs<FunctionType>()) {
       QualType RetTy = Fn->getReturnType();
-      if (!isC4ArrayType(RetTy)) {
-        QualType WrappedRet = GetOrCreateC4ArrayType(RetTy);
+      bool HasArray = D.getDeclSpec().isC4BoundsCheckedArray();
+      unsigned PtrDepth = D.getDeclSpec().getC4PointerDepth();
+
+      if (HasArray || PtrDepth > 0) {
+        if (HasArray && PtrDepth > 0 && D.getDeclSpec().isC4ArrayBeforeCaret()) {
+          // '[] ^T'
+          const auto &LevelQuals = D.getDeclSpec().getC4PointerLevelQuals();
+          for (unsigned i = 0; i < PtrDepth; ++i) {
+            unsigned levelIdx = PtrDepth - 1 - i;
+            QualType PtrTy = Context.getPointerType(RetTy);
+            if (levelIdx < LevelQuals.size()) {
+              unsigned Q = LevelQuals[levelIdx];
+              if (Q & DeclSpec::TQ_const)    PtrTy.addConst();
+              if (Q & DeclSpec::TQ_volatile) PtrTy.addVolatile();
+              if (Q & DeclSpec::TQ_restrict) PtrTy.addRestrict();
+            }
+            RetTy = PtrTy;
+          }
+          if (!isC4ArrayType(RetTy))
+            RetTy = GetOrCreateC4ArrayType(RetTy);
+        } else {
+          // '^ []T' or no combination
+          if (HasArray && !isC4ArrayType(RetTy))
+            RetTy = GetOrCreateC4ArrayType(RetTy);
+          const auto &LevelQuals = D.getDeclSpec().getC4PointerLevelQuals();
+          for (unsigned i = 0; i < PtrDepth; ++i) {
+            unsigned levelIdx = PtrDepth - 1 - i;
+            QualType PtrTy = Context.getPointerType(RetTy);
+            if (levelIdx < LevelQuals.size()) {
+              unsigned Q = LevelQuals[levelIdx];
+              if (Q & DeclSpec::TQ_const)    PtrTy.addConst();
+              if (Q & DeclSpec::TQ_volatile) PtrTy.addVolatile();
+              if (Q & DeclSpec::TQ_restrict) PtrTy.addRestrict();
+            }
+            RetTy = PtrTy;
+          }
+        }
         QualType NewFnTy;
         if (const auto *FPT = dyn_cast<FunctionProtoType>(Fn))
-          NewFnTy = Context.getFunctionType(WrappedRet, FPT->getParamTypes(),
+          NewFnTy = Context.getFunctionType(RetTy, FPT->getParamTypes(),
                                             FPT->getExtProtoInfo());
         else
-          NewFnTy = Context.getFunctionNoProtoType(WrappedRet,
+          NewFnTy = Context.getFunctionNoProtoType(RetTy,
                                                    Fn->getExtInfo());
         TInfo = Context.getTrivialTypeSourceInfo(NewFnTy, D.getBeginLoc());
       }

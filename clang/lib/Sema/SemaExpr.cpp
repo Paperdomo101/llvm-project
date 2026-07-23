@@ -18859,6 +18859,8 @@ void Sema::ActOnBlockArguments(SourceLocation CaretLoc, Declarator &ParamInfo,
                                       CurBlock->ReturnType,
                                       Context.getTrivialTypeSourceInfo(CurBlock->ReturnType, ParamInfo.getC4NamedReturnLoc()),
                                       SC_None);
+      ImplicitValueInitExpr *Init = new (Context) ImplicitValueInitExpr(CurBlock->ReturnType);
+      NewVD->setInit(Init);
       PushOnScopeChains(NewVD, CurBlock->TheScope);
     }
   }

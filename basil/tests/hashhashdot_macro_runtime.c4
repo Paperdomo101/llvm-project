@@ -1,0 +1,24 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <assert.h>
+
+#define GREATER(a, b) ((a) > (b) ? (a) : (b))
+
+int main(void) {
+    [10] int result;
+
+    int new_capacity1 = GREATER(##.result * 2, 8);
+    assert(new_capacity1 == 20);
+
+    int new_capacity2 = GREATER(2 * ##.result, 8);
+    assert(new_capacity2 == 20);
+
+    size_t cap1 = ##.int * 2;
+    assert(cap1 == 2147483647 * 2ULL || cap1 == (size_t)INT_MAX * 2);
+
+    size_t cap2 = 2 * ##.int;
+    assert(cap2 == 2 * (size_t)INT_MAX || cap2 == 2ULL * 2147483647);
+
+    printf("hashhashdot_macro_runtime tests passed successfully.\n");
+    return 0;
+}

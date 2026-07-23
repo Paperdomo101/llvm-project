@@ -34,6 +34,18 @@
 
 using namespace clang;
 
+static bool isHashHashDotToken(const Token &Tok, Preprocessor &PP) {
+  if (Tok.is(tok::period))
+    return true;
+  if (Tok.is(tok::numeric_constant)) {
+    SmallString<32> Buffer;
+    bool Invalid = false;
+    StringRef Spelling = PP.getSpelling(Tok, Buffer, &Invalid);
+    return !Invalid && Spelling.starts_with('.');
+  }
+  return false;
+}
+
 /// Create a TokenLexer for the specified macro with the specified actual
 /// arguments.  Note that this ctor takes ownership of the ActualArgs pointer.
 void TokenLexer::Init(Token &Tok, SourceLocation ELEnd, MacroInfo *MI,
@@ -480,10 +492,15 @@ void TokenLexer::ExpandFunctionArguments() {
           ResultToks.back().setFlag(Token::IgnoredComma);
 
         // If the '##' came from expanding an argument, turn it into 'unknown'
-        // to avoid pasting.
-        for (Token &Tok : llvm::drop_begin(ResultToks, FirstResult))
-          if (Tok.is(tok::hashhash))
-            Tok.setKind(tok::unknown);
+        // to avoid pasting, except for C4's ##. operator.
+        for (auto I = ResultToks.begin() + FirstResult, E = ResultToks.end(); I != E; ++I) {
+          if (I->is(tok::hashhash)) {
+            auto Next = I + 1;
+            bool IsHashHashDot = (Next != E) && isHashHashDotToken(*Next, PP);
+            if (!IsHashHashDot)
+              I->setKind(tok::unknown);
+          }
+        }
 
         if(ExpandLocStart.isValid()) {
           updateLocForMacroArgTokens(CurTok.getLocation(),
@@ -544,11 +561,14 @@ void TokenLexer::ExpandFunctionArguments() {
       ResultToks.append(ArgToks, ArgToks+NumToks);
 
       // If the '##' came from expanding an argument, turn it into 'unknown'
-      // to avoid pasting.
-      for (Token &Tok : llvm::make_range(ResultToks.end() - NumToks,
-                                         ResultToks.end())) {
-        if (Tok.is(tok::hashhash))
-          Tok.setKind(tok::unknown);
+      // to avoid pasting, except for C4's ##. operator.
+      for (auto I = ResultToks.end() - NumToks, E = ResultToks.end(); I != E; ++I) {
+        if (I->is(tok::hashhash)) {
+          auto Next = I + 1;
+          bool IsHashHashDot = (Next != E) && isHashHashDotToken(*Next, PP);
+          if (!IsHashHashDot)
+            I->setKind(tok::unknown);
+        }
       }
 
       if (ExpandLocStart.isValid()) {
@@ -677,7 +697,13 @@ bool TokenLexer::Lex(Token &Tok) {
 
   // If this token is followed by a token paste (##) operator, paste the tokens!
   // Note that ## is a normal token when not expanding a macro.
-  if (!isAtEnd() && Macro &&
+  // Exception: C4's ##. capacity-of operator is not a macro paste operator.
+  bool IsHashHashDot = (CurTokenIdx < NumTokens) &&
+                       Tokens[CurTokenIdx].is(tok::hashhash) &&
+                       (CurTokenIdx + 1 < NumTokens) &&
+                       isHashHashDotToken(Tokens[CurTokenIdx + 1], PP);
+
+  if (!isAtEnd() && Macro && !IsHashHashDot &&
       (Tokens[CurTokenIdx].is(tok::hashhash) ||
        // Special processing of L#x macros in -fms-compatibility mode.
        // Microsoft compiler is able to form a wide string literal from

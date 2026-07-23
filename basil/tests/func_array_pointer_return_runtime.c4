@@ -1,0 +1,39 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <assert.h>
+
+struct Token {
+    int kind;
+};
+
+struct Scanner {
+    int pos;
+};
+
+scan_tokens (Scanner scanner) ^[] Token result {
+    return result;
+}
+
+scan_tokens_double (Scanner scanner) ^^[] Token result {
+    return result;
+}
+
+scan_tokens_array (Scanner scanner) [] Token result {
+    return result;
+}
+
+int main(void) {
+    Scanner s = {0};
+
+    ^[] Token res1 = scan_tokens(s);
+    (void)res1;
+
+    ^^[] Token res2 = scan_tokens_double(s);
+    (void)res2;
+
+    [] Token res3 = scan_tokens_array(s);
+    (void)res3;
+
+    printf("func_array_pointer_return_runtime tests passed successfully.\n");
+    return 0;
+}

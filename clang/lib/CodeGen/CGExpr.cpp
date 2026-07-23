@@ -6961,6 +6961,17 @@ RValue CodeGenFunction::EmitCallExpr(const CallExpr *E,
           llvm::Value *OrigDataPtr = EmitLoadOfScalar(DataLV, SourceLocation());
           QualType PointeeTy = DataField->getType()->getPointeeType();
           llvm::Type *LLVMElemTy = ConvertTypeForMem(PointeeTy);
+
+          llvm::Value *IsNonZero = Builder.CreateICmpSGT(
+              SizeVal, llvm::ConstantInt::get(SizeVal->getType(), 0), "c4_has_elems");
+          llvm::Value *IsNonNull = Builder.CreateIsNotNull(OrigDataPtr, "c4_has_data");
+          llvm::Value *ShouldClone = Builder.CreateAnd(IsNonZero, IsNonNull, "c4_should_clone");
+
+          llvm::BasicBlock *CloneBB = createBasicBlock("c4.ret.clone");
+          llvm::BasicBlock *ContBB = createBasicBlock("c4.ret.cont");
+          Builder.CreateCondBr(ShouldClone, CloneBB, ContBB);
+
+          EmitBlock(CloneBB);
           llvm::Value *NewBuf =
               Builder.CreateAlloca(LLVMElemTy, SizeVal, "c4_ret_clone");
           CharUnits EltAlign = getContext().getTypeAlignInChars(PointeeTy);
@@ -6970,16 +6981,12 @@ RValue CodeGenFunction::EmitCallExpr(const CallExpr *E,
               getContext().getTypeSizeInChars(PointeeTy).getQuantity());
           llvm::Value *ByteCount =
               Builder.CreateMul(SizeVal, ElemSize, "c4_clone_bytes");
-          // Use memmove rather than memcpy: the backing array now lives in
-          // static storage (see BuildC4ArrayFromInitList), so the source is
-          // always a valid global and the copy is safe at any optimisation
-          // level.  We still prefer memmove over memcpy for safety, as a
-          // variable alloca for NewBuf is placed contiguously with callee
-          // frame data on some targets (e.g. arm64), which can produce a
-          // one-element overlap that memcpy would mishandle.
           Builder.CreateMemMove(NewBuf, EltAlign.getAsAlign(),
                                 OrigDataPtr, EltAlign.getAsAlign(), ByteCount);
           EmitStoreOfScalar(NewBuf, DataLV, /*isInit=*/false);
+          Builder.CreateBr(ContBB);
+
+          EmitBlock(ContBB);
         }
       }
     }

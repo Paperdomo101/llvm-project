@@ -729,6 +729,8 @@ Parser::ParseC4MacroMethodDispatch(ExprResult Receiver,
     // Tok is currently the unexpanded identifier.  We now need to advance
     // PAST it to read '(' and the arg list — still without expansion.
     PrevTokLocation = Tok.getLocation();
+    unsigned MacroTokPos = PP.InCachingLexMode() ? PP.getCachedLexPos() - 1 : 0;
+    unsigned OldTokCount = 2; // MacroTok + OpenParenTok
     PP.LexUnexpandedToken(Tok);  // Tok = '(' (next raw token after macro name)
 
     if (Tok.isNot(tok::l_paren)) {
@@ -746,6 +748,7 @@ Parser::ParseC4MacroMethodDispatch(ExprResult Receiver,
     while (true) {
         Token T;
         PP.LexUnexpandedToken(T);
+        ++OldTokCount;
         if (T.is(tok::eof)) {
             Diag(T, diag::err_expected) << tok::r_paren;
             return ExprError();
@@ -810,19 +813,23 @@ Parser::ParseC4MacroMethodDispatch(ExprResult Receiver,
         SyntheticToks.push_back(OpenBrace);
     }
 
+    SourceLocation CleanMacroLoc = PP.getSourceManager().getExpansionLoc(MacroLoc);
+    SourceLocation CleanOpenLoc = PP.getSourceManager().getExpansionLoc(OpenParenLoc);
+    SourceLocation CleanCloseLoc = PP.getSourceManager().getExpansionLoc(CloseParenLoc);
+
     // 1. Macro identifier token
     Token MacroTok;
     MacroTok.startToken();
     MacroTok.setKind(tok::identifier);
     MacroTok.setIdentifierInfo(MacroII);
-    MacroTok.setLocation(MacroLoc);
+    MacroTok.setLocation(CleanMacroLoc);
     SyntheticToks.push_back(MacroTok);
 
     // 2. Open parenthesis token
     Token OpenParenTok;
     OpenParenTok.startToken();
     OpenParenTok.setKind(tok::l_paren);
-    OpenParenTok.setLocation(OpenParenLoc);
+    OpenParenTok.setLocation(CleanOpenLoc);
     SyntheticToks.push_back(OpenParenTok);
 
     // 3. Receiver tokens
@@ -833,7 +840,7 @@ Parser::ParseC4MacroMethodDispatch(ExprResult Receiver,
         Token CommaTok;
         CommaTok.startToken();
         CommaTok.setKind(tok::comma);
-        CommaTok.setLocation(CloseParenLoc);
+        CommaTok.setLocation(CleanCloseLoc);
         SyntheticToks.push_back(CommaTok);
 
         SyntheticToks.append(RawArgToks.begin(), RawArgToks.end());
@@ -843,7 +850,7 @@ Parser::ParseC4MacroMethodDispatch(ExprResult Receiver,
     Token CloseParenTok;
     CloseParenTok.startToken();
     CloseParenTok.setKind(tok::r_paren);
-    CloseParenTok.setLocation(CloseParenLoc);
+    CloseParenTok.setLocation(CleanCloseLoc);
     SyntheticToks.push_back(CloseParenTok);
 
     if (IsStatementMacro) {
@@ -870,10 +877,17 @@ Parser::ParseC4MacroMethodDispatch(ExprResult Receiver,
 
 
 
-    auto Toks = std::make_unique<Token[]>(SyntheticToks.size());
-    std::copy(SyntheticToks.begin(), SyntheticToks.end(), Toks.get());
-    PP.EnterTokenStream(std::move(Toks), SyntheticToks.size(),
-                        /*DisableMacroExpansion=*/false, /*IsReinject=*/true);
+    for (Token &T : SyntheticToks)
+        T.setFlag(Token::IsReinjected);
+
+    if (PP.InCachingLexMode()) {
+        PP.ReplaceRangeInCachedTokens(MacroTokPos, OldTokCount, SyntheticToks);
+    } else {
+        auto Toks = std::make_unique<Token[]>(SyntheticToks.size());
+        std::copy(SyntheticToks.begin(), SyntheticToks.end(), Toks.get());
+        PP.EnterTokenStream(std::move(Toks), SyntheticToks.size(),
+                            /*DisableMacroExpansion=*/false, /*IsReinject=*/false);
+    }
 
     // Advance Tok to the first synthetic token (or open paren of statement expr).
     PP.Lex(Tok);
@@ -908,6 +922,9 @@ ExprResult Parser::ParseMethodDispatch(
     if (Receiver.isInvalid() || !Receiver.isUsable())
         return ExprError();
 
+    if (Tok.is(tok::raw_identifier))
+        PP.LookUpIdentifierInfo(Tok);
+
     if (Tok.isNot(tok::identifier))
         return ExprError();
 
@@ -930,8 +947,10 @@ ExprResult Parser::ParseMethodDispatch(
             }
             if (MI->isObjectLike() && MI->getNumTokens() == 1) {
                 const Token &Repl = MI->getReplacementToken(0);
-                if (Repl.is(tok::identifier)) {
+                if (Repl.isOneOf(tok::identifier, tok::raw_identifier)) {
                     CurrII = Repl.getIdentifierInfo();
+                    if (!CurrII)
+                        CurrII = PP.getIdentifierInfo(PP.getSpelling(Repl));
                     continue;
                 }
             }
@@ -1310,7 +1329,8 @@ Parser::ParseCastExpression(CastParseKind ParseKind, bool isAddressOfOperand,
   if (getLangOpts().C4() && SavedKind == tok::identifier &&
       NextToken().is(tok::period) &&
       (GetLookAheadToken(2).is(tok::identifier) ||
-       GetLookAheadToken(2).is(tok::code_completion))) {
+       GetLookAheadToken(2).is(tok::code_completion) ||
+       GetLookAheadToken(2).getLocation().isMacroID())) {
     if (Actions.IsC4EnumName(Tok.getIdentifierInfo())) {
       IdentifierInfo *EnumII = Tok.getIdentifierInfo();
       SourceLocation EnumLoc = ConsumeToken();  // consume enum name
@@ -1322,11 +1342,39 @@ Parser::ParseCastExpression(CastParseKind ParseKind, bool isAddressOfOperand,
             getCurScope(), EnumII);
         return ExprError();
       }
-      IdentifierInfo *MemberII = Tok.getIdentifierInfo();
-      SourceLocation MemberLoc = ConsumeToken(); // consume member name
-      Res = Actions.ActOnC4EnumMemberAccess(EnumLoc, EnumII, MemberLoc, MemberII);
-      // Res is set; fall through to ParsePostfixExpressionSuffix below.
-      goto C4EnumAccessDone;
+      IdentifierInfo *MemberII = nullptr;
+      SourceLocation MemberLoc;
+      if (Tok.is(tok::identifier)) {
+        MemberII = Tok.getIdentifierInfo();
+        MemberLoc = ConsumeToken();
+      } else if (Tok.getLocation().isMacroID()) {
+        SourceLocation ExpLoc = PP.getSourceManager().getExpansionLoc(Tok.getLocation());
+        Token RawTok;
+        if (!Lexer::getRawToken(ExpLoc, RawTok, PP.getSourceManager(), PP.getLangOpts(), false)) {
+          std::string Spelling = PP.getSpelling(RawTok);
+          auto isValidIdent = [](StringRef S) {
+            if (S.empty()) return false;
+            if (!(isalpha(S[0]) || S[0] == '_')) return false;
+            for (char c : S.drop_front()) {
+              if (!(isalnum(c) || c == '_')) return false;
+            }
+            return true;
+          };
+          if (isValidIdent(Spelling)) {
+            MemberII = &PP.getIdentifierTable().get(Spelling);
+            MemberLoc = ExpLoc;
+            SourceLocation MacroExpansionLoc = ExpLoc;
+            while (Tok.getLocation().isMacroID() &&
+                   PP.getSourceManager().getExpansionLoc(Tok.getLocation()) == MacroExpansionLoc) {
+              ConsumeAnyToken();
+            }
+          }
+        }
+      }
+      if (MemberII) {
+        Res = Actions.ActOnC4EnumMemberAccess(EnumLoc, EnumII, MemberLoc, MemberII);
+        goto C4EnumAccessDone;
+      }
     }
   }
 
@@ -1398,9 +1446,37 @@ Parser::ParseCastExpression(CastParseKind ParseKind, bool isAddressOfOperand,
         return Actions.ActOnC4DotOrGroup(DotLoc, Members, MemberLocs, DotExpectedTy);
       }
 
+      IdentifierInfo *MemberII = nullptr;
+      SourceLocation MemberLoc;
       if (Tok.is(tok::identifier)) {
-        IdentifierInfo *MemberII = Tok.getIdentifierInfo();
-        SourceLocation MemberLoc = ConsumeToken();
+        MemberII = Tok.getIdentifierInfo();
+        MemberLoc = ConsumeToken();
+      } else if (Tok.getLocation().isMacroID()) {
+        SourceLocation ExpLoc = PP.getSourceManager().getExpansionLoc(Tok.getLocation());
+        Token RawTok;
+        if (!Lexer::getRawToken(ExpLoc, RawTok, PP.getSourceManager(), PP.getLangOpts(), false)) {
+          std::string Spelling = PP.getSpelling(RawTok);
+          auto isValidIdent = [](StringRef S) {
+            if (S.empty()) return false;
+            if (!(isalpha(S[0]) || S[0] == '_')) return false;
+            for (char c : S.drop_front()) {
+              if (!(isalnum(c) || c == '_')) return false;
+            }
+            return true;
+          };
+          if (isValidIdent(Spelling)) {
+            MemberII = &PP.getIdentifierTable().get(Spelling);
+            MemberLoc = ExpLoc;
+            SourceLocation MacroExpansionLoc = ExpLoc;
+            while (Tok.getLocation().isMacroID() &&
+                   PP.getSourceManager().getExpansionLoc(Tok.getLocation()) == MacroExpansionLoc) {
+              ConsumeAnyToken();
+            }
+          }
+        }
+      }
+
+      if (MemberII) {
         return Actions.ActOnC4ImplicitDot(DotLoc, MemberII, MemberLoc, DotExpectedTy);
       }
 
@@ -1436,10 +1512,47 @@ Parser::ParseCastExpression(CastParseKind ParseKind, bool isAddressOfOperand,
         Sema::ExpressionEvaluationContextRecord::EK_Other,
         /*ShouldRegisterDecl=*/true);
 
-    // --- PART A: TYPE NAME SIZE LOOKUP INTERCEPT (#.int) ---
-    // Look ahead to check if the next token is a native type keyword or an identifier class type
-    if (isDeclarationSpecifier(ImplicitTypenameContext::No)) {
+    auto isTypeOrTypeName = [&](const Token &TokToCheck) -> bool {
+      if (TokToCheck.isSimpleTypeSpecifier(getLangOpts()))
+        return true;
+      if (TokToCheck.isOneOf(tok::kw_struct, tok::kw_union, tok::kw_enum,
+                             tok::kw_typeof, tok::kw_typeof_unqual, tok::kw_auto))
+        return true;
+      if (TokToCheck.is(tok::identifier)) {
+        IdentifierInfo *II = TokToCheck.getIdentifierInfo();
+        if (II) {
+          if (Actions.getTypeName(*II, TokToCheck.getLocation(), getCurScope()))
+            return true;
+          if (getLangOpts().C4() && Actions.IsC4EnumName(II))
+            return true;
+        }
+      }
+      return false;
+    };
+
+    // --- PART A: TYPE NAME SIZE LOOKUP INTERCEPT ---
+    // Handle parenthesized type names: #.(Token *)
+    bool isParenthesized = Tok.is(tok::l_paren);
+    BalancedDelimiterTracker T(*this, tok::l_paren);
+
+    if (isParenthesized && isTypeOrTypeName(GetLookAheadToken(1))) {
+      T.consumeOpen();
       TypeResult Ty = ParseTypeName();
+      if (Ty.isInvalid()) {
+        return ExprError();
+      }
+      T.consumeClose();
+      return Actions.ActOnTypeSizeIntrinsic(Ty.get(), SizeOpLoc);
+    }
+
+    // Handle unparenthesized type names: #.Token, #.int, #.struct Foo
+    // Parse specifiers only so trailing '*' or other operators are not consumed as abstract declarators
+    if (isDeclarationSpecifier(ImplicitTypenameContext::No)) {
+      DeclSpec DS(AttrFactory);
+      ParseSpecifierQualifierList(DS);
+      Declarator DeclaratorInfo(DS, ParsedAttributesView::none(),
+                                DeclaratorContext::TypeName);
+      TypeResult Ty = Actions.ActOnTypeName(DeclaratorInfo);
       if (Ty.isInvalid()) {
         return ExprError();
       }
@@ -1502,7 +1615,29 @@ Parser::ParseCastExpression(CastParseKind ParseKind, bool isAddressOfOperand,
 
       if (isTypeSpecifierQualifier(Tok)) {
         // ---- Type form: ##. TypeName → max value of that type ----
-        TypeResult Ty = ParseTypeName();
+        TypeResult Ty;
+        bool isPointerOrArrayDecl = false;
+        if (!isParenthesized) {
+          if (GetLookAheadToken(1).is(tok::l_square)) {
+            isPointerOrArrayDecl = true;
+          } else if (GetLookAheadToken(1).is(tok::star)) {
+            const Token &TokAfterStar = GetLookAheadToken(2);
+            if (TokAfterStar.isOneOf(tok::star, tok::semi, tok::comma, tok::r_paren,
+                                    tok::equalequal, tok::exclaimequal, tok::eof)) {
+              isPointerOrArrayDecl = true;
+            }
+          }
+        }
+
+        if (isPointerOrArrayDecl || isParenthesized) {
+          Ty = ParseTypeName();
+        } else {
+          DeclSpec DS(AttrFactory);
+          ParseSpecifierQualifierList(DS);
+          Declarator DeclaratorInfo(DS, ParsedAttributesView::none(),
+                                    DeclaratorContext::TypeName);
+          Ty = Actions.ActOnTypeName(DeclaratorInfo);
+        }
         if (Ty.isInvalid()) return ExprError();
 
         if (isParenthesized)
@@ -2542,7 +2677,7 @@ Parser::ParsePostfixExpressionSuffix(ExprResult LHS) {
             // If the next active token is on a completely new line,
             // FORCE the postfix operator builder to stop chewing tokens immediately!
             // BUT: Do not stop if the next token is C4's 'as' keyword, allowing successive 'as' casts.
-            if (CurrentLine > PrevLine) {
+            if (!CurrentLoc.isMacroID() && !PrevLoc.isMacroID() && CurrentLine > PrevLine) {
               bool IsAsKeyword = false;
               if (getLangOpts().C4() && Tok.is(tok::identifier)) {
                 if (IdentifierInfo *II = Tok.getIdentifierInfo()) {

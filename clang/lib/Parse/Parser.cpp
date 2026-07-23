@@ -380,15 +380,46 @@ OpaquePtr<DeclGroupRef> Parser::ParseC4EnumDeclaration(SourceLocation *DeclEnd) 
   SmallVector<C4ParsedEnumElement, 8> Elements;
 
   while (Tok.isNot(tok::r_brace) && Tok.isNot(tok::eof)) {
-    if (!Tok.is(tok::identifier)) {
+    IdentifierInfo *Ident = nullptr;
+    SourceLocation IdentLoc;
+
+    if (Tok.is(tok::identifier)) {
+      Ident = Tok.getIdentifierInfo();
+      IdentLoc = ConsumeToken();
+    } else if (Tok.getLocation().isMacroID()) {
+      SourceLocation ExpLoc = PP.getSourceManager().getExpansionLoc(Tok.getLocation());
+      Token RawTok;
+      if (!Lexer::getRawToken(ExpLoc, RawTok, PP.getSourceManager(), PP.getLangOpts(), false)) {
+        std::string Spelling = PP.getSpelling(RawTok);
+        auto isValidIdent = [](StringRef S) {
+          if (S.empty()) return false;
+          if (!(isalpha(S[0]) || S[0] == '_')) return false;
+          for (char c : S.drop_front()) {
+            if (!(isalnum(c) || c == '_')) return false;
+          }
+          return true;
+        };
+        if (isValidIdent(Spelling)) {
+          Ident = &PP.getIdentifierTable().get(Spelling);
+          IdentLoc = ExpLoc;
+          SourceLocation MacroExpansionLoc = ExpLoc;
+          while (Tok.getLocation().isMacroID() &&
+                 PP.getSourceManager().getExpansionLoc(Tok.getLocation()) == MacroExpansionLoc) {
+            ConsumeAnyToken();
+          }
+        }
+      }
+    }
+
+    if (!Ident) {
       Diag(Tok, diag::err_expected) << tok::identifier;
       SkipUntil(tok::r_brace, StopBeforeMatch);
       break;
     }
 
     C4ParsedEnumElement Elem;
-    Elem.Name = Tok.getIdentifierInfo();
-    Elem.NameLoc = ConsumeToken(); // consume member name
+    Elem.Name = Ident;
+    Elem.NameLoc = IdentLoc;
     Elem.HasValue = false;
 
     if (Tok.is(tok::equal)) {

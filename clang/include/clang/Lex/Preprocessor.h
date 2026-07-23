@@ -1954,7 +1954,17 @@ public:
     ExitCachingLexMode();
   }
 
-  /// Enters a token in the token stream to be lexed next.
+  size_t getCachedLexPos() const { return CachedLexPos; }
+  void ReplaceRangeInCachedTokens(unsigned StartPos, unsigned Count,
+                                  ArrayRef<Token> NewToks);
+
+  bool InCachingLexMode() const { return CurLexerCallback == CLK_CachingLexer; }
+  void ExitCachingLexMode() {
+    if (InCachingLexMode())
+      RemoveTopOfLexerStack();
+  }
+
+  /// Add a token to the given token stream. to be lexed next.
   ///
   /// If BackTrack() is called afterwards, the token will remain at the
   /// insertion point.
@@ -2825,17 +2835,10 @@ public:
 private:
   //===--------------------------------------------------------------------===//
   // Caching stuff.
-  void CachingLex(Token &Result);
-
-  bool InCachingLexMode() const { return CurLexerCallback == CLK_CachingLexer; }
+  bool CachingLex(Token &Result);
 
   void EnterCachingLexMode();
   void EnterCachingLexModeUnchecked();
-
-  void ExitCachingLexMode() {
-    if (InCachingLexMode())
-      RemoveTopOfLexerStack();
-  }
 
   const Token &PeekAhead(unsigned N);
   void AnnotatePreviousCachedTokens(const Token &Tok);
@@ -3156,8 +3159,7 @@ private:
     return P.CurTokenLexer->Lex(Result);
   }
   static bool CLK_CachingLexer(Preprocessor &P, Token &Result) {
-    P.CachingLex(Result);
-    return true;
+    return P.CachingLex(Result);
   }
   static bool CLK_DependencyDirectivesLexer(Preprocessor &P, Token &Result) {
     return P.CurLexer->LexDependencyDirectiveToken(Result);

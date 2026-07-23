@@ -293,6 +293,26 @@ CompilerTest custom_test_suite[] = {
         "tests/dynamic_c4_array_runtime.c4", true
     },
     {
+        "Unparenthesized #. type size arithmetic",
+        "tests/hashdot_type_arithmetic_runtime.c4", true
+    },
+    {
+        "Capacityof ##. operator in macro expansions",
+        "tests/hashhashdot_macro_runtime.c4", true
+    },
+    {
+        "Function returning ^[] T array pointer type",
+        "tests/func_array_pointer_return_runtime.c4", true
+    },
+    {
+        "Named return C4 array zero-init and null clone safety",
+        "tests/named_return_c4_array_runtime.c4", true
+    },
+    {
+        "Macro-expanded identifier names in C4 enum definitions and member access",
+        "tests/macro_enum_member_runtime.c4", true
+    },
+    {
         "Struct function pointer fields (^field (params) rettype;)",
         "tests/struct_fn_ptr_runtime.c4", true
     },

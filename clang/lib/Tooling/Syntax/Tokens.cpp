@@ -267,13 +267,19 @@ CharSourceRange FileRange::toCharRange(const SourceManager &SM) const {
 
 std::pair<const syntax::Token *, const TokenBuffer::Mapping *>
 TokenBuffer::spelledForExpandedToken(const syntax::Token *Expanded) const {
-  assert(Expanded);
-  assert(ExpandedTokens.data() <= Expanded &&
-         Expanded < ExpandedTokens.data() + ExpandedTokens.size());
+  if (!Expanded)
+    return {nullptr, nullptr};
+  if (Expanded < ExpandedTokens.data() ||
+      Expanded >= ExpandedTokens.data() + ExpandedTokens.size())
+    return {nullptr, nullptr};
 
-  auto FileIt = Files.find(
-      SourceMgr->getFileID(SourceMgr->getExpansionLoc(Expanded->location())));
-  assert(FileIt != Files.end() && "no file for an expanded token");
+  FileID FID = SourceMgr->getFileID(SourceMgr->getExpansionLoc(Expanded->location()));
+  if (!FID.isValid())
+    return {nullptr, nullptr};
+
+  auto FileIt = Files.find(FID);
+  if (FileIt == Files.end())
+    return {nullptr, nullptr};
 
   const MarkedFile &File = FileIt->second;
 
@@ -285,6 +291,8 @@ TokenBuffer::spelledForExpandedToken(const syntax::Token *Expanded) const {
   // Our token could only be produced by the previous mapping.
   if (It == File.Mappings.begin()) {
     // No previous mapping, no need to modify offsets.
+    if (ExpandedIndex < File.BeginExpanded)
+      return {nullptr, nullptr};
     unsigned SpelledIdx = ExpandedIndex - File.BeginExpanded;
     // C4 synthetic macro tokens have no corresponding spelled tokens,
     // which can cause the computed spelled index to be out of bounds.
@@ -296,8 +304,11 @@ TokenBuffer::spelledForExpandedToken(const syntax::Token *Expanded) const {
   --It; // 'It' now points to last mapping that started before our token.
 
   // Check if the token is part of the mapping.
-  if (ExpandedIndex < It->EndExpanded)
+  if (ExpandedIndex < It->EndExpanded) {
+    if (It->BeginSpelled >= File.SpelledTokens.size())
+      return {nullptr, nullptr};
     return {&File.SpelledTokens[It->BeginSpelled], /*Mapping=*/&*It};
+  }
 
   // Not part of the mapping, use the index from previous mapping to compute the
   // corresponding spelled token.

@@ -16781,6 +16781,8 @@ Sema::ActOnStartOfFunctionDef(Scope *FnBodyScope, Declarator &D,
                                         FD->getReturnType(),
                                         Context.getTrivialTypeSourceInfo(FD->getReturnType(), D.getC4NamedReturnLoc()),
                                         SC_None);
+        ImplicitValueInitExpr *Init = new (Context) ImplicitValueInitExpr(FD->getReturnType());
+        NewVD->setInit(Init);
         PushOnScopeChains(NewVD, FnBodyScope);
       }
     }

@@ -1,0 +1,40 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <assert.h>
+
+struct Token {
+    int kind;
+    char *val;
+};
+
+struct Result {
+    struct Token *items;
+};
+
+int main(void) {
+    struct Result result;
+
+    // Test case from user bug report: #.Token * 10
+    result.items = malloc(#.Token * 10);
+    assert(result.items != NULL);
+    free(result.items);
+
+    // Test case: 10 * #.Token
+    result.items = malloc(10 * #.Token);
+    assert(result.items != NULL);
+    free(result.items);
+
+    // Arithmetic with primitive types
+    size_t sz1 = #.int * 5;
+    assert(sz1 == sizeof(int) * 5);
+
+    size_t sz2 = 5 * #.int;
+    assert(sz2 == 5 * sizeof(int));
+
+    // Parenthesized type with pointer declarator
+    size_t sz3 = #.(struct Token *) * 2;
+    assert(sz3 == sizeof(struct Token *) * 2);
+
+    printf("hashdot_type_arithmetic_runtime tests passed successfully.\n");
+    return 0;
+}

@@ -1,0 +1,40 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <assert.h>
+
+struct Token {
+    int kind;
+};
+
+struct Scanner {
+    int pos;
+};
+
+scan_tokens (Scanner scanner) [] Token result {
+    // Left unpopulated: test zero-init + null array clone safety
+}
+
+scan_tokens_populated (Scanner scanner) [] Token result {
+    result.items = malloc(#.Token * 2);
+    result.count = 2;
+    result.capacity = 2;
+    result.items[0].kind = 101;
+    result.items[1].kind = 202;
+}
+
+other_fn (void) {
+    Scanner scanner = {0};
+    tokens := scanner::scan_tokens();
+    assert(tokens.count == 0);
+
+    tokens2 := scanner::scan_tokens_populated();
+    assert(tokens2.count == 2);
+    assert(tokens2.items[0].kind == 101);
+    assert(tokens2.items[1].kind == 202);
+}
+
+int main(void) {
+    other_fn();
+    printf("named_return_c4_array_runtime tests passed successfully.\n");
+    return 0;
+}
