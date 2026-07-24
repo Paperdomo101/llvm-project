@@ -7607,6 +7607,33 @@ RValue CodeGenFunction::EmitCall(QualType CalleeType,
   EmitCallArgs(Args, dyn_cast<FunctionProtoType>(FnType), Arguments,
                E->getDirectCallee(), /*ParamsToSkip=*/0, Order);
 
+  // C4: Emit default argument values for parameters missing from the call.
+  // When a function is called before its definition (e.g. add_token(42)
+  // calling void add_token(int, int default=999)), CodeGen has already
+  // emitted the caller by the time CheckC4DeferredFunctionCall updates
+  // the AST.  We synthesize the default values here instead.
+  if (getLangOpts().C4()) {
+    if (const FunctionDecl *CalleeDecl = E->getDirectCallee()) {
+      if (const FunctionDecl *Def = CalleeDecl->getDefinition())
+        CalleeDecl = Def;
+      if (const auto *FPT = CalleeDecl->getType()->getAs<FunctionProtoType>()) {
+        unsigned NumParams = FPT->getNumParams();
+        unsigned NumArgs = Arguments.end() - Arguments.begin();
+        if (NumArgs < NumParams) {
+          for (unsigned i = NumArgs; i < NumParams; ++i) {
+            if (const ParmVarDecl *Param = CalleeDecl->getParamDecl(i)) {
+              if (Param->hasDefaultArg()) {
+                // EmitCallArg handles the value-category mismatch for glvalue
+                // expressions (e.g. CompoundLiteralExpr) with non-ref params.
+                EmitCallArg(Args, Param->getDefaultArg(), Param->getType());
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
   const CGFunctionInfo &FnInfo = CGM.getTypes().arrangeFreeFunctionCall(
       Args, FnType, /*ChainCall=*/Chain);
 

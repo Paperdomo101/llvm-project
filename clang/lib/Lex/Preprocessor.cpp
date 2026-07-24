@@ -870,29 +870,88 @@ bool Preprocessor::HandleIdentifier(Token &Identifier) {
     assert(MI && "macro definition with no macro info?");
     bool IsPrecededByColonColon = false;
     if (getLangOpts().C4()) {
-      // Only check source-level identifiers (not tokens from macro expansions
-      // or reinjected cached tokens), so that .NULL stays as an identifier for
-      // C4 member access but ::macro() dispatch still expands macros.
-      if (!Identifier.getFlag(Token::IsReinjected) &&
-          Identifier.getLocation().isFileID()) {
+      // Check for :: or . before the identifier, using the spelling location
+      // so that tokens from macro expansions (e.g. SV_Arg(sb::sb_to_sv()))
+      // still resolve to the original source text. This prevents macro
+      // expansion of identifiers after :: (method dispatch) or . (member
+      // access), so that .NULL stays as an identifier for C4 member access
+      // and ::macro() dispatch is handled by the parser instead.
+      if (!Identifier.getFlag(Token::IsReinjected)) {
         const SourceManager &SM = getSourceManager();
-        bool Invalid = false;
-        const char *Buf = SM.getCharacterData(Identifier.getLocation(), &Invalid);
-        if (!Invalid && Buf) {
-          const char *Start = SM.getBufferData(SM.getFileID(Identifier.getLocation())).data();
-          const char *Ptr = Buf - 1;
-          while (Ptr >= Start) {
-            char C = *Ptr;
-            if (C == ' ' || C == '\t' || C == '\r' || C == '\n') {
-              --Ptr;
-              continue;
+        SourceLocation SpellingLoc = SM.getSpellingLoc(Identifier.getLocation());
+        if (SpellingLoc.isFileID()) {
+          bool Invalid = false;
+          const char *Buf = SM.getCharacterData(SpellingLoc, &Invalid);
+          if (!Invalid && Buf) {
+            FileID FID = SM.getFileID(SpellingLoc);
+            const char *Start = SM.getBufferData(FID).data();
+            const char *Ptr = Buf - 1;
+            while (Ptr >= Start) {
+              char C = *Ptr;
+              if (C == ' ' || C == '\t' || C == '\r' || C == '\n') {
+                --Ptr;
+                continue;
+              }
+
+              // Skip // line comments: when we encounter // scanning
+              // backwards, skip the entire comment line.
+              if (C == '/' && Ptr - 1 >= Start && *(Ptr - 1) == '/') {
+                Ptr -= 2;
+                while (Ptr >= Start && *Ptr != '\n')
+                  --Ptr;
+                continue;
+              }
+
+              // Skip /* block comments: when we encounter */ scanning
+              // backwards, skip back to the opening /*.
+              if (C == '/' && Ptr - 1 >= Start && *(Ptr - 1) == '*') {
+                Ptr -= 2;
+                int Depth = 1;
+                while (Ptr - 1 >= Start && Depth > 0) {
+                  if (*Ptr == '/' && *(Ptr - 1) == '*') {
+                    --Depth;
+                    if (Depth == 0) {
+                      Ptr -= 2;
+                      break;
+                    }
+                    Ptr -= 2;
+                  } else if (*Ptr == '*' && *(Ptr - 1) == '/') {
+                    ++Depth;
+                    Ptr -= 2;
+                  } else {
+                    --Ptr;
+                  }
+                }
+                continue;
+              }
+
+              // If the non-whitespace character is not a comment delimiter,
+              // verify it is not inside a // comment by checking whether this
+              // line starts with // before the character.
+              {
+                const char *LineStart = Ptr;
+                while (LineStart > Start && *(LineStart - 1) != '\n')
+                  --LineStart;
+                bool InLineComment = false;
+                for (const char *S = LineStart; S < Ptr; ++S) {
+                  if (S[0] == '/' && (S + 1) <= Ptr && S[1] == '/') {
+                    InLineComment = true;
+                    break;
+                  }
+                }
+                if (InLineComment) {
+                  Ptr = LineStart - 1;
+                  continue;
+                }
+              }
+
+              break;
             }
-            break;
-          }
-          // Prevent macro expansion after :: (C++ scope) or . (C4 member access).
-          if ((Ptr - 1 >= Start && Ptr[0] == ':' && Ptr[-1] == ':') ||
-              (Ptr >= Start && *Ptr == '.')) {
-            IsPrecededByColonColon = true;
+            // Prevent macro expansion after :: (C++ scope) or . (C4 member access).
+            if ((Ptr - 1 >= Start && Ptr[0] == ':' && Ptr[-1] == ':') ||
+                (Ptr >= Start && *Ptr == '.')) {
+              IsPrecededByColonColon = true;
+            }
           }
         }
       }

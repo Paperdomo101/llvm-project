@@ -1757,8 +1757,8 @@ void Sema::ActOnEndOfTranslationUnit() {
     for (auto &Pair : C4ImplicitCallsMap) {
       FunctionDecl *FD = Pair.first;
       if (FD && FD->isImplicit() && !FD->isDefined() && !FD->getBuiltinID()) {
-        for (CallExpr *CE : Pair.second) {
-          Diag(CE->getBeginLoc(), diag::ext_implicit_function_decl_c99)
+        for (auto &CP : Pair.second) {
+          Diag(CP.first->getBeginLoc(), diag::ext_implicit_function_decl_c99)
               << FD->getDeclName();
         }
       }

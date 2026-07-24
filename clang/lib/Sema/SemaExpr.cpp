@@ -8043,7 +8043,13 @@ ExprResult Sema::BuildResolvedCallExpr(Expr *Fn, NamedDecl *NDecl,
     if (FDecl->isImplicit() && !FDecl->getBuiltinID()) {
       if (auto *CE = dyn_cast<CallExpr>(CallRes.get())) {
         CE->shrinkNumArgs(Args.size());
-        C4ImplicitCallsMap[FDecl].push_back(CE);
+        FunctionDecl *Enclosing = dyn_cast<FunctionDecl>(CurContext);
+        C4ImplicitCallsMap[FDecl].push_back({CE, Enclosing});
+        // Defer emission of the enclosing function until the callee
+        // is defined, so CodeGen sees the correct function signature
+        // and can emit default argument values.
+        if (Enclosing)
+          Context.C4DeferredFunctionDecls.insert(Enclosing);
       }
     }
     if (IsC4ReferenceReturnType(FDecl)) {
@@ -8060,6 +8066,25 @@ void Sema::CheckC4DeferredFunctionCall(CallExpr *CE, FunctionDecl *FD) {
   if (!CE || !FD) return;
   const FunctionProtoType *Proto = FD->getType()->getAs<FunctionProtoType>();
   if (!Proto) return;
+
+  // Update the callee type chain so CodeGen emits the correct call.
+  // The DeclRefExpr was created with the implicit int() type; we need to
+  // update it to the real function type so the call has the right signature.
+  if (Expr *Callee = CE->getCallee()) {
+    QualType FnType = FD->getType();
+    QualType FnPtrType = Context.getPointerType(FnType);
+    // Walk through ImplicitCastExpr (FunctionToPointerDecay) to find the
+    // DeclRefExpr and update its type.
+    if (auto *ICE = dyn_cast<ImplicitCastExpr>(Callee)) {
+      ICE->setType(FnPtrType);
+      if (auto *DRE = dyn_cast<DeclRefExpr>(ICE->getSubExpr()))
+        DRE->setType(FnType);
+    } else if (auto *DRE = dyn_cast<DeclRefExpr>(Callee)) {
+      DRE->setType(FnType);
+    }
+    // Also update the CallExpr's result type to match the real return type.
+    CE->setType(FD->getReturnType());
+  }
 
   unsigned NumParams = FD->getNumParams();
   unsigned MinArgs = FD->getMinRequiredArguments();
@@ -8101,6 +8126,27 @@ void Sema::CheckC4DeferredFunctionCall(CallExpr *CE, FunctionDecl *FD) {
     Diag(FD->getLocation(), diag::note_callee_decl)
         << FD << FD->getParametersSourceRange();
     return;
+  }
+
+  // C4: Synthesize default arguments for missing parameters.
+  // When a deferred call provides fewer arguments than the function has
+  // parameters (e.g. add_token(.left_paren) calling add_token(scanner, type, literal = {})),
+  // fill in the missing parameters with their default argument expressions.
+  if (NumArgs < NumParams) {
+    for (unsigned i = NumArgs; i < NumParams; ++i) {
+      ParmVarDecl *Param = FD->getParamDecl(i);
+      if (!Param || !Param->hasDefaultArg())
+        break;
+      Expr *DefaultExpr = Param->getDefaultArg();
+      if (!DefaultExpr)
+        break;
+      // Bump NumArgs before setArg so the bounds check passes.
+      // The trailing array has enough space because deferred calls
+      // are initially allocated with MinNumArgs >= 16.
+      CE->setNumArgsUnsafe(NumArgs + 1);
+      CE->setArg(i, DefaultExpr);
+      ++NumArgs;
+    }
   }
 
   for (unsigned i = 0; i < NumArgs && i < NumParams; ++i) {

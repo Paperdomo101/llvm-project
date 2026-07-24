@@ -2735,8 +2735,13 @@ public:
   llvm::DenseMap<FunctionDecl *,
                  llvm::SmallVector<const IdentifierInfo *, 2>> C4PendingAliasFixups;
 
-  // C4: deferred out-of-order function call type-checking
-  llvm::DenseMap<FunctionDecl *, llvm::SmallVector<CallExpr *, 4>> C4ImplicitCallsMap;
+  // C4: deferred out-of-order function call type-checking.
+  // Each entry maps an implicit FunctionDecl to a list of (CallExpr, EnclosingFunction).
+  // EnclosingFunction is the function whose body contains the call; its
+  // emission is deferred until the callee is defined.
+  llvm::DenseMap<FunctionDecl *,
+                 llvm::SmallVector<std::pair<CallExpr *, FunctionDecl *>, 4>>
+      C4ImplicitCallsMap;
   void CheckC4DeferredFunctionCall(CallExpr *CE, FunctionDecl *FD);
 
   // END C4

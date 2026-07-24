@@ -3577,6 +3577,12 @@ public:
                                          bool IsTypeAware);
   bool isTypeAwareOperatorNewOrDelete(const FunctionDecl *FD) const;
 
+  // C4: Functions whose emission must be deferred until their callees are
+  // defined (out-of-order functions with default parameters).  Populated by
+  // Sema when a call to an implicit function is encountered; consumed by
+  // CodeGen to skip eager emission.
+  llvm::SmallPtrSet<FunctionDecl *, 4> C4DeferredFunctionDecls;
+
   enum OperatorDeleteKind { Regular, GlobalRegular, Array, ArrayGlobal };
 
   void addOperatorDeleteForVDtor(const CXXDestructorDecl *Dtor,

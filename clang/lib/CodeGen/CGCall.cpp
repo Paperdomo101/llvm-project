@@ -5012,7 +5012,12 @@ void CodeGenFunction::EmitCallArgs(
     bool isGenericMethod = MD && isObjCMethodWithTypeParams(MD);
     CallExpr::const_arg_iterator Arg = ArgRange.begin();
     for (QualType Ty : ArgTypes) {
-      assert(Arg != ArgRange.end() && "Running over edge of argument list!");
+      if (Arg == ArgRange.end()) {
+        // C4: may have fewer args than params when defaults are used.
+        if (getLangOpts().C4())
+          break;
+        assert(false && "Running over edge of argument list!");
+      }
       QualType ParamTy = Ty.getNonReferenceType();
       QualType ArgTy = (*Arg)->getType();
       if (const auto *OBT = ParamTy->getAs<OverflowBehaviorType>())
@@ -5029,7 +5034,7 @@ void CodeGenFunction::EmitCallArgs(
 
     // Either we've emitted all the call args, or we have a call to variadic
     // function.
-    assert((Arg == ArgRange.end() || IsVariadic) &&
+    assert((Arg == ArgRange.end() || IsVariadic || getLangOpts().C4()) &&
            "Extra arguments in non-variadic function!");
 #endif
   }
@@ -5037,6 +5042,15 @@ void CodeGenFunction::EmitCallArgs(
   // If we still have any arguments, emit them using the type of the argument.
   for (auto *A : llvm::drop_begin(ArgRange, ArgTypes.size()))
     ArgTypes.push_back(IsVariadic ? getVarArgType(A) : A->getType());
+
+  // C4: when a deferred call has fewer args than the final function signature
+  // (e.g. add_token(42) calling void add_token(int, int default=999)), trim
+  // ArgTypes to match the actual args. The default values are emitted separately.
+  if (getLangOpts().C4() && !IsVariadic &&
+      ArgTypes.size() > (unsigned)(ArgRange.end() - ArgRange.begin())) {
+    ArgTypes.resize(ArgRange.end() - ArgRange.begin());
+  }
+
   assert((int)ArgTypes.size() == (ArgRange.end() - ArgRange.begin()));
 
   // We must evaluate arguments from right to left in the MS C++ ABI,
@@ -5192,6 +5206,17 @@ void CodeGenFunction::EmitCallArg(CallArgList &args, const Expr *E,
   if (const HLSLOutArgExpr *OE = dyn_cast<HLSLOutArgExpr>(E)) {
     EmitHLSLOutArgExpr(OE, args, type);
     return;
+  }
+
+  // C4: default argument expressions injected by CheckC4DeferredFunctionCall
+  // may have a glvalue expression for a non-reference parameter type
+  // (e.g. struct CompoundLiteralExpr).  Convert to an rvalue in that case.
+  if (getLangOpts().C4() && type->isReferenceType() != E->isGLValue()) {
+    if (E->isGLValue() && !type->isReferenceType()) {
+      RValue RV = EmitAnyExprToTemp(E);
+      args.add(RV, type);
+      return;
+    }
   }
 
   assert(type->isReferenceType() == E->isGLValue() &&

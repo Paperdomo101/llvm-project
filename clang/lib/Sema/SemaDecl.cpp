@@ -4519,8 +4519,12 @@ bool Sema::MergeFunctionDecl(FunctionDecl *New, NamedDecl *&OldD, Scope *S,
   if (getLangOpts().C4() && Old->isImplicit() && !Old->getBuiltinID()) {
     auto It = C4ImplicitCallsMap.find(Old);
     if (It != C4ImplicitCallsMap.end()) {
-      for (CallExpr *CE : It->second) {
+      for (auto &Pair : It->second) {
+        CallExpr *CE = Pair.first;
         CheckC4DeferredFunctionCall(CE, New);
+        // Once the callee is defined, the enclosing function can be emitted.
+        if (FunctionDecl *Enclosing = Pair.second)
+          Context.C4DeferredFunctionDecls.erase(Enclosing);
       }
       C4ImplicitCallsMap.erase(It);
     }
@@ -17973,11 +17977,12 @@ Decl *Sema::ActOnFinishFunctionBody(Decl *dcl, Stmt *Body, bool IsInstantiation,
         for (; I != IdResolver.end(); ++I) {
           if (FunctionDecl *Cand = dyn_cast<FunctionDecl>(*I)) {
             if (Cand->isImplicit() && !Cand->hasBody()) {
-              Cand->setType(FD->getType());
               auto CallIt = C4ImplicitCallsMap.find(Cand);
               if (CallIt != C4ImplicitCallsMap.end()) {
-                for (CallExpr *CE : CallIt->second) {
-                  CheckC4DeferredFunctionCall(CE, FD);
+                for (auto &Pair : CallIt->second) {
+                  CheckC4DeferredFunctionCall(Pair.first, FD);
+                  if (FunctionDecl *Enclosing = Pair.second)
+                    Context.C4DeferredFunctionDecls.erase(Enclosing);
                 }
                 C4ImplicitCallsMap.erase(CallIt);
               }

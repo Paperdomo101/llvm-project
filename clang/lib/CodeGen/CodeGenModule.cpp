@@ -4316,6 +4316,11 @@ bool CodeGenModule::MayBeEmittedEagerly(const ValueDecl *Global) {
     // compilation.
     if (LangOpts.SYCLIsDevice && FD->hasAttr<SYCLKernelEntryPointAttr>())
       return false;
+    // C4: defer emission of functions that call out-of-order implicit
+    // declarations with default parameters, so the callee signature is
+    // available when the call is emitted.
+    if (getContext().C4DeferredFunctionDecls.count(FD))
+      return false;
     // Wait for Sema's end-of-TU classification to decide between real body
     // and trap body (see Sema::emitDeferredDiags).
     if (LangOpts.CUDAIsDevice && FD->isImplicitHDExplicitInstantiation())
