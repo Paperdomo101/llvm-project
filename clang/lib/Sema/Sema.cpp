@@ -12,6 +12,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "UsedDeclVisitor.h"
+#include <functional>
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/ASTDiagnostic.h"
 #include "clang/AST/Decl.h"
@@ -1754,16 +1755,89 @@ void Sema::ActOnEndOfTranslationUnit() {
     return;
 
   if (getLangOpts().C4()) {
+    // Resolve deferred out-of-order function calls now that all definitions
+    // have been seen.  We do this in two passes:
+    //
+    // Pass 1: Update CallExpr return types and propagate to type-inferred
+    //         VarDecls (e.g. "sc := make_scanner()") WITHOUT argument checking.
+    // Pass 2: Check argument types now that all VarDecl types are correct.
+    //
+    // This ordering prevents false-positive type errors when a type-inferred
+    // variable is used as an argument to another out-of-order function.
+    struct DeferredCall {
+      CallExpr *CE;
+      FunctionDecl *Enclosing;
+      FunctionDecl *RealDef;
+    };
+    llvm::SmallVector<DeferredCall, 16> AllDeferredCalls;
+
     for (auto &Pair : C4ImplicitCallsMap) {
-      FunctionDecl *FD = Pair.first;
-      if (FD && FD->isImplicit() && !FD->isDefined() && !FD->getBuiltinID()) {
-        for (auto &CP : Pair.second) {
-          Diag(CP.first->getBeginLoc(), diag::ext_implicit_function_decl_c99)
-              << FD->getDeclName();
+      FunctionDecl *OldImplicit = Pair.first;
+      if (!OldImplicit || !OldImplicit->isImplicit() || OldImplicit->getBuiltinID())
+        continue;
+      // Find the real definition.
+      FunctionDecl *RealDef = nullptr;
+      for (auto *RD = OldImplicit->getMostRecentDecl(); RD;
+           RD = RD->getPreviousDecl()) {
+        if (!RD->isImplicit() && RD->isThisDeclarationADefinition()) {
+          RealDef = RD;
+          break;
         }
       }
+      if (!RealDef) {
+        // Check alias resolution.
+        auto AliasIt = C4AliasResolvedMap.find(OldImplicit);
+        if (AliasIt != C4AliasResolvedMap.end())
+          RealDef = AliasIt->second;
+      }
+      if (RealDef) {
+        for (auto &CP : Pair.second)
+          AllDeferredCalls.push_back({CP.first, CP.second, RealDef});
+      } else {
+        // Function was called but never defined.
+        for (auto &CP : Pair.second)
+          Diag(CP.first->getBeginLoc(), diag::ext_implicit_function_decl_c99)
+              << OldImplicit->getDeclName();
+      }
     }
+
+    // === Pass 1: Update return/callee types and propagate to VarDecls ===
+    for (auto &DC : AllDeferredCalls) {
+      QualType OldReturnType = DC.CE->getType();
+      CheckC4DeferredFunctionCall(DC.CE, DC.RealDef, /*CheckArgs=*/false);
+      // Propagate corrected return type to type-inferred variables.
+      if (DC.Enclosing && DC.Enclosing->hasBody() &&
+          OldReturnType != DC.RealDef->getReturnType()) {
+        Stmt *Body = DC.Enclosing->getBody();
+        std::function<void(Stmt*)> UpdateVarTypes = [&](Stmt *S) {
+          if (!S) return;
+          if (auto *DS = dyn_cast<DeclStmt>(S)) {
+            for (Decl *D : DS->getDeclGroup()) {
+              if (auto *VD = dyn_cast<VarDecl>(D)) {
+                Expr *Init = VD->getInit();
+                if (!Init) continue;
+                if (Init->IgnoreImplicit() == DC.CE) {
+                  VD->setType(DC.RealDef->getReturnType());
+                }
+              }
+            }
+          }
+          for (Stmt *Child : S->children())
+            UpdateVarTypes(Child);
+        };
+        UpdateVarTypes(Body);
+      }
+    }
+
+    // === Pass 2: Check argument types (now that VarDecl types are correct) ===
+    for (auto &DC : AllDeferredCalls) {
+      CheckC4DeferredFunctionCall(DC.CE, DC.RealDef, /*CheckArgs=*/true);
+      if (DC.Enclosing)
+        Context.C4DeferredFunctionDecls.erase(DC.Enclosing);
+    }
+
     C4ImplicitCallsMap.clear();
+    C4AliasResolvedMap.clear();
   }
 
   // Complete translation units and modules define vtables and perform implicit

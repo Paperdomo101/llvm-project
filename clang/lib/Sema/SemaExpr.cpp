@@ -8062,10 +8062,12 @@ ExprResult Sema::BuildResolvedCallExpr(Expr *Fn, NamedDecl *NDecl,
   return CallRes;
 }
 
-void Sema::CheckC4DeferredFunctionCall(CallExpr *CE, FunctionDecl *FD) {
+void Sema::CheckC4DeferredFunctionCall(CallExpr *CE, FunctionDecl *FD,
+                                        bool CheckArgs) {
   if (!CE || !FD) return;
+  const FunctionType *FuncTy = FD->getType()->getAs<FunctionType>();
+  if (!FuncTy) return;
   const FunctionProtoType *Proto = FD->getType()->getAs<FunctionProtoType>();
-  if (!Proto) return;
 
   // Update the callee type chain so CodeGen emits the correct call.
   // The DeclRefExpr was created with the implicit int() type; we need to
@@ -8086,6 +8088,11 @@ void Sema::CheckC4DeferredFunctionCall(CallExpr *CE, FunctionDecl *FD) {
     CE->setType(FD->getReturnType());
   }
 
+  if (!CheckArgs)
+    return;
+
+  bool IsVariadic = Proto ? Proto->isVariadic() : true;
+
   unsigned NumParams = FD->getNumParams();
   unsigned MinArgs = FD->getMinRequiredArguments();
   unsigned NumArgs = CE->getNumArgs();
@@ -8094,12 +8101,12 @@ void Sema::CheckC4DeferredFunctionCall(CallExpr *CE, FunctionDecl *FD) {
 
   if (NumArgs < MinArgs) {
     if (MinArgs == 1 && FD->getParamDecl(0)->getDeclName()) {
-      Diag(RParenLoc, MinArgs == NumParams && !Proto->isVariadic()
+      Diag(RParenLoc, MinArgs == NumParams && !IsVariadic
                           ? diag::err_typecheck_call_too_few_args_one
                           : diag::err_typecheck_call_too_few_args_at_least_one)
           << 0 /* fn */ << FD->getParamDecl(0) << 0 << CE->getCallee()->getSourceRange();
     } else {
-      Diag(RParenLoc, MinArgs == NumParams && !Proto->isVariadic()
+      Diag(RParenLoc, MinArgs == NumParams && !IsVariadic
                           ? diag::err_typecheck_call_too_few_args
                           : diag::err_typecheck_call_too_few_args_at_least)
           << 0 /* fn */ << MinArgs << NumArgs << 0 << CE->getCallee()->getSourceRange();
@@ -8109,7 +8116,7 @@ void Sema::CheckC4DeferredFunctionCall(CallExpr *CE, FunctionDecl *FD) {
     return;
   }
 
-  if (NumArgs > NumParams && !Proto->isVariadic()) {
+  if (NumArgs > NumParams && !IsVariadic) {
     if (NumParams == 1 && FD->getParamDecl(0)->getDeclName()) {
       Diag(CE->getArg(NumParams)->getBeginLoc(),
            diag::err_typecheck_call_too_many_args_one)
@@ -8155,10 +8162,39 @@ void Sema::CheckC4DeferredFunctionCall(CallExpr *CE, FunctionDecl *FD) {
     if (Arg && Param) {
       QualType ParamTy = Param->getType();
       if (!ParamTy.isNull()) {
-        if (ParamTy->isPointerType() && Arg && Arg->isGLValue() &&
-            Context.hasSameUnqualifiedType(Arg->getType(), ParamTy->getPointeeType())) {
-          SourceLocation AddrLoc = Arg->getBeginLoc().isValid() ? Arg->getBeginLoc() : RParenLoc;
-          ExprResult InjectedAddress = CreateBuiltinUnaryOp(AddrLoc, UO_AddrOf, Arg);
+        // Fix up stale ImplicitCastExpr / DeclRefExpr types caused by
+        // deferred return-type propagation (e.g. type-inferred variables
+        // whose type was corrected after the deferred call was created).
+        // This must run BEFORE the auto-ref check so the candidate has
+        // the correct type.
+        if (auto *ICE = dyn_cast<ImplicitCastExpr>(Arg)) {
+          if (auto *DRE = dyn_cast<DeclRefExpr>(ICE->getSubExpr())) {
+            if (auto *VD = dyn_cast<VarDecl>(DRE->getDecl())) {
+              if (VD->getType() != ICE->getType()) {
+                QualType NewTy = VD->getType();
+                ICE->setType(NewTy);
+                DRE->setType(NewTy);
+              }
+            }
+          }
+        }
+        // C4 auto-ref: if the param is a reference (pointer) type and the
+        // argument is (or wraps) a glvalue whose type matches the pointee,
+        // inject a & operator.  For deferred calls the arg may be wrapped in
+        // an LValueToRValue ImplicitCastExpr from the placeholder signature;
+        // walk through it to find the underlying glvalue.
+        Expr *AutoRefCandidate = Arg;
+        if (auto *ICE = dyn_cast<ImplicitCastExpr>(Arg))
+          if (ICE->getSubExpr()->isGLValue())
+            AutoRefCandidate = ICE->getSubExpr();
+        if (ParamTy->isPointerType() && AutoRefCandidate->isGLValue() &&
+            Context.hasSameUnqualifiedType(AutoRefCandidate->getType(),
+                                           ParamTy->getPointeeType())) {
+          SourceLocation AddrLoc = AutoRefCandidate->getBeginLoc().isValid()
+                                       ? AutoRefCandidate->getBeginLoc()
+                                       : RParenLoc;
+          ExprResult InjectedAddress =
+              CreateBuiltinUnaryOp(AddrLoc, UO_AddrOf, AutoRefCandidate);
           if (!InjectedAddress.isInvalid()) {
             Arg = InjectedAddress.get();
             CE->setArg(i, Arg);
@@ -8171,13 +8207,16 @@ void Sema::CheckC4DeferredFunctionCall(CallExpr *CE, FunctionDecl *FD) {
         }
         ExprResult ArgRes = Arg;
         AssignConvertType ConvTy = CheckSingleAssignmentConstraints(ParamTy, ArgRes);
+        SourceLocation DiagLoc = Arg->getExprLoc().isValid() ? Arg->getExprLoc() : RParenLoc;
         if (ConvTy != AssignConvertType::Compatible) {
-          SourceLocation DiagLoc = Arg->getExprLoc().isValid() ? Arg->getExprLoc() : RParenLoc;
           DiagnoseAssignmentResult(ConvTy, DiagLoc, ParamTy, Arg->getType(),
                                    ArgRes.get(), AssignmentAction::Passing);
-        } else if (ArgRes.isUsable()) {
-          CE->setArg(i, ArgRes.get());
         }
+        // Always apply ArgRes if it produced an altered expression (e.g. an
+        // implicit cast), even on type mismatch, to keep the AST consistent
+        // and prevent CodeGen assertion failures.
+        if (ArgRes.isUsable() && ArgRes.get() != Arg)
+          CE->setArg(i, ArgRes.get());
       }
     }
   }

@@ -2753,7 +2753,13 @@ public:
   llvm::DenseMap<FunctionDecl *,
                  llvm::SmallVector<std::pair<CallExpr *, FunctionDecl *>, 4>>
       C4ImplicitCallsMap;
-  void CheckC4DeferredFunctionCall(CallExpr *CE, FunctionDecl *FD);
+
+  // C4: maps implicit alias placeholder FunctionDecl → the real FunctionDecl
+  // that defines it.  Populated when the alias body is finished, consumed at
+  // end-of-TU to resolve deferred calls through alias names.
+  llvm::DenseMap<FunctionDecl *, FunctionDecl *> C4AliasResolvedMap;
+  void CheckC4DeferredFunctionCall(CallExpr *CE, FunctionDecl *FD,
+                                    bool CheckArgs = true);
 
   // END C4
 

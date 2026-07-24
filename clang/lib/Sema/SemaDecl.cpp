@@ -4516,18 +4516,12 @@ bool Sema::MergeFunctionDecl(FunctionDecl *New, NamedDecl *&OldD, Scope *S,
   // When a function was called before being defined, an implicit
   // int()-placeholder was created.  The real definition should silently
   // override it instead of producing a "conflicting types" error.
+  //
+  // Deferred call resolution is delayed to ActOnEndOfTranslationUnit
+  // so that ALL function definitions are seen first, ensuring type-
+  // inferred variables get the correct return type before argument
+  // checking.
   if (getLangOpts().C4() && Old->isImplicit() && !Old->getBuiltinID()) {
-    auto It = C4ImplicitCallsMap.find(Old);
-    if (It != C4ImplicitCallsMap.end()) {
-      for (auto &Pair : It->second) {
-        CallExpr *CE = Pair.first;
-        CheckC4DeferredFunctionCall(CE, New);
-        // Once the callee is defined, the enclosing function can be emitted.
-        if (FunctionDecl *Enclosing = Pair.second)
-          Context.C4DeferredFunctionDecls.erase(Enclosing);
-      }
-      C4ImplicitCallsMap.erase(It);
-    }
     return false;
   }
 
@@ -17977,15 +17971,10 @@ Decl *Sema::ActOnFinishFunctionBody(Decl *dcl, Stmt *Body, bool IsInstantiation,
         for (; I != IdResolver.end(); ++I) {
           if (FunctionDecl *Cand = dyn_cast<FunctionDecl>(*I)) {
             if (Cand->isImplicit() && !Cand->hasBody()) {
-              auto CallIt = C4ImplicitCallsMap.find(Cand);
-              if (CallIt != C4ImplicitCallsMap.end()) {
-                for (auto &Pair : CallIt->second) {
-                  CheckC4DeferredFunctionCall(Pair.first, FD);
-                  if (FunctionDecl *Enclosing = Pair.second)
-                    Context.C4DeferredFunctionDecls.erase(Enclosing);
-                }
-                C4ImplicitCallsMap.erase(CallIt);
-              }
+              // Store the real function for this implicit alias placeholder,
+              // so deferred calls can be resolved at end-of-TU.
+              C4AliasResolvedMap[Cand] = FD;
+              // Register the AsmLabelAttr so the alias works at link time.
               std::string Label;
               if (Context.getTargetInfo().getTriple().isOSBinFormatMachO())
                 Label = "_";
