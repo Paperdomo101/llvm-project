@@ -1,26 +1,60 @@
+// tests/aliasing.c4 — Consolidated C4 aliasing & out-of-order tests
+// Covers:
+//   - Function aliasing (AddInts / add)
+//   - Overloaded aliases resolved by receiver type (:: dispatch)
+//   - Out-of-order function definitions
+#include <stdio.h>
 
+typedef struct { int x, y; } Vector2;
 
-typedef struct {
-    size_t count, capacity;
-    int *items;
-} IntStack;
+// ── Out-of-order: call before definition ─────────────────────────────────────
+print_int / print (int i) {
+    printf("%d\n", i);
+}
 
-typedef struct {
-    size_t count, capacity;
-    float *items;
-} FloatStack;
+add_ints_A / add_A (int a, b) int {
+    return a + b;
+}
 
-IntStackPush / push (&IntStack stack, int value) {...}
+// ── Overloaded aliases ──────────────────────────────────────────────────────
+AddInts_B / add_B (int a, b) int { return a + b; }
 
-FloatStackPush / push (&FloatStack stack, float value) {...}
+Vector2Add / add_B (Vector2 a, b) Vector2 { return (Vector2){a.x + b.x, a.y + b.y}; }
 
-main () int {
-    IntStack stack = {}
+// ── Simple alias (no overloading) ────────────────────────────────────────────
+MulInts / mul (int a, b) int { return a * b; }
 
-    IntStackPush(stack, 5) // explicit
-    push(stack, 5)         // alias
-    stack::push(5)         // pairs nicely with the method-esque invokation
+int main() {
+    int failures = 0;
 
-    FloatStack stackf = {}
-    stackf::push(3.513)    // no conflict with intstack
+    // ── Out-of-order: :: dispatch called before definition ────────────────────
+    int r = 10::add_A(4);
+    r::print();
+    if (r != 14) { printf("FAIL: out-of-order add_A\n"); failures++; }
+
+    // ── Primary name call ─────────────────────────────────────────────────────
+    int r1 = AddInts_B(10, 5);
+    if (r1 != 15) { printf("FAIL: AddInts_B(10,5) = %d\n", r1); failures++; }
+
+    // ── Overloaded :: dispatch ────────────────────────────────────────────────
+    int r2 = 10::add_B(5);
+    if (r2 != 15) { printf("FAIL: 10::add_B(5) = %d\n", r2); failures++; }
+
+    Vector2 v = (Vector2){4, 6};
+    Vector2 v2 = (Vector2){9, 8};
+    Vector2 result = v::add_B(v2);
+    if (result.x != 13 || result.y != 14) {
+        printf("FAIL: v::add_B(v2) = {%d, %d}\n", result.x, result.y);
+        failures++;
+    }
+
+    // ── Simple alias call ─────────────────────────────────────────────────────
+    int r3 = mul(6, 7);
+    if (r3 != 42) { printf("FAIL: mul(6,7) = %d\n", r3); failures++; }
+
+    int r4 = MulInts(3, 9);
+    if (r4 != 27) { printf("FAIL: MulInts(3,9) = %d\n", r4); failures++; }
+
+    if (failures == 0) printf("All aliasing tests passed!\n");
+    return failures;
 }

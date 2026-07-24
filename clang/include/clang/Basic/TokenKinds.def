@@ -472,6 +472,9 @@ C23_KEYWORD(typeof_unqual           , 0)
 // '_Defer' TS
 KEYWORD(_Defer                      , KEYDEFERTS)
 
+// C4 language extensions
+KEYWORD(or                          , KEYC4)
+
 // ISO/IEC JTC1 SC22 WG14 N1169 Extension
 KEYWORD(_Accum                      , KEYFIXEDPOINT)
 KEYWORD(_Fract                      , KEYFIXEDPOINT)

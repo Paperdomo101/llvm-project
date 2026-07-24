@@ -1,15 +1,24 @@
-// test local static type-inferred variables (static var :=)
+// tests/static_type_inferred_runtime.c4 — Consolidated static type-inferred tests
+// Covers local and global static type-inferred variables (static var :=)
+#include <stdio.h>
 
-int get_counter() {
+static global_markers := 64;
+
+get_counter () int {
     static frame_counter := 0;
     frame_counter = frame_counter + 1;
     return frame_counter;
 }
 
-int main() {
-    if (get_counter() != 1) return 1;
-    if (get_counter() != 2) return 2;
-    if (get_counter() != 3) return 3;
+main () int {
+    // ── Static global ────────────────────────────────────────────────────────
+    if (global_markers != 64) { printf("FAIL: global_markers\n"); return 1; }
 
+    // ── Static local ─────────────────────────────────────────────────────────
+    if (get_counter() != 1) { printf("FAIL: counter 1\n"); return 1; }
+    if (get_counter() != 2) { printf("FAIL: counter 2\n"); return 1; }
+    if (get_counter() != 3) { printf("FAIL: counter 3\n"); return 1; }
+
+    printf("Static type-inferred tests passed!\n");
     return 0;
 }

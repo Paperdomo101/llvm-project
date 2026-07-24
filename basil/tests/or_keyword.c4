@@ -1,0 +1,43 @@
+// tests/or_keyword.c4
+// Compile-time tests for the C4 'or' keyword — verifies error diagnostics
+// for disallowed single-line 'or' without braces.
+
+main () int {
+    a := 0;
+    b := 1;
+
+    // --- Valid baseline: all three 'or' forms that should compile ---
+    {
+        if a > b {
+            a = 0;
+        }
+        or a < b {
+            a = 1;
+        }
+        or {
+            a = 2;
+        }
+    }
+
+    // --- Invalid: 'or' without braces and no condition ---
+    // expected-error {{expected '{'}}
+    {
+        if 1 {
+            a = 0;
+        }
+        or
+            a = 99;
+    }
+
+    // --- Invalid: 'or' with condition but no braces ---
+    // expected-error {{expected '{'}}
+    {
+        if 1 {
+            a = 0;
+        }
+        or a > 0
+            a = 99;
+    }
+
+    return 0;
+}

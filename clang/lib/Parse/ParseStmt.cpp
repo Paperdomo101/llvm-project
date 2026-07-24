@@ -2063,7 +2063,7 @@ StmtResult Parser::ParseIfStatement(SourceLocation *TrailingElseLoc) {
     ThenStmt = ParseStatement(&InnerStatementTrailingElseLoc);
   }
 
-  if (Tok.isNot(tok::kw_else))
+  if (Tok.isNot(tok::kw_else) && !(getLangOpts().C4() && Tok.is(tok::kw_or)))
     MIChecker.Check();
 
   // Pop the 'if' scope if needed.
@@ -2112,6 +2112,84 @@ StmtResult Parser::ParseIfStatement(SourceLocation *TrailingElseLoc) {
 
     // Pop the 'else' scope if needed.
     InnerScope.Exit();
+  } else if (getLangOpts().C4() && Tok.is(tok::kw_or)) {
+    // C4 'or' chain — syntactic sugar for else-if / else chains.
+    if (TrailingElseLoc)
+      *TrailingElseLoc = Tok.getLocation();
+    ElseLoc = Tok.getLocation();
+    ElseStmtLoc = Tok.getLocation();
+
+    struct OrClause {
+      SourceLocation OrLoc;
+      ParsedCondition Cond;
+      StmtResult Body;
+      bool HasCond = false;
+    };
+    SmallVector<OrClause, 4> Clauses;
+
+    while (Tok.is(tok::kw_or)) {
+      OrClause C;
+      C.OrLoc = ConsumeToken();
+
+      if (Tok.is(tok::l_brace)) {
+        ParseScope OrScope(this, Scope::DeclScope, C99orCXX, true);
+        C.Body = ParseCompoundStatementBody();
+        Clauses.push_back(C);
+        break;
+      }
+
+      C.Cond = ParseCondition(C.OrLoc, Sema::ConditionKind::Boolean);
+      C.HasCond = true;
+      if (C.Cond.Cond.isInvalid() || C.Cond.InitStmt.isInvalid()) {
+        IfScope.Exit();
+        return StmtError();
+      }
+
+      if (!Tok.is(tok::l_brace)) {
+        Diag(Tok, diag::err_expected) << tok::l_brace;
+        SkipUntil(tok::semi);
+        IfScope.Exit();
+        return StmtError();
+      }
+
+      {
+        ParseScope OrScope(this, Scope::DeclScope, C99orCXX, true);
+        C.Body = ParseCompoundStatementBody();
+      }
+      if (C.Body.isInvalid()) {
+        IfScope.Exit();
+        return StmtError();
+      }
+
+      Clauses.push_back(C);
+    }
+
+    if (Clauses.empty()) {
+      ElseStmt = StmtError();
+    } else {
+      OrClause &Last = Clauses.back();
+      if (Last.HasCond) {
+        ElseStmt = Actions.ActOnIfStmt(
+            Last.OrLoc, IfStatementKind::Ordinary,
+            Last.Cond.LParen, Last.Cond.InitStmt.get(),
+            Last.Cond.Cond, Last.Cond.RParen,
+            Last.Body.get(), SourceLocation(), nullptr);
+      } else {
+        ElseStmt = Last.Body;
+      }
+
+      for (int i = (int)Clauses.size() - 2; i >= 0; --i) {
+        OrClause &C = Clauses[i];
+        ElseStmt = Actions.ActOnIfStmt(
+            C.OrLoc, IfStatementKind::Ordinary,
+            C.Cond.LParen, C.Cond.InitStmt.get(),
+            C.Cond.Cond, C.Cond.RParen,
+            C.Body.get(), C.OrLoc, ElseStmt.get());
+      }
+    }
+
+    if (ElseStmt.isInvalid())
+      ElseStmt = Actions.ActOnNullStmt(ElseStmtLoc);
   } else if (Tok.is(tok::code_completion)) {
     cutOffParsing();
     Actions.CodeCompletion().CodeCompleteAfterIf(getCurScope(), IsBracedThen);

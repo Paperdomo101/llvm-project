@@ -1,0 +1,69 @@
+// tests/chain_ops.c4 — Consolidated C4 comparison chaining tests
+// Covers ||==, ||!=, &&==, spaced forms (|| ==, || !=, && ==), side effects
+#include <stdio.h>
+
+int side_effects_called = 0;
+
+fn_with_side_effects () int {
+    side_effects_called++;
+    return 5;
+}
+
+test_or_eq (int c) int {
+    if (c == ' ' ||== '\t' ||== '\n') return 1;
+    return 0;
+}
+
+test_or_ne (int c) int {
+    if (c != 'a' ||!= 'b' ||!= 'c') return 1;
+    return 0;
+}
+
+test_and_eq (int a, b) int {
+    if (a == 10 &&== b) return 1;
+    return 0;
+}
+
+test_chain_three (int x) int {
+    if (x == 1 ||== 2 ||== 3) return 1;
+    return 0;
+}
+
+main () int {
+    // ── ||== compact form ─────────────────────────────────────────────────────
+    printf("test_or_eq(' '): %d\n", test_or_eq(' '));
+    printf("test_or_eq('x'): %d\n", test_or_eq('x'));
+
+    // ── ||!= ──────────────────────────────────────────────────────────────────
+    printf("test_or_ne('a'): %d\n", test_or_ne('a'));
+    printf("test_or_ne('x'): %d\n", test_or_ne('x'));
+
+    // ── &&== ──────────────────────────────────────────────────────────────────
+    printf("test_and_eq(10,10): %d\n", test_and_eq(10, 10));
+    printf("test_and_eq(10,20): %d\n", test_and_eq(10, 20));
+
+    // ── 3-element chain ───────────────────────────────────────────────────────
+    printf("test_chain_three(1): %d\n", test_chain_three(1));
+    printf("test_chain_three(4): %d\n", test_chain_three(4));
+
+    // ── Side-effect: || == spaced form ────────────────────────────────────────
+    int result = 0;
+    side_effects_called = 0;
+    if (fn_with_side_effects() == 5 || == 6 || == 7) result = 1;
+    printf("Side-effect || == match: result=%d side_effects=%d\n", result, side_effects_called);
+
+    side_effects_called = 0;
+    result = 0;
+    if (fn_with_side_effects() == 99 || == 6 || == 7) result = 1;
+    printf("Side-effect || == no-match: result=%d side_effects=%d\n", result, side_effects_called);
+
+    // ── Spaced forms ──────────────────────────────────────────────────────────
+    int c = ' ';
+    if (c == ' ' || == '\t' || == '\n') printf("Spaced || == works\n");
+    c = 'x';
+    if (c != 'a' || != 'b' || != 'c') printf("Spaced || != works\n");
+    int a = 10, b = 10;
+    if (a == 10 && == b) printf("Spaced && == works\n");
+
+    return 0;
+}

@@ -237,6 +237,14 @@ CompilerTest custom_test_suite[] = {
         }
     },
     {
+        "C4 'or' keyword (error handling)",
+        "tests/or_keyword.c4",
+        false, 2, {
+            "expected '{'",
+            "expected '{'",
+        }
+    },
+    {
         "C4 Embed Arrow Errors",
         "tests/embed_arrow_errors.c4",
         false, 4, {
@@ -358,7 +366,7 @@ CompilerTest custom_test_suite[] = {
         "tests/symbol_of_runtime.c4", true
     },
     {
-        "C4 enum declarations (unqualified, qualified, iota, implicit dot, OR group, switch)",
+        "C4 enum declarations (unqualified, qualified, iota, implicit dot, OR group, switch, ternary, implicit ::)",
         "tests/enums_c4_runtime.c4", true
     },
     {
@@ -410,20 +418,16 @@ CompilerTest custom_test_suite[] = {
         "tests/swizzle_expressions_runtime.c4", true
     },
     {
-        "Static Local Type-inferred Variables (runtime)",
+        "Static Local and Global Type-inferred Variables",
         "tests/static_type_inferred_runtime.c4", true
-    },
-    {
-        "Anonymous Local Struct Declarations (runtime)",
-        "tests/anonymous_local_structs_runtime.c4", true
     },
     {
         "C4 Array Capacity Operator (runtime)",
         "tests/array_capacity_operator_runtime.c4", true
     },
     {
-        "Static Global Type-inferred Variables (runtime)",
-        "tests/static_global_type_inferred_runtime.c4", true
+        "Anonymous Local Struct Declarations (runtime)",
+        "tests/anonymous_local_structs_runtime.c4", true
     },
     {
         "String-Of Operator $. (runtime)",
@@ -446,24 +450,16 @@ CompilerTest custom_test_suite[] = {
         "tests/named_return_runtime.c4", true
     },
     {
-        "Comparison Chaining Operators (||==, ||!=, &&==) (runtime)",
-        "tests/chain_test.c4", true
+        "Comparison Chaining Operators (||==, ||!=, &&==, spaced, side effects)",
+        "tests/chain_ops.c4", true
     },
     {
-        "Comparison Chaining Spaced Form (|| ==, || !=, && ==) with Side Effects (runtime)",
-        "tests/chain_sidefx.c4", true
+        "Identifier Aliasing, Overloaded :: Dispatch & Out-of-Order Definitions",
+        "tests/aliasing.c4", true
     },
     {
-        "Identifier Aliasing (AddInts / add) (runtime)",
-        "tests/alias_func.c4", true
-    },
-    {
-        "Identifier Aliasing with :: Dispatch (runtime)",
-        "tests/alias_overload.c4", true
-    },
-    {
-        "Out-of-Order Function Definitions (runtime)",
-        "tests/out_of_order.c4", true
+        "C4 'or' keyword (runtime)",
+        "tests/or_keyword_runtime.c4", true
     },
 };
 

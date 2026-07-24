@@ -1,0 +1,192 @@
+#include <stdio.h>
+#include <stdlib.h>
+
+int test_n = 1;
+test (int expected, int actual, const char *msg) int {
+    if (actual != expected) {
+        printf("[FAIL] or_keyword: %s (got %d, expected %d)\n", msg, actual, expected);
+        exit(1);
+    }
+    return printf("  [%d] PASS: %s\n", test_n++, msg);
+}
+
+main () int {
+    printf("=== C4 'or' keyword tests ===\n\n");
+
+    // --- 1. Simple 'or' with condition (else-if) ---
+    {
+        result := 0;
+        a := 10;
+        b := 20;
+        if a > b {
+            result = 99;
+        }
+        or a < b {
+            result = 1;
+        }
+        or {
+            result = 99;
+        }
+        test(1, result, "1: or as else-if (condition true)");
+    }
+
+    // --- 2. 'or' with false condition, falls through to bare 'or' ---
+    {
+        result := 0;
+        x := 5;
+        if x > 10 {
+            result = 99;
+        }
+        or x > 20 {
+            result = 99;
+        }
+        or {
+            result = 2;
+        }
+        test(2, result, "2: chained or falling through to bare or (else)");
+    }
+
+    // --- 3. Bare 'or' directly after 'if' (no condition) ---
+    {
+        result := 0;
+        if 0 {
+            result = 99;
+        }
+        or {
+            result = 3;
+        }
+        test(3, result, "3: bare or directly after if");
+    }
+
+    // --- 4. 'or' with all conditions false, bare 'or' catches ---
+    {
+        result := 0;
+        val := 42;
+        if val == 0 {
+            result = 99;
+        }
+        or val == 1 {
+            result = 99;
+        }
+        or val == 2 {
+            result = 99;
+        }
+        or {
+            result = 4;
+        }
+        test(4, result, "4: three or-clauses, bare or at end");
+    }
+
+    // --- 5. Chained 'or' with middle condition true ---
+    {
+        result := 0;
+        n := 15;
+        if n < 10 {
+            result = 99;
+        }
+        or n < 20 {
+            result = 5;
+        }
+        or {
+            result = 99;
+        }
+        test(5, result, "5: middle or-clause true");
+    }
+
+    // --- 6. 'if' condition true, 'or' skipped ---
+    {
+        result := 0;
+        if 1 {
+            result = 6;
+        }
+        or 1 {
+            result = 99;
+        }
+        or {
+            result = 99;
+        }
+        test(6, result, "6: if true, or clauses skipped");
+    }
+
+    // --- 7. First 'or' condition true, second skipped ---
+    {
+        result := 0;
+        if 0 {
+            result = 99;
+        }
+        or 1 {
+            result = 7;
+        }
+        or {
+            result = 99;
+        }
+        test(7, result, "7: first or true, bare or skipped");
+    }
+
+    // --- 8. 'or' with parenthesized condition ---
+    {
+        result := 0;
+        a := 3;
+        b := 7;
+        if a > b {
+            result = 99;
+        }
+        or (a < b) {
+            result = 8;
+        }
+        test(8, result, "8: or with parenthesized condition");
+    }
+
+    // --- 9. 'or' with '!' ---
+    {
+        result := 0;
+        flag := 0;
+        if flag {
+            result = 99;
+        }
+        or !flag {
+            result = 9;
+        }
+        test(9, result, "9: or with ! condition");
+    }
+
+    // --- 10. 'or' with comparison expression ---
+    {
+        result := 0;
+        x := 100;
+        if x == 0 {
+            result = 99;
+        }
+        or x > 50 && x < 200 {
+            result = 10;
+        }
+        test(10, result, "10: or with compound condition");
+    }
+
+    // --- 11. 'or' with only bare clause (equivalent to else) ---
+    {
+        result := 0;
+        if 0 {
+            result = 99;
+        }
+        or {
+            result = 11;
+        }
+        test(11, result, "11: single bare or (if-false path)");
+    }
+
+    // --- 12. 'or' not executed when if is true ---
+    {
+        result := 0;
+        if 1 {
+            result = 12;
+        }
+        or {
+            result = 99;
+        }
+        test(12, result, "12: if true, bare or not executed");
+    }
+
+    printf("\n[SUCCESS] All 'or' keyword tests passed!\n");
+    return 0;
+}

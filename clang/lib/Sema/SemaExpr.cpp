@@ -9714,6 +9714,57 @@ QualType Sema::CheckConditionalOperands(ExprResult &Cond, ExprResult &LHS,
                                /*AllowBooleanOperation*/ false,
                                /*ReportInvalid*/ true);
 
+  // C4: when both operands of a ternary are implicit-dot enum member
+  // accesses (e.g. cond ? .bang_equal : .bang), resolve them to the
+  // common enum type instead of promoting to the underlying integer type.
+  if (getLangOpts().C4()) {
+    auto GetEnumForExpr = [&](Expr *E) -> EnumDecl * {
+      if (!E) return nullptr;
+      if (auto *ULE = dyn_cast<UnresolvedLookupExpr>(E)) {
+        // Still unresolved — check all candidates.
+        EnumDecl *Found = nullptr;
+        for (NamedDecl *D : ULE->decls()) {
+          if (auto *ECD = dyn_cast<EnumConstantDecl>(D)) {
+            if (auto *ED = dyn_cast<EnumDecl>(ECD->getDeclContext())) {
+              if (!Found) Found = ED;
+              else if (Found != ED) return nullptr;
+            }
+          } else {
+            return nullptr;
+          }
+        }
+        return Found;
+      }
+      // Already resolved to a DeclRefExpr for an enum constant.
+      if (auto *DRE = dyn_cast<DeclRefExpr>(E)) {
+        if (auto *ECD = dyn_cast<EnumConstantDecl>(DRE->getDecl()))
+          return dyn_cast<EnumDecl>(ECD->getDeclContext());
+      }
+      return nullptr;
+    };
+    EnumDecl *ED_L = GetEnumForExpr(LHS.get());
+    EnumDecl *ED_R = GetEnumForExpr(RHS.get());
+    if (ED_L && ED_R && ED_L == ED_R) {
+      QualType EnumTy = Context.getTagType(ElaboratedTypeKeyword::None,
+                                            /*Qualifier=*/std::nullopt, ED_L,
+                                            /*OwnsTag=*/false);
+      // If still unresolved, resolve now.
+      Expr *LHSExpr = LHS.get();
+      Expr *RHSExpr = RHS.get();
+      TryC4ResolveDotExpr(LHSExpr, EnumTy);
+      TryC4ResolveDotExpr(RHSExpr, EnumTy);
+      // Cast both branches to the enum type so the ConditionalOperator
+      // result matches.
+      LHSExpr = ImpCastExprToType(LHSExpr, EnumTy, CK_IntegralCast).get();
+      RHSExpr = ImpCastExprToType(RHSExpr, EnumTy, CK_IntegralCast).get();
+      if (!LHSExpr || !RHSExpr)
+        return QualType();
+      LHS = LHSExpr;
+      RHS = RHSExpr;
+      return EnumTy;
+    }
+  }
+
   QualType ResTy = UsualArithmeticConversions(LHS, RHS, QuestionLoc,
                                               ArithConvKind::Conditional);
   if (LHS.isInvalid() || RHS.isInvalid())

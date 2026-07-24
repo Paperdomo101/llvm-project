@@ -28,19 +28,6 @@
     if (bob) bob::do_thing()
     ```
 
-    ## or keyword
-    ```
-    if a < b {
-    		do_this()
-    }
-    or b > c {
-    		do_that()
-    }
-    or {
-    		do_that()
-    }
-    ```
-
 		## new ternary
 		```
 		porth_error("early EOF" if fp::feof() or
@@ -170,6 +157,19 @@
 # ===|===|=== DONE ===|===|===
 # ____________________________
 
+
+    ## or keyword
+    ```
+    if a < b {
+    		do_this()
+    }
+    or b > c {
+    		do_that()
+    }
+    or {
+    		do_else()
+    }
+    ```
 
     ## function aliasing
     ```

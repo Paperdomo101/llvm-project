@@ -2404,6 +2404,44 @@ Parser::ParseCastExpression(CastParseKind ParseKind, bool isAddressOfOperand,
     break;
 
   case tok::coloncolon: {
+    // C4: ::method(...) without an explicit receiver — use the enclosing
+    // function's C4 embed parameter (e.g. <- &Scanner scanner) as the
+    // implicit receiver.
+    if (getLangOpts().C4()) {
+      if (FunctionDecl *FD = Actions.getCurFunctionDecl()) {
+        ParmVarDecl *EmbedParam = nullptr;
+        for (ParmVarDecl *P : FD->parameters()) {
+          if (P->isC4Embed()) {
+            EmbedParam = P;
+            break;
+          }
+        }
+        if (EmbedParam) {
+          // Check if the next token is an identifier (method name).
+          if (PP.LookAhead(0).is(tok::identifier) ||
+              PP.LookAhead(0).is(tok::raw_identifier)) {
+            Token OpToken = Tok; // the '::'
+            PrevTokLocation = Tok.getLocation();
+            PP.LexUnexpandedToken(Tok);
+            ExprResult Receiver = Actions.BuildDeclRefExpr(
+                EmbedParam, EmbedParam->getOriginalType(), VK_LValue,
+                OpToken.getLocation());
+            if (!Receiver.isInvalid()) {
+              Res = ParseMethodDispatch(Receiver, OpToken);
+              if (!Res.isInvalid()) {
+                if (getLangOpts().C4())
+                  Res = ParsePostfixExpressionSuffix(Res);
+              }
+            }
+            // Whether successful or not, we've consumed the :: and the
+            // identifier.  Don't fall through to C++ :: handling.
+            AllowSuffix = false;
+            break;
+          }
+        }
+      }
+    }
+
     // ::foo::bar -> global qualified name etc.   If TryAnnotateTypeOrScopeToken
     // annotates the token, tail recurse.
     if (TryAnnotateTypeOrScopeToken())
