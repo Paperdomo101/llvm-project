@@ -1328,7 +1328,7 @@ Parser::ParseCastExpression(CastParseKind ParseKind, bool isAddressOfOperand,
   // is not rejected as an invalid expression before we can consume the '.X'.
   if (getLangOpts().C4() && SavedKind == tok::identifier &&
       NextToken().is(tok::period) &&
-      (GetLookAheadToken(2).is(tok::identifier) ||
+      (GetLookAheadToken(2).getIdentifierInfo() != nullptr ||
        GetLookAheadToken(2).is(tok::code_completion) ||
        GetLookAheadToken(2).getLocation().isMacroID())) {
     if (Actions.IsC4EnumName(Tok.getIdentifierInfo())) {
@@ -1344,7 +1344,7 @@ Parser::ParseCastExpression(CastParseKind ParseKind, bool isAddressOfOperand,
       }
       IdentifierInfo *MemberII = nullptr;
       SourceLocation MemberLoc;
-      if (Tok.is(tok::identifier)) {
+      if (Tok.getIdentifierInfo() != nullptr) {
         MemberII = Tok.getIdentifierInfo();
         MemberLoc = ConsumeToken();
       } else if (Tok.getLocation().isMacroID()) {
@@ -1407,51 +1407,51 @@ Parser::ParseCastExpression(CastParseKind ParseKind, bool isAddressOfOperand,
   // ============================================================
 
   // === C4: IMPLICIT ENUM DOT (.Member or .{M1, M2}) ===
-  case tok::period: {
-    if (getLangOpts().C4()) {
-      // Capture the preferred/expected type at the dot's source position
-      // BEFORE consuming the dot.  enterBinary() registered the dot location
-      // as ExpectedLoc, so get() must be called while Tok is still '.'.  After
-      // ConsumeToken() the location shifts to the next token and get() returns
-      // a null type.
-      QualType DotExpectedTy = PreferredType.get(Tok.getLocation());
-      SourceLocation DotLoc = ConsumeToken(); // consume '.'
+case tok::period: {
+  if (getLangOpts().C4()) {
+    // Capture the preferred/expected type at the dot's source position
+    // BEFORE consuming the dot.  enterBinary() registered the dot location
+    // as ExpectedLoc, so get() must be called while Tok is still '.'.  After
+    // ConsumeToken() the location shifts to the next token and get() returns
+    // a null type.
+    QualType DotExpectedTy = PreferredType.get(Tok.getLocation());
+    SourceLocation DotLoc = ConsumeToken(); // consume '.'
 
-      // === C4: CODE COMPLETION AFTER '.' ===
-      // The user typed '.' and triggered completion (e.g. `mode = .`).  Hand
-      // off to Sema so it can enumerate the members of the expected enum type.
-      if (Tok.is(tok::code_completion)) {
-        cutOffParsing();
-        Actions.CodeCompletion().CodeCompleteC4ImplicitDot(
-            getCurScope(), DotExpectedTy);
+    // === C4: CODE COMPLETION AFTER '.' ===
+    // The user typed '.' and triggered completion (e.g. `mode = .`).  Hand
+    // off to Sema so it can enumerate the members of the expected enum type.
+    if (Tok.is(tok::code_completion)) {
+      cutOffParsing();
+      Actions.CodeCompletion().CodeCompleteC4ImplicitDot(
+          getCurScope(), DotExpectedTy);
+      return ExprError();
+    }
+
+    if (Tok.is(tok::l_brace)) {
+      // .{M1, M2} → bitwise OR of enum members
+      ConsumeBrace(); // consume '{'
+      SmallVector<IdentifierInfo *, 4> Members;
+      SmallVector<SourceLocation, 4> MemberLocs;
+      while (Tok.getIdentifierInfo() != nullptr) {
+        Members.push_back(Tok.getIdentifierInfo());
+        MemberLocs.push_back(ConsumeToken());
+        if (Tok.is(tok::comma)) ConsumeToken();
+        else break;
+      }
+      if (Tok.isNot(tok::r_brace)) {
+        Diag(Tok, diag::err_expected) << tok::r_brace;
         return ExprError();
       }
+      ConsumeBrace();
+      return Actions.ActOnC4DotOrGroup(DotLoc, Members, MemberLocs, DotExpectedTy);
+    }
 
-      if (Tok.is(tok::l_brace)) {
-        // .{M1, M2} → bitwise OR of enum members
-        ConsumeBrace(); // consume '{'
-        SmallVector<IdentifierInfo *, 4> Members;
-        SmallVector<SourceLocation, 4> MemberLocs;
-        while (Tok.is(tok::identifier)) {
-          Members.push_back(Tok.getIdentifierInfo());
-          MemberLocs.push_back(ConsumeToken());
-          if (Tok.is(tok::comma)) ConsumeToken();
-          else break;
-        }
-        if (Tok.isNot(tok::r_brace)) {
-          Diag(Tok, diag::err_expected) << tok::r_brace;
-          return ExprError();
-        }
-        ConsumeBrace();
-        return Actions.ActOnC4DotOrGroup(DotLoc, Members, MemberLocs, DotExpectedTy);
-      }
-
-      IdentifierInfo *MemberII = nullptr;
-      SourceLocation MemberLoc;
-      if (Tok.is(tok::identifier)) {
-        MemberII = Tok.getIdentifierInfo();
-        MemberLoc = ConsumeToken();
-      } else if (Tok.getLocation().isMacroID()) {
+    IdentifierInfo *MemberII = nullptr;
+    SourceLocation MemberLoc;
+    if (Tok.getIdentifierInfo() != nullptr) {
+      MemberII = Tok.getIdentifierInfo();
+      MemberLoc = ConsumeToken();
+    } else if (Tok.getLocation().isMacroID()) {
         SourceLocation ExpLoc = PP.getSourceManager().getExpansionLoc(Tok.getLocation());
         Token RawTok;
         if (!Lexer::getRawToken(ExpLoc, RawTok, PP.getSourceManager(), PP.getLangOpts(), false)) {

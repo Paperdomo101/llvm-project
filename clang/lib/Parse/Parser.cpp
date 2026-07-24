@@ -383,32 +383,56 @@ OpaquePtr<DeclGroupRef> Parser::ParseC4EnumDeclaration(SourceLocation *DeclEnd) 
     IdentifierInfo *Ident = nullptr;
     SourceLocation IdentLoc;
 
-    if (Tok.is(tok::identifier)) {
+    if (Tok.getIdentifierInfo() != nullptr) {
       Ident = Tok.getIdentifierInfo();
       IdentLoc = ConsumeToken();
     } else if (Tok.getLocation().isMacroID()) {
-      // A macro (e.g. NULL, EOF) was expanded before we could grab the
-      // identifier.  Recover the original spelling from the raw token.
-      SourceLocation ExpLoc = PP.getSourceManager().getExpansionLoc(Tok.getLocation());
+      // A macro was expanded before we could grab the identifier.
+      // Try to recover the original spelling — handle both single-level
+      // macros (#define NULL ((void*)0)) and multi-level ones
+      // (#define TOKENS x(false) with #define false 0).
+      SourceLocation ExpLoc =
+          PP.getSourceManager().getExpansionLoc(Tok.getLocation());
       Token RawTok;
-      if (!Lexer::getRawToken(ExpLoc, RawTok, PP.getSourceManager(), PP.getLangOpts(), false)) {
-        std::string Spelling = PP.getSpelling(RawTok);
-        auto isValidIdent = [](StringRef S) {
-          if (S.empty()) return false;
-          if (!(isalpha(S[0]) || S[0] == '_')) return false;
-          for (char c : S.drop_front()) {
-            if (!(isalnum(c) || c == '_')) return false;
-          }
-          return true;
-        };
-        if (isValidIdent(Spelling)) {
-          Ident = &PP.getIdentifierTable().get(Spelling);
-          // Use the raw token's file location so clangd can find the
-          // enum member for hover.
-          IdentLoc = RawTok.getLocation();
+      std::string Spelling;
+      bool IsMultiLevel = false;
+      // Try recovering via the raw token at the outermost expansion point.
+      // Works for single-level macros like #define NULL ((void*)0).
+      if (!Lexer::getRawToken(ExpLoc, RawTok, PP.getSourceManager(),
+                              PP.getLangOpts(), false)) {
+        Spelling = PP.getSpelling(RawTok);
+      }
+      // Also ask the preprocessor what macro immediately produced this token.
+      // For multi-level macros this gives the inner macro name (e.g. "false"
+      // instead of "TOKENS"), which is what we want.
+      StringRef InnerMacro =
+          PP.getImmediateMacroName(Tok.getLocation());
+      if (!InnerMacro.empty() && InnerMacro != Spelling) {
+        Spelling = std::string(InnerMacro);
+        IsMultiLevel = true;
+      }
+
+      auto isValidIdent = [](StringRef S) {
+        if (S.empty()) return false;
+        if (!(isalpha(S[0]) || S[0] == '_')) return false;
+        for (char c : S.drop_front())
+          if (!(isalnum(c) || c == '_')) return false;
+        return true;
+      };
+      if (isValidIdent(Spelling)) {
+        Ident = &PP.getIdentifierTable().get(Spelling);
+        IdentLoc = Tok.getLocation();
+        if (IsMultiLevel) {
+          // Multi-level expansion: only consume the single token produced
+          // by the inner macro (e.g. '0' from #define false 0).
+          ConsumeAnyToken();
+        } else {
+          // Single-level expansion: consume ALL tokens produced by the
+          // macro (e.g. the entire ((void*)0) from #define NULL).
           SourceLocation MacroExpansionLoc = ExpLoc;
           while (Tok.getLocation().isMacroID() &&
-                 PP.getSourceManager().getExpansionLoc(Tok.getLocation()) == MacroExpansionLoc) {
+                 PP.getSourceManager().getExpansionLoc(
+                     Tok.getLocation()) == MacroExpansionLoc) {
             ConsumeAnyToken();
           }
         }
