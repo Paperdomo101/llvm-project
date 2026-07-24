@@ -16862,6 +16862,38 @@ ExprResult Sema::ActOnC4DotOrGroup(SourceLocation DotLoc,
   return Result;
 }
 
+ExprResult Sema::ActOnC4RangeBinOp(SourceLocation OpLoc, tok::TokenKind OpKind,
+                                    Expr *LHS, Expr *Low, Expr *High) {
+  // Desugar: LHS OP low..high
+  //   ==  : LHS >= low && LHS <= high
+  //   !=  : LHS <  low || LHS >  high
+  //   <   : LHS <  low
+  //   >   : LHS >  high
+  //   <=  : LHS <= high
+  //   >=  : LHS >= low
+  if (OpKind == tok::less)
+    return BuildBinOp(nullptr, OpLoc, BO_LT, LHS, Low);
+  if (OpKind == tok::greater)
+    return BuildBinOp(nullptr, OpLoc, BO_GT, LHS, High);
+  if (OpKind == tok::lessequal)
+    return BuildBinOp(nullptr, OpLoc, BO_LE, LHS, High);
+  if (OpKind == tok::greaterequal)
+    return BuildBinOp(nullptr, OpLoc, BO_GE, LHS, Low);
+  if (OpKind == tok::exclaimequal) {
+    ExprResult CmpLow = BuildBinOp(nullptr, OpLoc, BO_LT, LHS, Low);
+    if (CmpLow.isInvalid()) return ExprError();
+    ExprResult CmpHigh = BuildBinOp(nullptr, OpLoc, BO_GT, LHS, High);
+    if (CmpHigh.isInvalid()) return ExprError();
+    return BuildBinOp(nullptr, OpLoc, BO_LOr, CmpLow.get(), CmpHigh.get());
+  }
+  // tok::equalequal:
+  ExprResult CmpLow = BuildBinOp(nullptr, OpLoc, BO_GE, LHS, Low);
+  if (CmpLow.isInvalid()) return ExprError();
+  ExprResult CmpHigh = BuildBinOp(nullptr, OpLoc, BO_LE, LHS, High);
+  if (CmpHigh.isInvalid()) return ExprError();
+  return BuildBinOp(nullptr, OpLoc, BO_LAnd, CmpLow.get(), CmpHigh.get());
+}
+
 static FieldDecl *findEmbeddedMemberOfType(const RecordDecl *RD, QualType TargetTy, ASTContext &Ctx) {
   for (FieldDecl *FD : RD->fields()) {
     if (FD->isC4Embed()) {

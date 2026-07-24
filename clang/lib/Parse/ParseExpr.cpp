@@ -603,6 +603,26 @@ Parser::ParseRHSOfBinaryExpression(ExprResult LHS, prec::Level MinPrec) {
     else
       RHS = ParseCastExpression(CastParseKind::AnyCastExpr);
 
+    // --- C4: Range comparison (.. operator) ---
+    // Detect 'low..high' when used with comparison operators.
+    // Two consecutive '.' tokens (not '...') form the range operator.
+    if (getLangOpts().C4() && Tok.is(tok::period) &&
+        NextToken().is(tok::period) && !RHS.isInvalid() &&
+        OpToken.isOneOf(tok::equalequal, tok::exclaimequal,
+                        tok::less, tok::greater,
+                        tok::lessequal, tok::greaterequal)) {
+      ConsumeToken(); // eat first '.'
+      ConsumeToken(); // eat second '.'
+      ExprResult High = ParseCastExpression(CastParseKind::AnyCastExpr);
+      if (!High.isInvalid()) {
+        LHS = Actions.ActOnC4RangeBinOp(OpToken.getLocation(),
+            OpToken.getKind(), LHS.get(), RHS.get(), High.get());
+        NextTokPrec = getBinOpPrecedence(Tok.getKind(), GreaterThanIsOperator,
+                                         getLangOpts().CPlusPlus11);
+        continue;
+      }
+    }
+
     // We preserve the LHS only if we hit a clear statement boundary (tok::semi)
     // to avoid additional bogus diagnostics.
     if (RHS.isInvalid() && Tok.isNot(tok::semi)) {

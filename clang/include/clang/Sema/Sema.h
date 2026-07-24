@@ -2657,6 +2657,12 @@ public:
                                ArrayRef<SourceLocation> MemberLocs,
                                QualType PreferredType = QualType());
 
+  /// C4: Desugar a range comparison  LHS OP low..high  into its expanded form.
+  ///   == : LHS >= low && LHS <= high
+  ///   != : LHS <  low || LHS >  high
+  ExprResult ActOnC4RangeBinOp(SourceLocation OpLoc, tok::TokenKind OpKind,
+                               Expr *LHS, Expr *Low, Expr *High);
+
   /// C4 helper: if E is an UnresolvedLookupExpr whose candidates are all
   /// EnumConstantDecls, and TargetType names an enum, replaces E with a
   /// DeclRefExpr for the unique enumerator from that enum.  Returns true on
