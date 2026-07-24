@@ -1363,16 +1363,47 @@ std::optional<HoverInfo> getHover(ParsedAST &AST, Position Pos,
     if (Tok.kind() == tok::identifier) {
       // Prefer the identifier token as a fallback highlighting range.
       HighlightRange = Tok.range(SM).toCharRange(SM);
-      if (auto M = locateMacroAt(Tok, AST.getPreprocessor())) {
-        HoverCountMetric.record(1, "macro");
-        HI = getHoverContents(*M, Tok, AST);
-        if (auto DefLoc = M->Info->getDefinitionLoc(); DefLoc.isValid()) {
-          include_cleaner::Macro IncludeCleanerMacro{
-              AST.getPreprocessor().getIdentifierInfo(Tok.text(SM)), DefLoc};
-          maybeAddSymbolProviders(AST, *HI,
-                                  include_cleaner::Symbol{IncludeCleanerMacro});
+
+      // C4: skip macro hover for identifiers preceded by '.'
+      // (e.g. enum member access .NULL, .EOF) — fall through to
+      // declaration lookup so the enum member is shown instead.
+      bool PrecededByDot = false;
+      if (AST.getLangOpts().C4()) {
+        SourceLocation Loc = Tok.location();
+        bool Invalid = false;
+        const char *Buf = SM.getCharacterData(Loc, &Invalid);
+        if (!Invalid && Buf) {
+          auto Buffer = SM.getBufferDataOrNone(SM.getFileID(Loc));
+          if (Buffer) {
+            const char *Start = Buffer->data();
+            const char *Ptr = Buf - 1;
+            while (Ptr >= Start) {
+              char C = *Ptr;
+              if (C == ' ' || C == '\t' || C == '\r' || C == '\n') {
+                --Ptr;
+                continue;
+              }
+              if (Ptr >= Start && *Ptr == '.') {
+                PrecededByDot = true;
+              }
+              break;
+            }
+          }
         }
-        break;
+      }
+
+      if (!PrecededByDot) {
+        if (auto M = locateMacroAt(Tok, AST.getPreprocessor())) {
+          HoverCountMetric.record(1, "macro");
+          HI = getHoverContents(*M, Tok, AST);
+          if (auto DefLoc = M->Info->getDefinitionLoc(); DefLoc.isValid()) {
+            include_cleaner::Macro IncludeCleanerMacro{
+                AST.getPreprocessor().getIdentifierInfo(Tok.text(SM)), DefLoc};
+            maybeAddSymbolProviders(AST, *HI,
+                                    include_cleaner::Symbol{IncludeCleanerMacro});
+          }
+          break;
+        }
       }
     } else if (Tok.kind() == tok::kw_auto || Tok.kind() == tok::kw_decltype) {
       HoverCountMetric.record(1, "keyword");

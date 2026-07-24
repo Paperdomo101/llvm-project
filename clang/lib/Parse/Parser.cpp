@@ -387,6 +387,8 @@ OpaquePtr<DeclGroupRef> Parser::ParseC4EnumDeclaration(SourceLocation *DeclEnd) 
       Ident = Tok.getIdentifierInfo();
       IdentLoc = ConsumeToken();
     } else if (Tok.getLocation().isMacroID()) {
+      // A macro (e.g. NULL, EOF) was expanded before we could grab the
+      // identifier.  Recover the original spelling from the raw token.
       SourceLocation ExpLoc = PP.getSourceManager().getExpansionLoc(Tok.getLocation());
       Token RawTok;
       if (!Lexer::getRawToken(ExpLoc, RawTok, PP.getSourceManager(), PP.getLangOpts(), false)) {
@@ -401,7 +403,9 @@ OpaquePtr<DeclGroupRef> Parser::ParseC4EnumDeclaration(SourceLocation *DeclEnd) 
         };
         if (isValidIdent(Spelling)) {
           Ident = &PP.getIdentifierTable().get(Spelling);
-          IdentLoc = ExpLoc;
+          // Use the raw token's file location so clangd can find the
+          // enum member for hover.
+          IdentLoc = RawTok.getLocation();
           SourceLocation MacroExpansionLoc = ExpLoc;
           while (Tok.getLocation().isMacroID() &&
                  PP.getSourceManager().getExpansionLoc(Tok.getLocation()) == MacroExpansionLoc) {
