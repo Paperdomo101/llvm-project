@@ -6163,6 +6163,13 @@ namespace {
           return;
         }
       }
+      // C4: the DeclSpec may still be TST_void when the return type was
+      // changed from void to a named return parameter's type (e.g.
+      // "my_func(Scanner s) s {}").  In that case the DeclSpec doesn't
+      // have a valid type-rep for the parameter's TypedefTypeLoc, so skip
+      // the source-location fill.
+      if (DS.getTypeSpecType() == DeclSpec::TST_void)
+        return;
       TL.set(TL.getTypePtr()->getKeyword() != ElaboratedTypeKeyword::None
                  ? DS.getTypeSpecTypeLoc()
                  : SourceLocation(),

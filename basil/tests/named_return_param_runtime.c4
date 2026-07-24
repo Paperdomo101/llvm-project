@@ -1,0 +1,54 @@
+// tests/named_return_param_runtime.c4
+// Runtime test: named return variable that matches a parameter name
+// with implicit void return type (regression test for DeclSpec crash)
+#include <stdio.h>
+#include <stdlib.h>
+
+typedef struct { int x; } Scanner;
+
+static void fail(const char *msg) {
+    printf("[FAIL] %s\n", msg);
+    exit(1);
+}
+
+#define CHECK(cond, msg) \
+    do { if (!(cond)) fail(msg); } while(0)
+
+make_Scanner () Scanner { return {} }
+
+// Named return variable that matches the parameter name
+init_Scanner (Scanner scanner) scanner {
+    scanner.x = 42;
+    // implicit return scanner;
+}
+
+// Same pattern with a different parameter name
+init_Scanner2 (Scanner s) s {
+    s.x = 99;
+}
+
+// Same pattern with alias syntax
+InitScan / init (Scanner scanner) scanner {
+    scanner.x = 77;
+}
+
+main() int {
+    Scanner a = make_Scanner();
+    Scanner r = init_Scanner(a);
+    CHECK(r.x == 42, "1: named return matching param");
+
+    Scanner b = make_Scanner();
+    Scanner r2 = init_Scanner2(b);
+    CHECK(r2.x == 99, "2: named return matching param (different name)");
+
+    Scanner c = make_Scanner();
+    Scanner r3 = InitScan(c);
+    CHECK(r3.x == 77, "3: alias with named return matching param");
+
+    Scanner d = make_Scanner();
+    Scanner r4 = d::init();
+    CHECK(r4.x == 77, "4: :: dispatch on alias with named return matching param");
+
+    printf("[PASS] Named return variable matching parameter name\n");
+    return 0;
+}
