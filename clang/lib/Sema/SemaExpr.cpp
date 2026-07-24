@@ -16862,6 +16862,17 @@ ExprResult Sema::ActOnC4DotOrGroup(SourceLocation DotLoc,
   return Result;
 }
 
+ExprResult Sema::ActOnC4RangeExpr(SourceLocation OpLoc, Expr *Low, Expr *High) {
+  // Store range as ParenExpr(BO_Comma(low, high)) so it can be detected
+  // by comparison and chaining handlers.  Build the BinaryOperator directly
+  // to avoid the "comma has no effect" diagnostic from CheckCommaOperands.
+  QualType Ty = High->getType();
+  auto *CommaBO = BinaryOperator::Create(
+      Context, Low, High, BO_Comma, Ty, VK_PRValue, OK_Ordinary,
+      OpLoc, FPOptionsOverride());
+  return new (Context) ParenExpr(OpLoc, OpLoc, CommaBO);
+}
+
 ExprResult Sema::ActOnC4RangeBinOp(SourceLocation OpLoc, tok::TokenKind OpKind,
                                     Expr *LHS, Expr *Low, Expr *High) {
   // Desugar: LHS OP low..high
@@ -17834,6 +17845,40 @@ ExprResult Sema::ActOnBinOp(Scope *S, SourceLocation TokLoc,
         (Kind == tok::pipepipeexclaimequal) ? tok::exclaimequal : tok::equalequal;
     tok::TokenKind LogicKind =
         (Kind == tok::ampampequal) ? tok::ampamp : tok::pipepipe;
+
+    // --- C4: Range in chained comparison (|| == low..high) ---
+    // If the RHS is a range expression, desugar here using ChainLHS.
+    if (auto *PE = dyn_cast<ParenExpr>(RHSExpr)) {
+      if (auto *CommaBO = dyn_cast<BinaryOperator>(PE->getSubExpr())) {
+        if (CommaBO->getOpcode() == BO_Comma) {
+          Expr *Low = CommaBO->getLHS();
+          Expr *High = CommaBO->getRHS();
+          if (CmpKind == tok::exclaimequal) {
+            ExprResult CmpLow = BuildBinOp(S, TokLoc, BO_LT, ChainLHS, Low);
+            if (CmpLow.isInvalid()) return ExprError();
+            ExprResult CmpHigh = BuildBinOp(S, TokLoc, BO_GT, ChainLHS, High);
+            if (CmpHigh.isInvalid()) return ExprError();
+            ExprResult Cmp = BuildBinOp(S, TokLoc, BO_LOr, CmpLow.get(),
+                                         CmpHigh.get());
+            if (Cmp.isInvalid()) return ExprError();
+            return BuildBinOp(S, TokLoc,
+                (LogicKind == tok::ampamp) ? BO_LAnd : BO_LOr,
+                LHSExpr, Cmp.get());
+          }
+          // ==  : ChainLHS >= low && ChainLHS <= high
+          ExprResult CmpLow = BuildBinOp(S, TokLoc, BO_GE, ChainLHS, Low);
+          if (CmpLow.isInvalid()) return ExprError();
+          ExprResult CmpHigh = BuildBinOp(S, TokLoc, BO_LE, ChainLHS, High);
+          if (CmpHigh.isInvalid()) return ExprError();
+          ExprResult Cmp = BuildBinOp(S, TokLoc, BO_LAnd, CmpLow.get(),
+                                       CmpHigh.get());
+          if (Cmp.isInvalid()) return ExprError();
+          return BuildBinOp(S, TokLoc,
+              (LogicKind == tok::ampamp) ? BO_LAnd : BO_LOr,
+              LHSExpr, Cmp.get());
+        }
+      }
+    }
 
     // Build the comparison: ChainLHS == RHS  (or ChainLHS != RHS)
     ExprResult Cmp = BuildBinOp(S, TokLoc,

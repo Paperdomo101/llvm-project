@@ -2663,6 +2663,11 @@ public:
   ExprResult ActOnC4RangeBinOp(SourceLocation OpLoc, tok::TokenKind OpKind,
                                Expr *LHS, Expr *Low, Expr *High);
 
+  /// C4: Build a range expression (low..high) for later desugaring.
+  /// Returns a ParenExpr wrapping a BinaryOperator(BO_Comma, low, high)
+  /// so that the range can be detected by comparison/chaining handlers.
+  ExprResult ActOnC4RangeExpr(SourceLocation OpLoc, Expr *Low, Expr *High);
+
   /// C4 helper: if E is an UnresolvedLookupExpr whose candidates are all
   /// EnumConstantDecls, and TargetType names an enum, replaces E with a
   /// DeclRefExpr for the unique enumerator from that enum.  Returns true on

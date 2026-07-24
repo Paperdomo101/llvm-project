@@ -570,6 +570,16 @@ Parser::ParseRHSOfBinaryExpression(ExprResult LHS, prec::Level MinPrec) {
 
       ConsumeToken(); // consume the == or !=
       ExprResult RHS = ParseCastExpression(CastParseKind::AnyCastExpr);
+      // C4: range in chained comparison (|| == 'a'..'z')
+      if (!RHS.isInvalid() && Tok.is(tok::period) &&
+          NextToken().is(tok::period)) {
+        ConsumeToken(); // eat first '.'
+        ConsumeToken(); // eat second '.'
+        ExprResult High = ParseCastExpression(CastParseKind::AnyCastExpr);
+        if (!High.isInvalid())
+          RHS = Actions.ActOnC4RangeExpr(OpToken.getLocation(),
+                                          RHS.get(), High.get());
+      }
       if (RHS.isInvalid()) {
         LHS = ExprError();
       } else {
