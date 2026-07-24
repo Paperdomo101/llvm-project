@@ -4517,7 +4517,13 @@ bool Sema::MergeFunctionDecl(FunctionDecl *New, NamedDecl *&OldD, Scope *S,
   // int()-placeholder was created.  The real definition should silently
   // override it instead of producing a "conflicting types" error.
   if (getLangOpts().C4() && Old->isImplicit() && !Old->getBuiltinID()) {
-    // Let the new definition override the placeholder type.
+    auto It = C4ImplicitCallsMap.find(Old);
+    if (It != C4ImplicitCallsMap.end()) {
+      for (CallExpr *CE : It->second) {
+        CheckC4DeferredFunctionCall(CE, New);
+      }
+      C4ImplicitCallsMap.erase(It);
+    }
     return false;
   }
 
@@ -16413,19 +16419,21 @@ Decl *Sema::ActOnParamDeclarator(Scope *S, Declarator &D,
     bool IsExplicitC4Ref = false;
     if (D.getDeclSpec().isC4Reference()) {
       SourceLocation RefLoc = D.getDeclSpec().getC4ReferenceLoc();
-      if (RefLoc.isValid()) {
-        std::pair<FileID, unsigned> LocInfo = Context.getSourceManager().getDecomposedLoc(RefLoc);
-        bool Invalid = false;
-        StringRef Buf = Context.getSourceManager().getBufferData(LocInfo.first, &Invalid);
+      SourceLocation DSLoc = D.getDeclSpec().getBeginLoc();
+      if (RefLoc.isValid() && DSLoc.isValid()) {
+        std::pair<FileID, unsigned> RefLocInfo = Context.getSourceManager().getDecomposedLoc(RefLoc);
+        std::pair<FileID, unsigned> DSLocInfo = Context.getSourceManager().getDecomposedLoc(DSLoc);
+        if (RefLocInfo.first == DSLocInfo.first &&
+            std::abs((int)RefLocInfo.second - (int)DSLocInfo.second) <= 32) {
+          std::pair<FileID, unsigned> LocInfo = RefLocInfo;
+          bool Invalid = false;
+          StringRef Buf = Context.getSourceManager().getBufferData(LocInfo.first, &Invalid);
 
-        if (!Invalid && LocInfo.second < Buf.size()) {
-          // Look directly at the starting character token position of the parameter declaration list
-          if (Buf[LocInfo.second] == '&') {
-            // GROUPING PROTECTION: A grouped parameter like 'r2' in '(&int r1, r2)' sharing the same
-            // DeclSpec list context shares the same getBeginLoc() as 'r1'. To isolate them, we verify
-            // if the current declarator represents the very first variable in the group list sequence!
-            if (D.isFirstDeclarator()) {
-              IsExplicitC4Ref = true;
+          if (!Invalid && LocInfo.second < Buf.size()) {
+            if (Buf[LocInfo.second] == '&') {
+              if (D.isFirstDeclarator()) {
+                IsExplicitC4Ref = true;
+              }
             }
           }
         }
@@ -17966,6 +17974,13 @@ Decl *Sema::ActOnFinishFunctionBody(Decl *dcl, Stmt *Body, bool IsInstantiation,
           if (FunctionDecl *Cand = dyn_cast<FunctionDecl>(*I)) {
             if (Cand->isImplicit() && !Cand->hasBody()) {
               Cand->setType(FD->getType());
+              auto CallIt = C4ImplicitCallsMap.find(Cand);
+              if (CallIt != C4ImplicitCallsMap.end()) {
+                for (CallExpr *CE : CallIt->second) {
+                  CheckC4DeferredFunctionCall(CE, FD);
+                }
+                C4ImplicitCallsMap.erase(CallIt);
+              }
               std::string Label;
               if (Context.getTargetInfo().getTriple().isOSBinFormatMachO())
                 Label = "_";

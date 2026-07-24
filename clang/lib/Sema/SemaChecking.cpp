@@ -13135,10 +13135,13 @@ static std::string PrettyPrintInRange(const llvm::APSInt &Value,
 
 static bool IsImplicitBoolFloatConversion(Sema &S, const Expr *Ex,
                                           bool ToBool) {
-  if (!isa<ImplicitCastExpr>(Ex))
+  if (!Ex || Ex->getType().isNull() || !isa<ImplicitCastExpr>(Ex))
     return false;
 
   const Expr *InnerE = Ex->IgnoreParenImpCasts();
+  if (!InnerE || InnerE->getType().isNull())
+    return false;
+
   const Type *Target = S.Context.getCanonicalType(Ex->getType()).getTypePtr();
   const Type *Source =
     S.Context.getCanonicalType(InnerE->getType()).getTypePtr();
@@ -14011,6 +14014,8 @@ static void AnalyzeImplicitConversions(
   SourceLocation CC = Item.CC;
 
   QualType T = OrigE->getType();
+  if (S.getLangOpts().C4() && (T.isNull() || T->isVoidType()))
+    return;
   Expr *E = OrigE->IgnoreParenImpCasts();
 
   // Propagate whether we are in a C++ list initialization expression.
@@ -14532,6 +14537,8 @@ void Sema::CheckForIntOverflow (const Expr *E) {
 
   do {
     const Expr *OriginalE = Exprs.pop_back_val();
+    if (!OriginalE)
+      continue;
     const Expr *E = OriginalE->IgnoreParenCasts();
 
     if (isa<BinaryOperator>(E) ||
@@ -15243,17 +15250,21 @@ public:
 
       // Visit the callee expression first.
       Region = CalleeRegion;
-      if (SemaRef.getLangOpts().CPlusPlus17) {
-        SequencedSubexpression Sequenced(*this);
-        Visit(CE->getCallee());
-      } else {
-        Visit(CE->getCallee());
+      if (CE->getCallee()) {
+        if (SemaRef.getLangOpts().CPlusPlus17) {
+          SequencedSubexpression Sequenced(*this);
+          Visit(CE->getCallee());
+        } else {
+          Visit(CE->getCallee());
+        }
       }
 
       // Then visit the argument expressions.
       Region = OtherRegion;
-      for (const Expr *Argument : CE->arguments())
-        Visit(Argument);
+      for (const Expr *Argument : CE->arguments()) {
+        if (Argument)
+          Visit(Argument);
+      }
 
       Region = OldRegion;
       if (SemaRef.getLangOpts().CPlusPlus17) {

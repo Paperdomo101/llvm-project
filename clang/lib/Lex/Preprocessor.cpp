@@ -870,27 +870,29 @@ bool Preprocessor::HandleIdentifier(Token &Identifier) {
     assert(MI && "macro definition with no macro info?");
     bool IsPrecededByColonColon = false;
     if (getLangOpts().C4()) {
-      bool ShouldCheck = !Identifier.getFlag(Token::IsReinjected);
-      if (ShouldCheck) {
+      // Only check source-level identifiers (not tokens from macro expansions
+      // or reinjected cached tokens), so that .NULL stays as an identifier for
+      // C4 member access but ::macro() dispatch still expands macros.
+      if (!Identifier.getFlag(Token::IsReinjected) &&
+          Identifier.getLocation().isFileID()) {
         const SourceManager &SM = getSourceManager();
-        SourceLocation SpellingLoc = SM.getSpellingLoc(Identifier.getLocation());
-        if (SpellingLoc.isFileID()) {
-          bool Invalid = false;
-          const char *Buf = SM.getCharacterData(SpellingLoc, &Invalid);
-          if (!Invalid && Buf) {
-            const char *Start = SM.getBufferData(SM.getFileID(SpellingLoc)).data();
-            const char *Ptr = Buf - 1;
-            while (Ptr >= Start) {
-              char C = *Ptr;
-              if (C == ' ' || C == '\t' || C == '\r' || C == '\n') {
-                --Ptr;
-                continue;
-              }
-              break;
+        bool Invalid = false;
+        const char *Buf = SM.getCharacterData(Identifier.getLocation(), &Invalid);
+        if (!Invalid && Buf) {
+          const char *Start = SM.getBufferData(SM.getFileID(Identifier.getLocation())).data();
+          const char *Ptr = Buf - 1;
+          while (Ptr >= Start) {
+            char C = *Ptr;
+            if (C == ' ' || C == '\t' || C == '\r' || C == '\n') {
+              --Ptr;
+              continue;
             }
-            if (Ptr - 1 >= Start && Ptr[0] == ':' && Ptr[-1] == ':') {
-              IsPrecededByColonColon = true;
-            }
+            break;
+          }
+          // Prevent macro expansion after :: (C++ scope) or . (C4 member access).
+          if ((Ptr - 1 >= Start && Ptr[0] == ':' && Ptr[-1] == ':') ||
+              (Ptr >= Start && *Ptr == '.')) {
+            IsPrecededByColonColon = true;
           }
         }
       }

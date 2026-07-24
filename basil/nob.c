@@ -223,8 +223,9 @@ CompilerTest custom_test_suite[] = {
     {
         "C4 Enum Type Safety (plain int rejected for enum param)",
         "tests/enum_type_safety.c4",
-        false, 1, {
-            "cannot be implicitly converted to C4 enum type"
+        false, 2, {
+            "cannot be implicitly converted to C4 enum type",
+            "note: passing argument to parameter"
         }
     },
     {

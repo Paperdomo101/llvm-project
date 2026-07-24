@@ -6611,7 +6611,8 @@ Sema::ConvertArgumentsForCall(CallExpr *Call, Expr *Fn,
 
           if (!Invalid && LocInfo.second < Buf.size()) {
             unsigned StartPos = (LocInfo.second > 16) ? (LocInfo.second - 16) : 0;
-            StringRef TextWindow = Buf.substr(StartPos, LocInfo.second - StartPos + 1);
+            unsigned EndPos = std::min((size_t)LocInfo.second + 48, Buf.size());
+            StringRef TextWindow = Buf.substr(StartPos, EndPos - StartPos);
             if (TextWindow.contains('&')) {
               IsTargetC4Reference = true;
             }
@@ -6655,7 +6656,7 @@ Sema::ConvertArgumentsForCall(CallExpr *Call, Expr *Fn,
 }
 
 bool Sema::IsC4ReferenceReturnType(const FunctionDecl *FD) const {
-  if (!FD) return false;
+  if (!FD || !FD->getReturnType()->isPointerType()) return false;
   FunctionTypeLoc FTL = FD->getFunctionTypeLoc();
   if (FTL.isNull()) return false;
   SourceLocation RParen = FTL.getRParenLoc();
@@ -7833,6 +7834,8 @@ ExprResult Sema::BuildResolvedCallExpr(Expr *Fn, NamedDecl *NDecl,
   // in the call expression.
   const auto *Proto = dyn_cast_or_null<FunctionProtoType>(FuncT);
   unsigned NumParams = Proto ? Proto->getNumParams() : 0;
+  if (getLangOpts().C4() && FDecl && FDecl->isImplicit() && !FDecl->getBuiltinID())
+    NumParams = std::max(NumParams, 16u);
 
   CallExpr *TheCall;
   if (Config) {
@@ -7977,7 +7980,17 @@ ExprResult Sema::BuildResolvedCallExpr(Expr *Fn, NamedDecl *NDecl,
         Arg = ArgE.getAs<Expr>();
       }
 
-      if (RequireCompleteType(Arg->getBeginLoc(), Arg->getType(),
+      // C4: for implicit function calls (out-of-order definitions), skip
+      // incomplete-type check on void-typed brace initializers. They'll be
+      // resolved later by CheckC4DeferredFunctionCall when the definition is seen.
+      bool C4SkipIncompleteCheck = false;
+      if (getLangOpts().C4() && FDecl && FDecl->isImplicit() &&
+          !FDecl->getBuiltinID() && isa<InitListExpr>(Arg) &&
+          Arg->getType()->isVoidType()) {
+        C4SkipIncompleteCheck = true;
+      }
+      if (!C4SkipIncompleteCheck &&
+          RequireCompleteType(Arg->getBeginLoc(), Arg->getType(),
                               diag::err_call_incomplete_argument, Arg))
         return ExprError();
 
@@ -8027,6 +8040,12 @@ ExprResult Sema::BuildResolvedCallExpr(Expr *Fn, NamedDecl *NDecl,
 
   ExprResult CallRes = CheckForImmediateInvocation(MaybeBindToTemporary(TheCall), FDecl);
   if (getLangOpts().C4() && FDecl && CallRes.isUsable() && !CallRes.isInvalid()) {
+    if (FDecl->isImplicit() && !FDecl->getBuiltinID()) {
+      if (auto *CE = dyn_cast<CallExpr>(CallRes.get())) {
+        CE->shrinkNumArgs(Args.size());
+        C4ImplicitCallsMap[FDecl].push_back(CE);
+      }
+    }
     if (IsC4ReferenceReturnType(FDecl)) {
       ExprResult Deref = CreateBuiltinUnaryOp(CallRes.get()->getBeginLoc(), UO_Deref, CallRes.get());
       if (!Deref.isInvalid()) {
@@ -8035,6 +8054,87 @@ ExprResult Sema::BuildResolvedCallExpr(Expr *Fn, NamedDecl *NDecl,
     }
   }
   return CallRes;
+}
+
+void Sema::CheckC4DeferredFunctionCall(CallExpr *CE, FunctionDecl *FD) {
+  if (!CE || !FD) return;
+  const FunctionProtoType *Proto = FD->getType()->getAs<FunctionProtoType>();
+  if (!Proto) return;
+
+  unsigned NumParams = FD->getNumParams();
+  unsigned MinArgs = FD->getMinRequiredArguments();
+  unsigned NumArgs = CE->getNumArgs();
+  SourceLocation RParenLoc = CE->getRParenLoc().isValid() ? CE->getRParenLoc() : CE->getEndLoc();
+
+
+  if (NumArgs < MinArgs) {
+    if (MinArgs == 1 && FD->getParamDecl(0)->getDeclName()) {
+      Diag(RParenLoc, MinArgs == NumParams && !Proto->isVariadic()
+                          ? diag::err_typecheck_call_too_few_args_one
+                          : diag::err_typecheck_call_too_few_args_at_least_one)
+          << 0 /* fn */ << FD->getParamDecl(0) << 0 << CE->getCallee()->getSourceRange();
+    } else {
+      Diag(RParenLoc, MinArgs == NumParams && !Proto->isVariadic()
+                          ? diag::err_typecheck_call_too_few_args
+                          : diag::err_typecheck_call_too_few_args_at_least)
+          << 0 /* fn */ << MinArgs << NumArgs << 0 << CE->getCallee()->getSourceRange();
+    }
+    Diag(FD->getLocation(), diag::note_callee_decl)
+        << FD << FD->getParametersSourceRange();
+    return;
+  }
+
+  if (NumArgs > NumParams && !Proto->isVariadic()) {
+    if (NumParams == 1 && FD->getParamDecl(0)->getDeclName()) {
+      Diag(CE->getArg(NumParams)->getBeginLoc(),
+           diag::err_typecheck_call_too_many_args_one)
+          << 0 /* fn */ << FD->getParamDecl(0) << NumArgs << 0
+          << CE->getCallee()->getSourceRange()
+          << CE->getArg(NumParams)->getSourceRange();
+    } else {
+      Diag(CE->getArg(NumParams)->getBeginLoc(),
+           diag::err_typecheck_call_too_many_args)
+          << 0 /* fn */ << NumParams << NumArgs << 0
+          << CE->getCallee()->getSourceRange()
+          << CE->getArg(NumParams)->getSourceRange();
+    }
+    Diag(FD->getLocation(), diag::note_callee_decl)
+        << FD << FD->getParametersSourceRange();
+    return;
+  }
+
+  for (unsigned i = 0; i < NumArgs && i < NumParams; ++i) {
+    Expr *Arg = CE->getArg(i);
+    ParmVarDecl *Param = FD->getParamDecl(i);
+    if (Arg && Param) {
+      QualType ParamTy = Param->getType();
+      if (!ParamTy.isNull()) {
+        if (ParamTy->isPointerType() && Arg && Arg->isGLValue() &&
+            Context.hasSameUnqualifiedType(Arg->getType(), ParamTy->getPointeeType())) {
+          SourceLocation AddrLoc = Arg->getBeginLoc().isValid() ? Arg->getBeginLoc() : RParenLoc;
+          ExprResult InjectedAddress = CreateBuiltinUnaryOp(AddrLoc, UO_AddrOf, Arg);
+          if (!InjectedAddress.isInvalid()) {
+            Arg = InjectedAddress.get();
+            CE->setArg(i, Arg);
+          }
+        }
+        if (getLangOpts().C4())
+          TryC4ResolveDotExpr(Arg, ParamTy);
+        if (isa<InitListExpr>(Arg) && (Arg->getType()->isVoidType() || Arg->getType().isNull())) {
+          Arg->setType(ParamTy);
+        }
+        ExprResult ArgRes = Arg;
+        AssignConvertType ConvTy = CheckSingleAssignmentConstraints(ParamTy, ArgRes);
+        if (ConvTy != AssignConvertType::Compatible) {
+          SourceLocation DiagLoc = Arg->getExprLoc().isValid() ? Arg->getExprLoc() : RParenLoc;
+          DiagnoseAssignmentResult(ConvTy, DiagLoc, ParamTy, Arg->getType(),
+                                   ArgRes.get(), AssignmentAction::Passing);
+        } else if (ArgRes.isUsable()) {
+          CE->setArg(i, ArgRes.get());
+        }
+      }
+    }
+  }
 }
 
 ExprResult
@@ -10888,6 +10988,38 @@ AssignConvertType Sema::CheckSingleAssignmentConstraints(QualType LHSType,
     Expr *RHSExpr = RHS.get();
     if (TryC4ResolveDotExpr(RHSExpr, LHSType.getUnqualifiedType()))
       RHS = RHSExpr;
+  }
+
+  // C4 enum type-safety: reject plain integers and non-enum values when
+  // assigning to a C4 fixed-enum type (e.g. {.type = EOF} where EOF is -1).
+  if (getLangOpts().C4() && !LHSType.isNull() && LHSType->isEnumeralType()) {
+    const EnumDecl *ED = LHSType->castAs<EnumType>()->getDecl();
+    if (ED && ED->isFixed() && !RHS.isInvalid() && RHS.isUsable()) {
+      Expr *E = RHS.get()->IgnoreImplicit();
+      std::function<bool(const Expr *)> isEnumArg =
+          [&](const Expr *Ex) -> bool {
+        if (!Ex) return false;
+        Ex = Ex->IgnoreImplicit();
+        if (const auto *DRE = dyn_cast<DeclRefExpr>(Ex)) {
+          if (const auto *ECD = dyn_cast<EnumConstantDecl>(DRE->getDecl()))
+            return ECD->getDeclContext() == ED;
+          if (DRE->getType()->isEnumeralType())
+            return DRE->getType()->castAs<EnumType>()->getDecl() == ED;
+        }
+        if (const auto *BO = dyn_cast<BinaryOperator>(Ex))
+          if (BO->getOpcode() == BO_Or)
+            return isEnumArg(BO->getLHS()) && isEnumArg(BO->getRHS());
+        if (Ex->getType()->isEnumeralType())
+          return Ex->getType()->castAs<EnumType>()->getDecl() == ED;
+        return false;
+      };
+      if (!isEnumArg(E)) {
+        if (Diagnose)
+          Diag(E->getBeginLoc(), diag::err_c4_invalid_enum_arg)
+              << E->getType() << LHSType;
+        return AssignConvertType::Incompatible;
+      }
+    }
   }
 
   if (const auto *LHSPtrType = LHSType->getAs<PointerType>()) {
@@ -18045,7 +18177,8 @@ ExprResult Sema::CreateBuiltinUnaryOp(SourceLocation OpLoc,
 
                       if (!Invalid && LocInfo.second < Buf.size()) {
                           unsigned StartPos = (LocInfo.second > 16) ? (LocInfo.second - 16) : 0;
-                          StringRef TextWindow = Buf.substr(StartPos, LocInfo.second - StartPos + 1);
+                          unsigned EndPos = std::min((size_t)LocInfo.second + 48, Buf.size());
+                          StringRef TextWindow = Buf.substr(StartPos, EndPos - StartPos);
                           if (TextWindow.contains('&')) {
                               IsProtectedC4Reference = true;
                           }

@@ -3823,13 +3823,22 @@ void FunctionDecl::setParams(ASTContext &C,
 /// arguments (in C++) or are parameter packs (C++11).
 unsigned FunctionDecl::getMinRequiredArguments() const {
   if (getASTContext().getLangOpts().C4()) {
-    unsigned NumParams = 0;
+    unsigned NumRequiredArgs = 0;
+    unsigned MinParamsSoFar = 0;
     for (auto *Param : parameters()) {
-      if (!Param->getName().starts_with("__c4_str_")) {
-        NumParams++;
+      if (Param->getName().starts_with("__c4_str_"))
+        continue;
+      // C4 embed parameters (<- &Scanner scanner) are resolved through the
+      // call-site prefix (e.g. scanner::func()), not as explicit arguments.
+      if (Param->isC4Embed())
+        continue;
+      if (!Param->isParameterPack()) {
+        ++MinParamsSoFar;
+        if (!Param->hasDefaultArg())
+          NumRequiredArgs = MinParamsSoFar;
       }
     }
-    return NumParams;
+    return NumRequiredArgs;
   }
 
   if (!getASTContext().getLangOpts().CPlusPlus)

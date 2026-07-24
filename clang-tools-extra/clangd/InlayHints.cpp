@@ -797,6 +797,9 @@ private:
       return;
 
     for (size_t I = 0; I < ParameterNames.size() && I < Args.size(); ++I) {
+      if (!Args[I])
+        continue;
+
       // Pack expansion expressions cause the 1:1 mapping between arguments and
       // parameters to break down, so we don't add further inlay hints if we
       // encounter one.

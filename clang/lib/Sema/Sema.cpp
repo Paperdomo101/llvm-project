@@ -1753,6 +1753,19 @@ void Sema::ActOnEndOfTranslationUnit() {
   if (PP.isCodeCompletionEnabled())
     return;
 
+  if (getLangOpts().C4()) {
+    for (auto &Pair : C4ImplicitCallsMap) {
+      FunctionDecl *FD = Pair.first;
+      if (FD && FD->isImplicit() && !FD->isDefined() && !FD->getBuiltinID()) {
+        for (CallExpr *CE : Pair.second) {
+          Diag(CE->getBeginLoc(), diag::ext_implicit_function_decl_c99)
+              << FD->getDeclName();
+        }
+      }
+    }
+    C4ImplicitCallsMap.clear();
+  }
+
   // Complete translation units and modules define vtables and perform implicit
   // instantiations. PCH files do not.
   if (TUKind != TU_Prefix) {

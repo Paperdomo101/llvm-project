@@ -752,6 +752,7 @@ void DeclPrinter::VisitFunctionDecl(FunctionDecl *D) {
       llvm::raw_string_ostream POut(Proto);
       DeclPrinter ParamPrinter(POut, SubPolicy, Context, Indentation);
       for (unsigned i = 0, e = D->getNumParams(); i != e; ++i) {
+        if (!D->getParamDecl(i)) continue;
         if (i) POut << ", ";
         ParamPrinter.VisitParmVarDecl(D->getParamDecl(i));
       }
@@ -766,6 +767,7 @@ void DeclPrinter::VisitFunctionDecl(FunctionDecl *D) {
       }
     } else if (D->doesThisDeclarationHaveABody() && !D->hasPrototype()) {
       for (unsigned i = 0, e = D->getNumParams(); i != e; ++i) {
+        if (!D->getParamDecl(i)) continue;
         if (i)
           Proto += ", ";
         Proto += D->getParamDecl(i)->getNameAsString();
@@ -869,6 +871,7 @@ void DeclPrinter::VisitFunctionDecl(FunctionDecl *D) {
         DeclPrinter ParamPrinter(Out, SubPolicy, Context, Indentation);
         Indentation += Policy.Indentation;
         for (unsigned i = 0, e = D->getNumParams(); i != e; ++i) {
+          if (!D->getParamDecl(i)) continue;
           Indent();
           ParamPrinter.VisitParmVarDecl(D->getParamDecl(i));
           Out << ";\n";
@@ -1030,10 +1033,12 @@ void DeclPrinter::VisitVarDecl(VarDecl *D) {
           // Unwind our structural AST mutations to find the living user expressions list!
           // InitListExpr (wrapper) -> data field (0) -> ArrayToPointerDecay -> CompoundLiteralExpr -> InitListExpr (original)
           if (const auto *OuterILE = dyn_cast<InitListExpr>(Init)) {
-            if (OuterILE->getNumInits() > 0) {
+            if (OuterILE->getNumInits() > 0 && OuterILE->getInit(0)) {
               const Expr *DataFieldExpr = OuterILE->getInit(0)->IgnoreImplicit();
-              if (const auto *CLE = dyn_cast<CompoundLiteralExpr>(DataFieldExpr)) {
-                if (const auto *OriginalILE = dyn_cast<InitListExpr>(CLE->getInitializer())) {
+              if (DataFieldExpr && isa<CompoundLiteralExpr>(DataFieldExpr)) {
+                const auto *CLE = cast<CompoundLiteralExpr>(DataFieldExpr);
+                if (CLE->getInitializer() && isa<InitListExpr>(CLE->getInitializer())) {
+                  const auto *OriginalILE = cast<InitListExpr>(CLE->getInitializer());
 
                   // Print the original initialization bracket sequence natively!
                   PrintingPolicy SubPolicy(Policy);

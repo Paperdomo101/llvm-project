@@ -10,12 +10,12 @@ void test_explicit_cast(void) {
     [] Thing things = {
         (Thing){2, 3},  // OK: explicit cast
         {4, 5}          // OK: implicit cast
-    }
+    };
 
     [2] Thing extras = {// size specified
         (Thing){2, 3},  // OK: explicit cast
         {4, 5}          // OK: implicit cast
-    }
+    };
 }
 
 // Test 2: Bounds-checked array with bare initializer (the bug case)

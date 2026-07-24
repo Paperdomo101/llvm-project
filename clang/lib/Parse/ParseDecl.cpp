@@ -7890,6 +7890,7 @@ void Parser::ParseFunctionDeclarator(Declarator &D,
 
       // 2. Clear out the initial temporary 'void' type specifier state
       TargetDS.ClearTypeSpecType();
+      TargetDS.SetIsC4Reference(false, SourceLocation());
 
       // 3. Setup empty template state configurations
       ParsedTemplateInfo EmptyTemplateInfo;
@@ -8302,8 +8303,9 @@ void Parser::ParseParameterDeclarationClause(
               Param);
 
           ExprResult DefArgResult;
-          if (getLangOpts().CPlusPlus11 && Tok.is(tok::l_brace)) {
-            Diag(Tok, diag::warn_cxx98_compat_generalized_initializer_lists);
+          if ((getLangOpts().CPlusPlus11 || getLangOpts().C4()) && Tok.is(tok::l_brace)) {
+            if (getLangOpts().CPlusPlus)
+              Diag(Tok, diag::warn_cxx98_compat_generalized_initializer_lists);
             DefArgResult = ParseBraceInitializer();
           } else {
             if (Tok.is(tok::l_paren) && NextToken().is(tok::l_brace)) {

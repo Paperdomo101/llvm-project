@@ -43,6 +43,7 @@
 #include "clang/Basic/CharInfo.h"
 #include "clang/Basic/LLVM.h"
 #include "clang/Basic/LangOptions.h"
+#include "clang/Lex/Lexer.h"
 #include "clang/Basic/SourceLocation.h"
 #include "clang/Basic/SourceManager.h"
 #include "clang/Basic/Specifiers.h"
@@ -290,6 +291,7 @@ fetchTemplateParameters(const TemplateParameterList *Params,
 }
 
 const FunctionDecl *getUnderlyingFunction(const Decl *D) {
+  if (!D) return nullptr;
   // Extract lambda from variables.
   if (const VarDecl *VD = llvm::dyn_cast<VarDecl>(D)) {
     auto QT = VD->getType();
@@ -381,8 +383,19 @@ HoverInfo::Param toHoverInfoParam(const ParmVarDecl *PVD,
     Out.Name = PVD->getNameAsString();
   if (const Expr *DefArg = getDefaultArg(PVD)) {
     Out.Default.emplace();
-    llvm::raw_string_ostream OS(*Out.Default);
-    DefArg->printPretty(OS, nullptr, PP);
+    StringRef SourceText;
+    if (PVD->getDefaultArgRange().isValid()) {
+      SourceText = Lexer::getSourceText(
+          CharSourceRange::getTokenRange(PVD->getDefaultArgRange()),
+          PVD->getASTContext().getSourceManager(),
+          PVD->getASTContext().getLangOpts());
+    }
+    if (!SourceText.empty()) {
+      *Out.Default = SourceText.str();
+    } else if (DefArg) {
+      llvm::raw_string_ostream OS(*Out.Default);
+      DefArg->printPretty(OS, nullptr, PP);
+    }
   }
   return Out;
 }
@@ -392,8 +405,11 @@ void fillFunctionTypeAndParams(HoverInfo &HI, const Decl *D,
                                const FunctionDecl *FD,
                                const PrintingPolicy &PP) {
   HI.Parameters.emplace();
-  for (const ParmVarDecl *PVD : FD->parameters())
+  for (const ParmVarDecl *PVD : FD->parameters()) {
+    if (!PVD || PVD->isInvalidDecl())
+      continue;
     HI.Parameters->emplace_back(toHoverInfoParam(PVD, PP));
+  }
 
   // We don't want any type info, if name already contains it. This is true for
   // constructors/destructors and conversion operators.
@@ -459,7 +475,7 @@ std::optional<std::string> printExprValue(const Expr *E,
     // Compare to int64_t to avoid bit-width match requirements.
     int64_t Val = Constant.Val.getInt().getExtValue();
     for (const EnumConstantDecl *ECD : T->castAsEnumDecl()->enumerators())
-      if (ECD->getInitVal() == Val)
+      if (ECD->getInitVal().getBitWidth() > 0 && ECD->getInitVal() == Val)
         return llvm::formatv("{0} ({1})", ECD->getNameAsString(),
                              printHex(Constant.Val.getInt()))
             .str();
@@ -659,6 +675,7 @@ HoverInfo getHoverContents(const NamedDecl *D, const PrintingPolicy &PP,
                            const SymbolIndex *Index,
                            const syntax::TokenBuffer &TB) {
   HoverInfo HI;
+  if (!D) return HI;
   auto &Ctx = D->getASTContext();
 
   HI.AccessSpecifier = getAccessSpelling(D->getAccess()).str();
@@ -671,11 +688,11 @@ HoverInfo getHoverContents(const NamedDecl *D, const PrintingPolicy &PP,
 
   HI.Name = printName(Ctx, *D);
   const auto *CommentD = getDeclForComment(D);
-  HI.Documentation = getDeclComment(Ctx, *CommentD);
-  // save the language options to be able to create the comment::CommandTraits
-  // to parse the documentation
+  if (CommentD) {
+    HI.Documentation = getDeclComment(Ctx, *CommentD);
+    enhanceFromIndex(HI, *CommentD, Index);
+  }
   HI.CommentOpts = D->getASTContext().getLangOpts().CommentOpts;
-  enhanceFromIndex(HI, *CommentD, Index);
   if (HI.Documentation.empty())
     HI.Documentation = synthesizeDocumentation(Ctx, D);
 
@@ -695,9 +712,10 @@ HoverInfo getHoverContents(const NamedDecl *D, const PrintingPolicy &PP,
   }
 
   // Fill in types and params.
-  if (const FunctionDecl *FD = getUnderlyingFunction(D))
-    fillFunctionTypeAndParams(HI, D, FD, PP);
-  else if (const auto *VD = dyn_cast<ValueDecl>(D))
+  if (const FunctionDecl *FD = getUnderlyingFunction(D)) {
+    if (!FD->isInvalidDecl())
+      fillFunctionTypeAndParams(HI, D, FD, PP);
+  } else if (const auto *VD = dyn_cast<ValueDecl>(D))
     HI.Type = printType(VD->getType(), Ctx, PP);
   else if (const auto *TTP = dyn_cast<TemplateTypeParmDecl>(D))
     HI.Type = TTP->wasDeclaredWithTypename() ? "typename" : "class";
@@ -716,11 +734,16 @@ HoverInfo getHoverContents(const NamedDecl *D, const PrintingPolicy &PP,
       HI.Value = printExprValue(Init, Ctx);
   } else if (const auto *ECD = dyn_cast<EnumConstantDecl>(D)) {
     // Dependent enums (e.g. nested in template classes) don't have values yet.
-    if (!ECD->getType()->isDependentType())
+    if (!ECD->getType()->isDependentType() && ECD->getInitVal().getBitWidth() > 0)
       HI.Value = toString(ECD->getInitVal(), 10);
   }
 
-  HI.Definition = printDefinition(D, PP, TB);
+  // Suppress initializers in definition printing to avoid crashes on malformed
+  // default arguments from C4 embed parameters or error-recovered code.
+  PrintingPolicy DefPP = PP;
+  DefPP.SuppressInitializers = true;
+  if (!D->isInvalidDecl())
+    HI.Definition = printDefinition(D, DefPP, TB);
   return HI;
 }
 
@@ -1106,6 +1129,7 @@ void maybeAddCalleeArgInfo(const SelectionTree::Node *N, HoverInfo &HI,
 
   // Find argument index for N.
   for (unsigned I = 0; I < Args.size() && I < Parameters.size(); ++I) {
+    if (!Args[I]) continue;
     if (Args[I] != OuterNode.ASTNode.get<Expr>())
       continue;
 

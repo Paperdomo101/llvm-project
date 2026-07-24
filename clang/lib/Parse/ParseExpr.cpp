@@ -1670,8 +1670,8 @@ Parser::ParseCastExpression(CastParseKind ParseKind, bool isAddressOfOperand,
       }
       break;
     }
-    // Fallthrough to standard handler if it isn't followed by your operator symbols
-    [[fallthrough]];
+    NotCastExpr = true;
+    return ExprError();
   }
   // ==========================================================
 
