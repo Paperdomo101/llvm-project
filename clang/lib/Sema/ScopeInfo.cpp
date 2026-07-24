@@ -40,6 +40,7 @@ void FunctionScopeInfo::Clear() {
   FirstSEHTryLoc = SourceLocation();
   FirstVLALoc = SourceLocation();
   FoundImmediateEscalatingExpression = false;
+  C4NamedReturnII = nullptr;
 
   // Coroutine state
   FirstCoroutineStmtLoc = SourceLocation();
