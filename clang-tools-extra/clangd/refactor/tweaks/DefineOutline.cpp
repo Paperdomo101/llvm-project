@@ -253,6 +253,9 @@ getFunctionSourceCode(const FunctionDecl *FD, const DeclContext *TargetContext,
                                           Ref.NameLoc)))
           return;
 
+        if (Ref.Targets.empty())
+          return;
+
         for (const NamedDecl *ND : Ref.Targets) {
           if (ND->getKind() == Decl::TemplateTypeParm)
             return;

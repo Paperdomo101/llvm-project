@@ -7890,7 +7890,7 @@ public:
   // __null
   ExprResult ActOnGNUNullExpr(SourceLocation TokenLoc);
 
-  bool CheckCaseExpression(Expr *E);
+  bool CheckCaseExpression(Expr *&E);
 
   //===------------------------- "Block" Extension ------------------------===//
 

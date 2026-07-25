@@ -6689,28 +6689,73 @@ bool Sema::IsC4ReferenceReturnType(const FunctionDecl *FD) const {
 
 // C4 helper – Sema member so it is visible across translation units.
 bool Sema::TryC4ResolveDotExpr(Expr *&E, QualType TargetType) {
-  if (TargetType.isNull()) return false;
-  auto *ULE = dyn_cast<UnresolvedLookupExpr>(E);
-  if (!ULE) return false;
-  const EnumType *ET =
-      TargetType.getCanonicalType()->getAs<EnumType>();
-  if (!ET) return false;
-  EnumDecl *ExpectedED = ET->getDecl();
+  if (!E) return false;
+
+  IdentifierInfo *II = nullptr;
+  SourceLocation Loc = E->getExprLoc();
+
+  Expr *Unwrapped = E;
+  while (Unwrapped) {
+    Expr *Ignored = Unwrapped->IgnoreParenImpCasts();
+    if (auto *EWC = dyn_cast<ExprWithCleanups>(Ignored)) {
+      Unwrapped = EWC->getSubExpr();
+      continue;
+    }
+    if (auto *CE = dyn_cast<ConstantExpr>(Ignored)) {
+      Unwrapped = CE->getSubExpr();
+      continue;
+    }
+    Unwrapped = Ignored;
+    break;
+  }
+  if (auto *OLE = dyn_cast<OverloadExpr>(Unwrapped)) {
+    II = OLE->getName().getAsIdentifierInfo();
+  } else if (auto *DRE = dyn_cast<DeclRefExpr>(Unwrapped)) {
+    II = DRE->getDecl()->getIdentifier();
+  }
+
+  if (!II) return false;
+
   EnumConstantDecl *Match = nullptr;
-  for (NamedDecl *D : ULE->decls()) {
-    auto *ECD = dyn_cast<EnumConstantDecl>(D);
-    if (!ECD) return false; // not all candidates are enum constants
-    if (cast<EnumDecl>(ECD->getDeclContext()) == ExpectedED) {
-      if (Match) return false; // ambiguous
-      Match = ECD;
+  bool Ambiguous = false;
+
+  if (!TargetType.isNull()) {
+    if (const EnumType *ET = TargetType.getCanonicalType()->getAs<EnumType>()) {
+      EnumDecl *ExpectedED = ET->getDecl();
+      if (EnumDecl *EDDef = ExpectedED->getDefinition())
+        ExpectedED = EDDef;
+
+      for (EnumConstantDecl *ECD : ExpectedED->enumerators()) {
+        if (ECD->getIdentifier() == II ||
+            (ECD->getIdentifier() &&
+             ECD->getIdentifier()->getName().equals_insensitive(II->getName()))) {
+          if (Match) { Ambiguous = true; break; }
+          Match = ECD;
+        }
+      }
     }
   }
-  if (!Match) return false;
-  ExprResult DR = BuildDeclRefExpr(Match, Match->getType(),
-                                   VK_PRValue, E->getExprLoc());
-  if (DR.isInvalid()) return false;
-  E = DR.get();
-  return true;
+
+  if (!Match && !Ambiguous) {
+    LookupResult R(*this, II, Loc, LookupOrdinaryName);
+    LookupName(R, getCurScope());
+    for (NamedDecl *D : R) {
+      if (auto *ECD = dyn_cast<EnumConstantDecl>(D)) {
+        if (Match) { Ambiguous = true; break; }
+        Match = ECD;
+      }
+    }
+  }
+
+  if (Match && !Ambiguous) {
+    ExprResult DR = BuildDeclRefExpr(Match, Match->getType(), VK_PRValue, Loc);
+    if (!DR.isInvalid()) {
+      E = DR.get();
+      return true;
+    }
+  }
+
+  return false;
 }
 
 bool Sema::GatherArgumentsForCall(SourceLocation CallLoc, FunctionDecl *FDecl,
@@ -16842,38 +16887,93 @@ ExprResult Sema::ActOnC4ImplicitDot(SourceLocation DotLoc,
                                      IdentifierInfo *MemberII,
                                      SourceLocation MemberLoc,
                                      QualType PreferredType) {
-  // Unqualified lookup of the identifier as an ordinary name.
-  LookupResult R(*this, MemberII, MemberLoc, LookupOrdinaryName);
-  LookupName(R, getCurScope());
-  if (R.empty()) {
-    Diag(MemberLoc, diag::err_undeclared_use) << MemberII->getName();
-    return ExprError();
+  if (PreferredType.isNull() && getCurFunction() && !getCurFunction()->SwitchStack.empty()) {
+    if (const Expr *Cond = getCurFunction()->SwitchStack.back().getPointer()->getCond()) {
+      const Expr *UnwrappedCond = Cond;
+      while (UnwrappedCond) {
+        const Expr *Ign = UnwrappedCond->IgnoreParenImpCasts();
+        if (auto *FE = dyn_cast<FullExpr>(Ign)) {
+          UnwrappedCond = FE->getSubExpr();
+          continue;
+        }
+        if (auto *ICE = dyn_cast<ImplicitCastExpr>(Ign)) {
+          UnwrappedCond = ICE->getSubExpr();
+          continue;
+        }
+        if (auto *CE = dyn_cast<CStyleCastExpr>(Ign)) {
+          UnwrappedCond = CE->getSubExpr();
+          continue;
+        }
+        if (auto *EWC = dyn_cast<ExprWithCleanups>(Ign)) {
+          UnwrappedCond = EWC->getSubExpr();
+          continue;
+        }
+        UnwrappedCond = Ign;
+        break;
+      }
+      if (UnwrappedCond)
+        PreferredType = UnwrappedCond->getType();
+    }
   }
 
-  // If the preferred/expected type is a known enum type, filter the lookup
-  // results to only the enumerator belonging to that enum.  This resolves
-  // ambiguity when two C4 enums share a member name (e.g. ScreenFlags.BASIC
-  // vs DisplayModes.BASIC) and the call-site context tells us which enum is
-  // expected.
   if (!PreferredType.isNull()) {
     QualType Canonical = PreferredType.getCanonicalType();
     if (const EnumType *ET = Canonical->getAs<EnumType>()) {
       EnumDecl *ExpectedED = ET->getDecl();
-      // Walk the result set; if exactly one result belongs to the expected
-      // enum, use it directly.
+      if (EnumDecl *EDDef = ExpectedED->getDefinition())
+        ExpectedED = EDDef;
       EnumConstantDecl *Match = nullptr;
       bool Ambiguous = false;
-      for (auto *D : R) {
-        if (auto *ECD = dyn_cast<EnumConstantDecl>(D)) {
-          if (cast<EnumDecl>(ECD->getDeclContext()) == ExpectedED) {
-            if (Match) { Ambiguous = true; break; }
-            Match = ECD;
-          }
+      for (EnumConstantDecl *ECD : ExpectedED->enumerators()) {
+        if (ECD->getIdentifier() == MemberII ||
+            (ECD->getIdentifier() &&
+             ECD->getIdentifier()->getName().equals_insensitive(MemberII->getName()))) {
+          if (Match) { Ambiguous = true; break; }
+          Match = ECD;
         }
       }
       if (Match && !Ambiguous)
         return BuildDeclRefExpr(Match, Match->getType(), VK_PRValue, MemberLoc);
     }
+  }
+
+  // Unqualified lookup of the identifier as an ordinary name.
+  LookupResult R(*this, MemberII, MemberLoc, LookupOrdinaryName);
+  LookupName(R, getCurScope());
+
+  // Prioritize EnumConstantDecl over FunctionDecl / other decls if present!
+  if (!R.empty()) {
+    bool HasEnumConst = false;
+    for (NamedDecl *D : R) {
+      if (isa<EnumConstantDecl>(D)) {
+        HasEnumConst = true;
+        break;
+      }
+    }
+    if (HasEnumConst) {
+      SmallVector<NamedDecl *, 4> FilteredDecls;
+      for (NamedDecl *D : R) {
+        if (isa<EnumConstantDecl>(D)) {
+          FilteredDecls.push_back(D);
+        }
+      }
+      R.clear();
+      for (NamedDecl *D : FilteredDecls) {
+        R.addDecl(D);
+      }
+      R.resolveKind();
+
+      if (R.isSingleResult()) {
+        NamedDecl *D = R.getFoundDecl();
+        auto *VD = cast<ValueDecl>(D);
+        return BuildDeclRefExpr(VD, VD->getType(), VK_PRValue, MemberLoc);
+      }
+    }
+  }
+
+  if (R.empty()) {
+    Diag(MemberLoc, diag::err_undeclared_use) << MemberII->getName();
+    return ExprError();
   }
 
   return BuildDeclarationNameExpr(CXXScopeSpec(), R, /*NeedsADL=*/false);
@@ -24441,9 +24541,19 @@ ExprResult Sema::CheckPlaceholderExpr(Expr *E) {
   llvm_unreachable("invalid placeholder type!");
 }
 
-bool Sema::CheckCaseExpression(Expr *E) {
+bool Sema::CheckCaseExpression(Expr *&E) {
   if (E->isTypeDependent())
     return true;
+  if (getLangOpts().C4()) {
+    QualType CondType;
+    if (getCurFunction() && !getCurFunction()->SwitchStack.empty()) {
+      if (const Expr *Cond = getCurFunction()->SwitchStack.back().getPointer()->getCond()) {
+        CondType = Cond->IgnoreParenImpCasts()->getType();
+      }
+    }
+    if (TryC4ResolveDotExpr(E, CondType))
+      return true;
+  }
   if (E->isValueDependent() || E->isIntegerConstantExpr(Context))
     return E->getType()->isIntegralOrEnumerationType();
   return false;

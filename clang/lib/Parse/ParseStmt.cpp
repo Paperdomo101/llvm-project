@@ -865,12 +865,19 @@ StmtResult Parser::ParseExprStatement(ParsedStmtContext StmtCtx) {
 
 
 
-  if (Tok.is(tok::colon) && getCurScope()->isSwitchScope() &&
-      Actions.CheckCaseExpression(Expr.get())) {
-    // If a constant expression is followed by a colon inside a switch block,
-    // suggest a missing case keyword.
-    Diag(OldToken, diag::err_expected_case_before_expression)
-      << FixItHint::CreateInsertion(OldToken.getLocation(), "case ");
+  auto *CaseE = Expr.get();
+  if (Tok.is(tok::colon) &&
+      (getCurScope()->isSwitchScope() ||
+       (getLangOpts().C4() && Actions.getCurFunction() &&
+        !Actions.getCurFunction()->SwitchStack.empty())) &&
+      Actions.CheckCaseExpression(CaseE)) {
+    Expr = CaseE;
+    if (!getLangOpts().C4()) {
+      // If a constant expression is followed by a colon inside a switch block,
+      // suggest a missing case keyword.
+      Diag(OldToken, diag::err_expected_case_before_expression)
+        << FixItHint::CreateInsertion(OldToken.getLocation(), "case ");
+    }
 
     // Recover parsing as a case statement.
     return ParseCaseStatement(StmtCtx, /*MissingCase=*/true, Expr);

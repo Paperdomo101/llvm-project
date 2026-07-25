@@ -161,6 +161,9 @@ llvm::Expected<std::string> qualifyAllDecls(const FunctionDecl *FD,
         if (Ref.NameLoc.isMacroID())
           return;
 
+        if (Ref.Targets.empty())
+          return;
+
         for (const NamedDecl *ND : Ref.Targets) {
           if (ND->getDeclContext() != Ref.Targets.front()->getDeclContext()) {
             elog("define inline: Targets from multiple contexts: {0}, {1}",

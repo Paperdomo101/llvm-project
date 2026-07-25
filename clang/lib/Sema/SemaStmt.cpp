@@ -501,13 +501,40 @@ Sema::ActOnCaseExpr(SourceLocation CaseLoc, ExprResult Val) {
   if (!CondExpr)
     return ExprError();
   QualType CondType = CondExpr->getType();
+  QualType EnumCondType = CondType;
+  if (CondExpr) {
+    const Expr *UnwrappedCond = CondExpr;
+    while (UnwrappedCond) {
+      const Expr *Ign = UnwrappedCond->IgnoreParenImpCasts();
+      if (auto *FE = dyn_cast<FullExpr>(Ign)) {
+        UnwrappedCond = FE->getSubExpr();
+        continue;
+      }
+      if (auto *ICE = dyn_cast<ImplicitCastExpr>(Ign)) {
+        UnwrappedCond = ICE->getSubExpr();
+        continue;
+      }
+      if (auto *CE = dyn_cast<CStyleCastExpr>(Ign)) {
+        UnwrappedCond = CE->getSubExpr();
+        continue;
+      }
+      if (auto *EWC = dyn_cast<ExprWithCleanups>(Ign)) {
+        UnwrappedCond = EWC->getSubExpr();
+        continue;
+      }
+      UnwrappedCond = Ign;
+      break;
+    }
+    if (UnwrappedCond)
+      EnumCondType = UnwrappedCond->getType();
+  }
 
   // C4: if the case expression is an ambiguous implicit dot (.BASIC) over
   // multiple same-named enumerators, resolve it against the switch condition's
   // enum type before the integer-constant check runs.
   if (getLangOpts().C4()) {
     Expr *V = Val.get();
-    if (TryC4ResolveDotExpr(V, CondType))
+    if (TryC4ResolveDotExpr(V, EnumCondType))
       Val = V;
   }
 

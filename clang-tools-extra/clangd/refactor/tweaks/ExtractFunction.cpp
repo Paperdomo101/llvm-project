@@ -172,7 +172,7 @@ struct ExtractionZone {
   bool isRootStmt(const Stmt *S) const;
   // The last root statement is important to decide where we need to insert a
   // semicolon after the extraction.
-  const Node *getLastRootStmt() const { return Parent->Children.back(); }
+  const Node *getLastRootStmt() const { return (Parent && !Parent->Children.empty()) ? Parent->Children.back() : nullptr; }
 
   // Checks if declarations inside extraction zone are accessed afterwards.
   //
@@ -186,7 +186,7 @@ struct ExtractionZone {
       findExplicitReferences(
           RootStmt,
           [&DeclsInExtZone](const ReferenceLoc &Loc) {
-            if (!Loc.IsDecl)
+            if (!Loc.IsDecl || Loc.Targets.empty())
               return;
             DeclsInExtZone.insert(Loc.Targets.front());
           },
@@ -225,7 +225,12 @@ struct ExtractionZone {
 // This is a very naive check (does it end with a return stmt).
 // Doing some rudimentary control flow analysis would cover more cases.
 bool alwaysReturns(const ExtractionZone &EZ) {
-  const Stmt *Last = EZ.getLastRootStmt()->ASTNode.get<Stmt>();
+  const Node *LastNode = EZ.getLastRootStmt();
+  if (!LastNode)
+    return false;
+  const Stmt *Last = LastNode->ASTNode.get<Stmt>();
+  if (!Last)
+    return false;
   // Unwrap enclosing (unconditional) compound statement.
   while (const auto *CS = llvm::dyn_cast<CompoundStmt>(Last)) {
     if (CS->body_empty())
@@ -271,6 +276,8 @@ std::optional<SourceRange> findZoneRange(const Node *Parent,
                                          const SourceManager &SM,
                                          const LangOptions &LangOpts) {
   SourceRange SR;
+  if (!Parent || Parent->Children.empty())
+    return std::nullopt;
   if (auto BeginFileRange = toHalfOpenFileRange(
           SM, LangOpts, Parent->Children.front()->ASTNode.getSourceRange()))
     SR.setBegin(BeginFileRange->getBegin());
@@ -717,9 +724,10 @@ getSemicolonPolicy(ExtractionZone &ExtZone, const SourceManager &SM,
   // Get closed ZoneRange.
   SourceRange FuncBodyRange = {ExtZone.ZoneRange.getBegin(),
                                ExtZone.ZoneRange.getEnd().getLocWithOffset(-1)};
+  const Node *LastNode = ExtZone.getLastRootStmt();
+  const Stmt *LastStmt = LastNode ? LastNode->ASTNode.get<Stmt>() : nullptr;
   auto SemicolonPolicy = tooling::ExtractionSemicolonPolicy::compute(
-      ExtZone.getLastRootStmt()->ASTNode.get<Stmt>(), FuncBodyRange, SM,
-      LangOpts);
+      LastStmt, FuncBodyRange, SM, LangOpts);
   // Update ZoneRange.
   ExtZone.ZoneRange.setEnd(FuncBodyRange.getEnd().getLocWithOffset(1));
   return SemicolonPolicy;

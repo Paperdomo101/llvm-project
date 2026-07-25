@@ -175,6 +175,14 @@ ExprResult Parser::ParseCaseExpression(SourceLocation CaseLoc) {
       Actions, Sema::ExpressionEvaluationContext::ConstantEvaluated);
   Actions.currentEvaluationContext().IsCaseExpr = true;
 
+  if (getLangOpts().C4() && Actions.getCurFunction() &&
+      !Actions.getCurFunction()->SwitchStack.empty()) {
+    if (const Expr *Cond =
+            Actions.getCurFunction()->SwitchStack.back().getPointer()->getCond()) {
+      PreferredType.enterTypeCast(CaseLoc, Cond->getType());
+    }
+  }
+
   ExprResult LHS(
       ParseCastExpression(CastParseKind::AnyCastExpr, false,
                           TypoCorrectionTypeBehavior::AllowNonTypes));

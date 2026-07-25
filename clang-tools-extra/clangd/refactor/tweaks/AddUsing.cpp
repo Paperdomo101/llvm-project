@@ -380,7 +380,7 @@ bool AddUsing::prepare(const Selection &Inputs) {
 
   auto SpelledTokens =
       TB.spelledForExpanded(TB.expandedTokens(SpelledNameRange));
-  if (!SpelledTokens)
+  if (!SpelledTokens || SpelledTokens->empty())
     return false;
   auto SpelledRange =
       syntax::Token::range(SM, SpelledTokens->front(), SpelledTokens->back());
