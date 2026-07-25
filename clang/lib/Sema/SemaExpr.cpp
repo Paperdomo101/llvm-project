@@ -2925,9 +2925,9 @@ ExprResult Sema::ActOnIdExpression(Scope *S, CXXScopeSpec &SS,
     // For multiple candidates, the caller must use :: dispatch with a typed
     // receiver to disambiguate (e.g. 10::add(5) vs v::add(v2)).
     if (getLangOpts().C4() && R.empty() && II && !SS.isSet()) {
-      auto It = C4AliasMap.find(II);
-      if (It != C4AliasMap.end() && It->second.size() == 1) {
-        R.addDecl(It->second[0]);
+      const auto *Candidates = getC4AliasCandidates(II);
+      if (Candidates && Candidates->size() == 1) {
+        R.addDecl((*Candidates)[0]);
         R.resolveKind();
       }
     }
@@ -2961,6 +2961,8 @@ ExprResult Sema::ActOnIdExpression(Scope *S, CXXScopeSpec &SS,
             ParamTy = ParamTy->castAs<PointerType>()->getPointeeType();
           if (const RecordType *RT = ParamTy->getAs<RecordType>()) {
             RecordDecl *RD = RT->getDecl();
+            if (RecordDecl *RDDef = RD->getDefinition())
+              RD = RDDef;
             LookupResult SubR(*this, R.getLookupNameInfo(), LookupMemberName);
             LookupQualifiedName(SubR, RD);
             if (!SubR.empty()) {

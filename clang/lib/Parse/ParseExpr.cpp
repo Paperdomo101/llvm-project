@@ -1013,18 +1013,38 @@ ExprResult Parser::ParseMethodDispatch(
     // against the first parameter type.
     ExprResult Callee(true);
     if (getLangOpts().C4()) {
-      auto It = Actions.C4AliasMap.find(II);
-      if (It != Actions.C4AliasMap.end()) {
+      const auto *Candidates = Actions.getC4AliasCandidates(II);
+      if (Candidates) {
         if (Receiver.isUsable()) {
           // :: dispatch — filter by receiver type
           QualType RecvType = Receiver.get()->getType();
           if (!RecvType.isNull()) {
             FunctionDecl *Match = nullptr;
-            for (FunctionDecl *Cand : It->second) {
+            for (FunctionDecl *Cand : *Candidates) {
               if (Cand->getNumParams() > 0) {
                 QualType FirstParamTy = Cand->getParamDecl(0)->getType();
-                if (Actions.getASTContext().hasSameUnqualifiedType(
-                        RecvType, FirstParamTy)) {
+                QualType BaseRecv = RecvType.getNonReferenceType();
+                if (BaseRecv->isPointerType()) BaseRecv = BaseRecv->getPointeeType();
+                BaseRecv = BaseRecv.getCanonicalType().getUnqualifiedType();
+
+                QualType BaseParam = FirstParamTy.getNonReferenceType();
+                if (BaseParam->isPointerType()) BaseParam = BaseParam->getPointeeType();
+                BaseParam = BaseParam.getCanonicalType().getUnqualifiedType();
+
+                bool SameType = Actions.getASTContext().hasSameUnqualifiedType(
+                    BaseRecv, BaseParam);
+                if (!SameType && Actions.isC4ArrayType(BaseRecv) &&
+                    Actions.isC4ArrayType(BaseParam)) {
+                  QualType E1 = Actions.getElementTypeFromC4Array(BaseRecv);
+                  QualType E2 = Actions.getElementTypeFromC4Array(BaseParam);
+                  if (!E1.isNull() && !E2.isNull() &&
+                      Actions.getASTContext().hasSameUnqualifiedType(
+                          E1.getCanonicalType().getUnqualifiedType(),
+                          E2.getCanonicalType().getUnqualifiedType())) {
+                    SameType = true;
+                  }
+                }
+                if (SameType) {
                   if (Match) {
                     Diag(ILoc, diag::err_ovl_ambiguous_call) << II;
                     return ExprError();
@@ -1040,9 +1060,9 @@ ExprResult Parser::ParseMethodDispatch(
           }
         }
         // Direct call (no receiver): only resolve if exactly one candidate
-        if (Callee.isInvalid() && It->second.size() == 1) {
+        if (Callee.isInvalid() && Candidates->size() == 1) {
           Callee = Actions.BuildDeclRefExpr(
-              It->second[0], It->second[0]->getType(), VK_PRValue, ILoc);
+              (*Candidates)[0], (*Candidates)[0]->getType(), VK_PRValue, ILoc);
         }
       }
     }
@@ -1125,7 +1145,64 @@ ExprResult Parser::ParseMethodDispatch(
     // ---> FIXED: Insert the receiver BEFORE running the flattening loop! <---
     // This places b.{x, y} at index 0 so it gets fully unzipped along with everything else.
     if (Receiver.isUsable()) {
-        ArgExprs.insert(ArgExprs.begin(), Receiver.get());
+        Expr *RecvExpr = Receiver.get();
+        if (getLangOpts().C4() && Callee.isUsable() && RecvExpr) {
+          if (auto *DRE = dyn_cast<DeclRefExpr>(Callee.get()->IgnoreParenImpCasts())) {
+            if (auto *FD = dyn_cast<FunctionDecl>(DRE->getDecl())) {
+              if (FD->getNumParams() > 0) {
+                QualType Param0Ty = FD->getParamDecl(0)->getType();
+                if (!RecvExpr->getType().isNull() && (Param0Ty->isPointerType() || Param0Ty->isReferenceType())) {
+                  QualType PointeeTy = Param0Ty->isPointerType()
+                                           ? Param0Ty->getPointeeType()
+                                           : Param0Ty.getNonReferenceType();
+                  QualType RecvTy = RecvExpr->getType();
+                  bool IsRefParm = false;
+                  Expr *UnwrappedRecv = RecvExpr;
+                  while (UnwrappedRecv) {
+                    Expr *Ignored = UnwrappedRecv->IgnoreParenImpCasts();
+                    if (auto *UO = dyn_cast<UnaryOperator>(Ignored)) {
+                      if (UO->getOpcode() == UO_Deref) {
+                        UnwrappedRecv = UO->getSubExpr();
+                        continue;
+                      }
+                    }
+                    break;
+                  }
+                  if (UnwrappedRecv) {
+                    if (auto *DRE = dyn_cast<DeclRefExpr>(UnwrappedRecv->IgnoreParenImpCasts())) {
+                      if (auto *PVD = dyn_cast<ParmVarDecl>(DRE->getDecl())) {
+                        if (PVD->getType()->isPointerType()) {
+                          IsRefParm = true;
+                        }
+                      }
+                    }
+                  }
+                  bool SameType = Actions.getASTContext().hasSameUnqualifiedType(
+                      RecvTy.getCanonicalType().getUnqualifiedType(),
+                      PointeeTy.getCanonicalType().getUnqualifiedType());
+                  if (!SameType && Actions.isC4ArrayType(RecvTy) &&
+                      Actions.isC4ArrayType(PointeeTy)) {
+                    QualType E1 = Actions.getElementTypeFromC4Array(RecvTy);
+                    QualType E2 = Actions.getElementTypeFromC4Array(PointeeTy);
+                    if (!E1.isNull() && !E2.isNull() &&
+                        Actions.getASTContext().hasSameUnqualifiedType(
+                            E1.getCanonicalType().getUnqualifiedType(),
+                            E2.getCanonicalType().getUnqualifiedType())) {
+                      SameType = true;
+                    }
+                  }
+                  if (!IsRefParm && !RecvTy->isPointerType() && !RecvTy->isReferenceType() && SameType) {
+                    ExprResult Addr = Actions.CreateBuiltinUnaryOp(
+                        ILoc, UO_AddrOf, RecvExpr);
+                    if (Addr.isUsable())
+                      RecvExpr = Addr.get();
+                  }
+                }
+              }
+            }
+          }
+        }
+        ArgExprs.insert(ArgExprs.begin(), RecvExpr);
     }
 
     // --- CRITICAL UNPACKING FLATTENER FIX ---

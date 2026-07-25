@@ -1536,7 +1536,9 @@ void ASTDeclReader::VisitObjCPropertyImplDecl(ObjCPropertyImplDecl *D) {
 
 void ASTDeclReader::VisitFieldDecl(FieldDecl *FD) {
   VisitDeclaratorDecl(FD);
-  FD->Mutable = Record.readInt();
+  unsigned Flags = Record.readInt();
+  FD->Mutable = Flags & 1;
+  FD->setC4Embed((Flags >> 1) & 1);
 
   unsigned Bits = Record.readInt();
   FD->StorageKind = Bits >> 1;
@@ -1747,6 +1749,8 @@ void ASTDeclReader::VisitParmVarDecl(ParmVarDecl *PD) {
 
   if (ParmVarDeclBits.getNextBit()) // Valid explicit object parameter
     PD->ExplicitObjectParameterIntroducerLoc = Record.readSourceLocation();
+
+  PD->setC4Embed(ParmVarDeclBits.getNextBit());
 
   // FIXME: If this is a redeclaration of a function from another module, handle
   // inheritance of default arguments.

@@ -1195,7 +1195,7 @@ void ASTDeclWriter::VisitObjCPropertyImplDecl(ObjCPropertyImplDecl *D) {
 
 void ASTDeclWriter::VisitFieldDecl(FieldDecl *D) {
   VisitDeclaratorDecl(D);
-  Record.push_back(D->isMutable());
+  Record.push_back(D->isMutable() | (D->isC4Embed() << 1));
 
   Record.push_back((D->StorageKind << 1) | D->BitField);
   if (D->StorageKind == FieldDecl::ISK_CapturedVLAType)
@@ -1379,6 +1379,7 @@ void ASTDeclWriter::VisitParmVarDecl(ParmVarDecl *D) {
   ParmVarDeclBits.addBit(D->hasInheritedDefaultArg());
   ParmVarDeclBits.addBit(D->hasUninstantiatedDefaultArg());
   ParmVarDeclBits.addBit(D->getExplicitObjectParamThisLoc().isValid());
+  ParmVarDeclBits.addBit(D->isC4Embed());
   Record.push_back(ParmVarDeclBits);
 
   if (D->hasUninstantiatedDefaultArg())
@@ -2528,7 +2529,7 @@ void ASTWriter::WriteDeclAbbrevs() {
   Abv->Add(BitCodeAbbrevOp(0));                       // hasExtInfo
   Abv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 6)); // TSIType
   // FieldDecl
-  Abv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 1)); // isMutable
+  Abv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 2)); // isMutable & isC4Embed
   Abv->Add(BitCodeAbbrevOp(0));                       // StorageKind
   // Type Source Info
   Abv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Array));
@@ -2699,7 +2700,7 @@ void ASTWriter::WriteDeclAbbrevs() {
   Abv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 6)); // ScopeIndex
   Abv->Add(BitCodeAbbrevOp(
       BitCodeAbbrevOp::Fixed,
-      19)); // Packed Parm Var Decl bits: IsObjCMethodParameter, ScopeDepth,
+      20)); // Packed Parm Var Decl bits: IsObjCMethodParameter, ScopeDepth,
             // ObjCDeclQualifier, KNRPromoted,
             // HasInheritedDefaultArg, HasUninstantiatedDefaultArg
   // Type Source Info

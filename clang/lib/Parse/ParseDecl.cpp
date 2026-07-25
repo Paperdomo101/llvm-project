@@ -7871,7 +7871,8 @@ void Parser::ParseFunctionDeclarator(Declarator &D,
        D.getTypeObject(D.getNumTypeObjects() - 1).Kind == DeclaratorChunk::Function);
 
   bool IsC4NamedReturn = false;
-  if (getLangOpts().C4() && Tok.is(tok::identifier) && NextToken().is(tok::l_brace)) {
+  if (getLangOpts().C4() && Tok.is(tok::identifier) &&
+      (NextToken().is(tok::l_brace) || NextToken().is(tok::semi))) {
     IsC4NamedReturn = true;
     if (auto *II = Tok.getIdentifierInfo()) {
       if (Actions.getTypeName(*II, Tok.getLocation(), getCurScope())) {
@@ -7880,10 +7881,16 @@ void Parser::ParseFunctionDeclarator(Declarator &D,
     }
   }
 
+  if (IsC4NamedReturn) {
+    D.setC4NamedReturn(Tok.getIdentifierInfo(), Tok.getLocation());
+    ConsumeToken();
+  }
+
   if (getLangOpts().C4() && TypeWasOmittedOnLeft &&
       !IsC4NamedReturn &&
       (isDeclarationSpecifier(ImplicitTypenameContext::No) ||
-       Tok.is(tok::caret))) {
+       Tok.is(tok::caret) ||
+       Tok.is(tok::amp))) {
 
       // 1. Capture the active, mutable DeclSpec context from the declarator
       DeclSpec &TargetDS = D.getMutableDeclSpec();
@@ -7905,7 +7912,7 @@ void Parser::ParseFunctionDeclarator(Declarator &D,
       }
 
       // 4. Parse the base type specifier (e.g., 'char' or 'struct Arena')
-
+      //
       // Trailing return types are parsed in a type-id-like context.
       //
       // DSC_trailing (C++ trailing-return-type context) is used here so that
@@ -7946,10 +7953,14 @@ void Parser::ParseFunctionDeclarator(Declarator &D,
           ParseBracketDeclarator(D);
       }
 
-      // llvm::errs()
-      //     << "Remaining token: "
-      //     << tok::getTokenName(Tok.getKind())
-      //     << "\n";
+      if (Tok.is(tok::identifier) && (NextToken().is(tok::l_brace) || NextToken().is(tok::semi))) {
+        if (auto *II = Tok.getIdentifierInfo()) {
+          if (!Actions.getTypeName(*II, Tok.getLocation(), getCurScope())) {
+            D.setC4NamedReturn(Tok.getIdentifierInfo(), Tok.getLocation());
+            ConsumeToken();
+          }
+        }
+      }
     }
 }
 

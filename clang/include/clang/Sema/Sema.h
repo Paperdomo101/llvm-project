@@ -2735,10 +2735,41 @@ public:
   llvm::DenseMap<const IdentifierInfo *,
                  llvm::SmallVector<FunctionDecl *, 2>> C4AliasMap;
   void C4RegisterAlias(const IdentifierInfo *AliasII, FunctionDecl *PrimaryFD) {
-    C4AliasMap[AliasII].push_back(PrimaryFD);
+    FunctionDecl *Canon = PrimaryFD->getCanonicalDecl();
+    auto &Vec = C4AliasMap[AliasII];
+    for (FunctionDecl *FD : Vec) {
+      if (FD->getCanonicalDecl() == Canon)
+        return;
+    }
+    Vec.push_back(PrimaryFD);
+    if (!PrimaryFD->hasAttr<C4AliasAttr>()) {
+      PrimaryFD->addAttr(C4AliasAttr::CreateImplicit(Context, const_cast<IdentifierInfo*>(AliasII), PrimaryFD->getLocation()));
+    }
     // Remember the alias name so we can fix up implicit placeholders later
     // (after the body is parsed).
     C4PendingAliasFixups[PrimaryFD].push_back(AliasII);
+  }
+
+  const llvm::SmallVectorImpl<FunctionDecl *> *getC4AliasCandidates(const IdentifierInfo *II) {
+    auto It = C4AliasMap.find(II);
+    if (It != C4AliasMap.end() && !It->second.empty())
+      return &It->second;
+
+    if (Context.getTranslationUnitDecl()) {
+      for (Decl *D : Context.getTranslationUnitDecl()->decls()) {
+        if (FunctionDecl *FD = dyn_cast<FunctionDecl>(D)) {
+          for (C4AliasAttr *A : FD->specific_attrs<C4AliasAttr>()) {
+            if (A->getAlias() == II) {
+              C4RegisterAlias(II, FD);
+            }
+          }
+        }
+      }
+    }
+    It = C4AliasMap.find(II);
+    if (It != C4AliasMap.end() && !It->second.empty())
+      return &It->second;
+    return nullptr;
   }
 
   // C4: pending alias fixups — maps primary FD → alias names that need

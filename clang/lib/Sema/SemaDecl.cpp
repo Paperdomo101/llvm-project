@@ -11705,8 +11705,31 @@ Sema::ActOnFunctionDeclarator(Scope *S, Declarator &D, DeclContext *DC,
 
   // Used for a warning on the 'next' declaration when used with a
   // `routine(name)`.
-  if (getLangOpts().OpenACC)
-    OpenACC().ActOnFunctionDeclarator(NewFD);
+  // --- C4: Named return & Identifier aliasing ---
+  if (getLangOpts().C4() && NewFD && !NewFD->isInvalidDecl()) {
+    if (D.getC4NamedReturnII()) {
+      const IdentifierInfo *NamedReturnII = D.getC4NamedReturnII();
+      if (NewFD->getReturnType()->isVoidType()) {
+        for (ParmVarDecl *P : NewFD->parameters()) {
+          if (P->getIdentifier() == NamedReturnII) {
+            QualType RetTy = P->getType();
+            SmallVector<QualType, 8> ParamTypes;
+            for (ParmVarDecl *Param : NewFD->parameters())
+              ParamTypes.push_back(Param->getType());
+            if (const auto *FPT = NewFD->getType()->getAs<FunctionProtoType>()) {
+              QualType NewFnTy = Context.getFunctionType(
+                  RetTy, ParamTypes, FPT->getExtProtoInfo());
+              NewFD->setType(NewFnTy);
+            }
+            break;
+          }
+        }
+      }
+    }
+    if (D.getC4AliasII()) {
+      C4RegisterAlias(D.getC4AliasII(), NewFD);
+    }
+  }
 
   return NewFD;
 }
@@ -19863,13 +19886,7 @@ CreateNewDecl:
     if (getLangOpts().C4() && Name && New && !New->isInvalidDecl()) {
       SourceLocation LocToCheck = New->getLocation();
       SourceManager &SM = Context.getSourceManager();
-      FileID MainFID = SM.getMainFileID();
-      bool IsC4MainFile = false;
-      if (auto FE = SM.getFileEntryRefForID(MainFID)) {
-        IsC4MainFile = FE->getName().ends_with(".c4") || FE->getName().ends_with(".h4") ||
-                       FE->getName().ends_with(".civ") || FE->getName().ends_with(".hiv");
-      }
-      if (IsC4MainFile &&
+      if (getLangOpts().C4() &&
           !SM.isInSystemHeader(SM.getSpellingLoc(LocToCheck)) &&
           !SM.isInSystemHeader(SM.getExpansionLoc(LocToCheck)) &&
           !SM.isInSystemHeader(LocToCheck)) {

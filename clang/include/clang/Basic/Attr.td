@@ -832,6 +832,13 @@ def C4Main : InheritableAttr {
   let Documentation = [Undocumented];
 }
 
+def C4Alias : InheritableAttr {
+  let Spellings = [];
+  let Args = [IdentifierArgument<"Alias">];
+  let Subjects = SubjectList<[Function]>;
+  let Documentation = [Undocumented];
+}
+
 /// Some attributes, like calling conventions, can appear in either the
 /// declaration or the type position. These attributes are morally type
 /// attributes, but have historically been written on declarations.

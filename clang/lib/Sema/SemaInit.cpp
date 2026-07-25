@@ -2946,6 +2946,8 @@ InitListChecker::CheckDesignatedInitializer(const InitializedEntity &Entity,
 
     FieldDecl *KnownField = D->getFieldDecl();
     if (!KnownField) {
+      if (RecordDecl *RDDef = RD->getDefinition())
+        RD = RDDef;
       const IdentifierInfo *FieldName = D->getFieldName();
       ValueDecl *VD = SemaRef.tryLookupUnambiguousFieldDecl(RD, FieldName);
       if (!VD && SemaRef.getLangOpts().C4()) {

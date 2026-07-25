@@ -3948,16 +3948,7 @@ void Parser::ParseMicrosoftIfExistsStatement(StmtVector &Stmts) {
 }
 
 bool Parser::isC4File() {
-  if (!getLangOpts().C4())
-    return false;
-  SourceLocation Loc = Tok.getLocation();
-  SourceManager &SM = PP.getSourceManager();
-  PresumedLoc PLoc = SM.getPresumedLoc(SM.getSpellingLoc(Loc));
-  if (!PLoc.isValid())
-    return false;
-  llvm::StringRef Filename = PLoc.getFilename();
-  return Filename.ends_with(".c4") || Filename.ends_with(".h4") ||
-         Filename.ends_with(".civ") || Filename.ends_with(".hiv");
+  return getLangOpts().C4();
 }
 
 bool Parser::isC4CaseLabel() {
