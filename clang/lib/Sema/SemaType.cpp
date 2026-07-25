@@ -5818,7 +5818,8 @@ TypeSourceInfo *Sema::GetTypeForDeclarator(Declarator &D) {
 
     if (HasArray || PtrDepth > 0) {
       QualType R = TInfo->getType();
-      if (!R->isFunctionType()) {
+      bool IsFnOrFnPtr = R->isFunctionType() || (R->isPointerType() && R->getPointeeType()->isFunctionType());
+      if (!IsFnOrFnPtr) {
         if (HasArray && PtrDepth > 0 && DS.isC4ArrayBeforeCaret()) {
           // '[] ^T'
           const auto &LevelQuals = DS.getC4PointerLevelQuals();
@@ -5862,7 +5863,9 @@ TypeSourceInfo *Sema::GetTypeForDeclarator(Declarator &D) {
       (D.getDeclSpec().isC4BoundsCheckedArray() || D.getDeclSpec().getC4PointerDepth() > 0) &&
       D.getDeclSpec().getTypeSpecType() != DeclSpec::TST_error) {
     QualType FT = TInfo->getType();
-    if (const FunctionType *Fn = FT->getAs<FunctionType>()) {
+    bool IsPointerToFn = FT->isPointerType() && FT->getPointeeType()->isFunctionType();
+    const FunctionType *Fn = IsPointerToFn ? FT->getPointeeType()->getAs<FunctionType>() : FT->getAs<FunctionType>();
+    if (Fn) {
       QualType RetTy = Fn->getReturnType();
       bool HasArray = D.getDeclSpec().isC4BoundsCheckedArray();
       unsigned PtrDepth = D.getDeclSpec().getC4PointerDepth();
@@ -5908,6 +5911,8 @@ TypeSourceInfo *Sema::GetTypeForDeclarator(Declarator &D) {
         else
           NewFnTy = Context.getFunctionNoProtoType(RetTy,
                                                    Fn->getExtInfo());
+        if (IsPointerToFn)
+          NewFnTy = Context.getPointerType(NewFnTy);
         TInfo = Context.getTrivialTypeSourceInfo(NewFnTy, D.getBeginLoc());
       }
     }

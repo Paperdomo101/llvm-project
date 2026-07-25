@@ -3515,6 +3515,14 @@ void Parser::ParseDeclarationSpecifiers(
                                FnPtrTy, Actions.getASTContext().getPrintingPolicy());
             continue;
           }
+          if (GetLookAheadToken(Carets).is(tok::identifier) &&
+              GetLookAheadToken(Carets + 1).is(tok::l_paren)) {
+            const char *PrevSpec = nullptr;
+            unsigned DiagID = 0;
+            DS.SetTypeSpecType(DeclSpec::TST_void, Loc, PrevSpec, DiagID,
+                               Actions.getASTContext().getPrintingPolicy());
+            return;
+          }
         }
 
         // === C4: ^ pointer-depth prefix (can stack: ^, ^^, ^^^, …) ===
@@ -6178,6 +6186,8 @@ bool Parser::isDeclarationSpecifier(
         tok::kw__Atomic,  tok::kw___attribute, tok::kw_typedef))
       return true;
     if (Next.is(tok::identifier)) {
+      if (getLangOpts().C4() && PP.LookAhead(1).is(tok::l_paren))
+        return true;
       if (auto *II = Next.getIdentifierInfo()) {
         if (Actions.getTypeName(*II, Next.getLocation(), getCurScope()))
           return true;
@@ -6824,10 +6834,82 @@ static bool isPipeDeclarator(const Declarator &D) {
   return false;
 }
 
+bool Parser::ParseC4NamedFunctionPointerDeclarator(Declarator &D) {
+  if (!getLangOpts().C4() || !Tok.is(tok::caret))
+    return false;
+  unsigned Carets = 0;
+  while (GetLookAheadToken(Carets).is(tok::caret))
+    Carets++;
+  if (!GetLookAheadToken(Carets).is(tok::identifier) ||
+      !GetLookAheadToken(Carets + 1).is(tok::l_paren))
+    return false;
+
+  for (unsigned i = 0; i < Carets; ++i)
+    ConsumeToken(); // consume carets
+
+  IdentifierInfo *NameII = Tok.getIdentifierInfo();
+  SourceLocation NameLoc = Tok.getLocation();
+  ConsumeToken(); // consume identifier
+
+  Declarator TempD(D.getDeclSpec(), ParsedAttributesView::none(), DeclaratorContext::Prototype);
+  ParseScope PrototypeScope(this, Scope::FunctionPrototypeScope | Scope::FunctionDeclarationScope | Scope::DeclScope);
+  BalancedDelimiterTracker Tracker(*this, tok::l_paren);
+  Tracker.consumeOpen();
+  SmallVector<DeclaratorChunk::ParamInfo, 16> ParamInfo;
+  SourceLocation EllipsisLoc;
+  ParsedAttributes FirstArgAttrs(AttrFactory);
+  if (Tok.isNot(tok::r_paren))
+    ParseParameterDeclarationClause(TempD, FirstArgAttrs, ParamInfo, EllipsisLoc);
+  Tracker.consumeClose();
+  PrototypeScope.Exit();
+
+  SourceLocation LParenLoc = Tracker.getOpenLocation();
+  SourceLocation RParenLoc = Tracker.getCloseLocation();
+
+  // If a return type is explicitly specified after ')', parse it into D.getMutableDeclSpec()
+  if (isDeclarationSpecifier(ImplicitTypenameContext::No) ||
+      Tok.is(tok::caret) || Tok.is(tok::amp)) {
+    D.getMutableDeclSpec().ClearTypeSpecType();
+    D.getMutableDeclSpec().SetIsC4Reference(false, SourceLocation());
+    ParsedTemplateInfo TemplateInfo;
+    ParseDeclarationSpecifiers(D.getMutableDeclSpec(), TemplateInfo);
+  }
+
+  D.SetIdentifier(NameII, NameLoc);
+
+  DeclaratorChunk::ParamInfo *ParamArray = nullptr;
+  if (!ParamInfo.empty()) {
+    ParamArray = new DeclaratorChunk::ParamInfo[ParamInfo.size()];
+    for (size_t i = 0; i < ParamInfo.size(); ++i)
+      ParamArray[i] = std::move(ParamInfo[i]);
+  }
+  for (unsigned i = 0; i < Carets; ++i) {
+    DeclaratorChunk PointerChunk = DeclaratorChunk::getPointer(
+        0, NameLoc, SourceLocation(), SourceLocation(),
+        SourceLocation(), SourceLocation(), SourceLocation());
+    D.AddTypeInfo(PointerChunk, NameLoc);
+  }
+
+  DeclaratorChunk FunctionChunk = DeclaratorChunk::getFunction(
+      /*hasProto=*/true, /*IsAmbiguous=*/false, LParenLoc,
+      ParamArray, ParamInfo.size(),
+      /*EllipsisLoc=*/EllipsisLoc, RParenLoc,
+      /*RefQualifierIsLvalueRef=*/true, SourceLocation(), SourceLocation(),
+      EST_None, SourceRange(), nullptr, nullptr, 0, nullptr, nullptr,
+      {}, LParenLoc, RParenLoc, D);
+  D.AddTypeInfo(FunctionChunk, RParenLoc);
+  return true;
+}
+
 void Parser::ParseDeclaratorInternal(Declarator &D,
                                      DirectDeclParseFunction DirectDeclParser) {
   if (Diags.hasAllExtensionsSilenced())
     D.setExtension();
+
+  if (getLangOpts().C4() && Tok.is(tok::caret)) {
+    if (ParseC4NamedFunctionPointerDeclarator(D))
+      return;
+  }
 
   // C++ member pointers start with a '::' or a nested-name.
   // Member pointers get special handling, since there's no place for the

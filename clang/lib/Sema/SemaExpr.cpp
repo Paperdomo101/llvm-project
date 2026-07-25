@@ -8125,14 +8125,19 @@ void Sema::CheckC4DeferredFunctionCall(CallExpr *CE, FunctionDecl *FD,
     // Walk through ImplicitCastExpr (FunctionToPointerDecay) to find the
     // DeclRefExpr and update its type.
     if (auto *ICE = dyn_cast<ImplicitCastExpr>(Callee)) {
-      ICE->setType(FnPtrType);
+      ICE->setType(FnPtrType.getNonReferenceType());
       if (auto *DRE = dyn_cast<DeclRefExpr>(ICE->getSubExpr()))
-        DRE->setType(FnType);
+        DRE->setType(FnType.getNonReferenceType());
     } else if (auto *DRE = dyn_cast<DeclRefExpr>(Callee)) {
-      DRE->setType(FnType);
+      DRE->setType(FnType.getNonReferenceType());
     }
     // Also update the CallExpr's result type to match the real return type.
-    CE->setType(FD->getReturnType());
+    QualType RetTy = FD->getReturnType();
+    CE->setType(RetTy.getNonReferenceType());
+    if (RetTy->isLValueReferenceType())
+      CE->setValueKind(VK_LValue);
+    else if (RetTy->isRValueReferenceType())
+      CE->setValueKind(VK_XValue);
   }
 
   if (!CheckArgs)
@@ -8218,9 +8223,13 @@ void Sema::CheckC4DeferredFunctionCall(CallExpr *CE, FunctionDecl *FD,
           if (auto *DRE = dyn_cast<DeclRefExpr>(ICE->getSubExpr())) {
             if (auto *VD = dyn_cast<VarDecl>(DRE->getDecl())) {
               if (VD->getType() != ICE->getType()) {
-                QualType NewTy = VD->getType();
+                QualType NewTy = VD->getType().getNonReferenceType();
                 ICE->setType(NewTy);
                 DRE->setType(NewTy);
+                if (VD->getType()->isLValueReferenceType()) {
+                  DRE->setValueKind(VK_LValue);
+                  ICE->setValueKind(VK_LValue);
+                }
               }
             }
           }
@@ -8250,7 +8259,7 @@ void Sema::CheckC4DeferredFunctionCall(CallExpr *CE, FunctionDecl *FD,
         if (getLangOpts().C4())
           TryC4ResolveDotExpr(Arg, ParamTy);
         if (isa<InitListExpr>(Arg) && (Arg->getType()->isVoidType() || Arg->getType().isNull())) {
-          Arg->setType(ParamTy);
+          Arg->setType(ParamTy.getNonReferenceType());
         }
         ExprResult ArgRes = Arg;
         AssignConvertType ConvTy = CheckSingleAssignmentConstraints(ParamTy, ArgRes);

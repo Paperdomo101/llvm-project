@@ -16439,25 +16439,8 @@ Decl *Sema::ActOnParamDeclarator(Scope *S, Declarator &D,
     // 1. HARDENED REFERENCE PARSING GATEWAY WITH MULTI-VARIABLE GROUPING ISOLATION
     bool IsExplicitC4Ref = false;
     if (D.getDeclSpec().isC4Reference()) {
-      SourceLocation RefLoc = D.getDeclSpec().getC4ReferenceLoc();
-      SourceLocation DSLoc = D.getDeclSpec().getBeginLoc();
-      if (RefLoc.isValid() && DSLoc.isValid()) {
-        std::pair<FileID, unsigned> RefLocInfo = Context.getSourceManager().getDecomposedLoc(RefLoc);
-        std::pair<FileID, unsigned> DSLocInfo = Context.getSourceManager().getDecomposedLoc(DSLoc);
-        if (RefLocInfo.first == DSLocInfo.first &&
-            std::abs((int)RefLocInfo.second - (int)DSLocInfo.second) <= 32) {
-          std::pair<FileID, unsigned> LocInfo = RefLocInfo;
-          bool Invalid = false;
-          StringRef Buf = Context.getSourceManager().getBufferData(LocInfo.first, &Invalid);
-
-          if (!Invalid && LocInfo.second < Buf.size()) {
-            if (Buf[LocInfo.second] == '&') {
-              if (D.isFirstDeclarator()) {
-                IsExplicitC4Ref = true;
-              }
-            }
-          }
-        }
+      if (D.isFirstDeclarator()) {
+        IsExplicitC4Ref = true;
       }
     }
 

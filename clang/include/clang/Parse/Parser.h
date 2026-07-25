@@ -2776,6 +2776,7 @@ private:
   void ParseFunctionDeclarator(Declarator &D, ParsedAttributes &FirstArgAttrs,
                                BalancedDelimiterTracker &Tracker,
                                bool IsAmbiguous, bool RequiresArg = false);
+  bool ParseC4NamedFunctionPointerDeclarator(Declarator &D);
   void InitCXXThisScopeForDeclaratorIfRelevant(
       const Declarator &D, const DeclSpec &DS,
       std::optional<Sema::CXXThisScopeRAII> &ThisScope);
