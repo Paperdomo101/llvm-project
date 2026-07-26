@@ -206,7 +206,10 @@ CompilerTest custom_test_suite[] = {
     {
         "Reference Abuse",
         "tests/reference_abuse.c4",
-        false, 1, { "cannot take the address of pass-by-reference parameter" }
+        false, 2, {
+            "cannot take the address of pass-by-reference parameter",
+            "reference cannot be bound to null pointer"
+        }
     },
     {
         "##. Capacity-of",
@@ -288,6 +291,10 @@ CompilerTest custom_test_suite[] = {
     {
         "Local function pointers (cross-platform, no blocks runtime)",
         "tests/local_fn_runtime.c4", true
+    },
+    {
+        "C4 Local Functions Embed Arrow",
+        "tests/local_fn_embed_runtime.c4", true
     },
     {
         "For-loop boolean conditions (for true {}, for (expr) {})",

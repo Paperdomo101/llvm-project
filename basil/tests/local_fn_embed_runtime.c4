@@ -1,0 +1,110 @@
+// tests/local_fn_embed_runtime.c4
+// Runtime tests for C4 local functions with <- embed arrow parameters.
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+static void chk(int cond, const char *msg) {
+    if (!cond) {
+        printf("[FAIL] %s\n", msg);
+        exit(1);
+    }
+}
+
+typedef struct String_View {
+    const char *data;
+    size_t count;
+} String_View;
+
+static String_View make_sv(const char *s) {
+    String_View sv;
+    sv.data = s;
+    sv.count = strlen(s);
+    return sv;
+}
+
+#define SVLIT(s) make_sv(s)
+
+typedef struct Ast_Printer Ast_Printer;
+
+struct Ast_Printer {
+    int dummy;
+};
+
+static String_View parenthesize(Ast_Printer *self, String_View name, String_View *exprs, int count) {
+    static char buf[256];
+    int pos = snprintf(buf, sizeof(buf), "(%.*s", (int)name.count, name.data);
+    for (int i = 0; i < count; i++) {
+        pos += snprintf(buf + pos, sizeof(buf) - pos, " %.*s", (int)exprs[i].count, exprs[i].data);
+    }
+    snprintf(buf + pos, sizeof(buf) - pos, ")");
+    return make_sv(buf);
+}
+
+typedef struct Binary {
+    String_View left;
+    String_View right;
+    struct { String_View lexeme; } operator;
+} Binary;
+
+typedef struct Grouping {
+    String_View expression;
+} Grouping;
+
+typedef struct Literal {
+    struct {
+        enum { NUM, STR, NIL } type;
+        double number;
+        String_View string;
+    } *value;
+} Literal;
+
+typedef struct Unary {
+    String_View right;
+    struct { String_View lexeme; } operator;
+} Unary;
+
+main() int {
+    Ast_Printer printer = {0};
+
+    // 1. visit_binary with embed parameter <- &Binary expr
+    visit_binary := ^(<- &Binary expr, Ast_Printer *self) String_View {
+        String_View exprs[2] = {left, right};
+        return self::parenthesize(operator.lexeme, exprs, 2);
+    };
+
+    Binary bin = { SVLIT("1"), SVLIT("2"), { SVLIT("+") } };
+    String_View res_bin = visit_binary(bin, &printer);
+    chk(strncmp(res_bin.data, "(+ 1 2)", res_bin.count) == 0, "visit_binary result");
+
+    // 2. visit_grouping with embed parameter <- &Grouping expr
+    visit_grouping := ^(<- &Grouping expr, Ast_Printer *self) String_View {
+        String_View exprs[1] = {expr.expression};
+        return self::parenthesize(SVLIT("group"), exprs, 1);
+    };
+
+    Grouping grp = { SVLIT("42") };
+    String_View res_grp = visit_grouping(grp, &printer);
+    chk(strncmp(res_grp.data, "(group 42)", res_grp.count) == 0, "visit_grouping result");
+
+    // 3. visit_unary with embed parameter <- &Unary expr
+    visit_unary := ^(<- &Unary expr, Ast_Printer *self) String_View {
+        String_View exprs[1] = {expr.right};
+        return self::parenthesize(expr.operator.lexeme, exprs, 1);
+    };
+
+    Unary un = { SVLIT("x"), { SVLIT("-") } };
+    String_View res_un = visit_unary(un, &printer);
+    chk(strncmp(res_un.data, "(- x)", res_un.count) == 0, "visit_unary result");
+
+    // 4. Implicit double colon dispatch inside local function with embed parameter
+    use_implicit_self := ^(<- Ast_Printer *self, String_View msg) String_View {
+        String_View exprs[1] = {msg};
+        return ::parenthesize(SVLIT("log"), exprs, 1);
+    };
+
+    String_View res_log = use_implicit_self(&printer, SVLIT("hello"));
+    chk(strncmp(res_log.data, "(log hello)", res_log.count) == 0, "use_implicit_self result");
+
+    return 0;
+}

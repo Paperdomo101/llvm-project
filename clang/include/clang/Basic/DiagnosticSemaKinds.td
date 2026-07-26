@@ -301,6 +301,8 @@ def err_cannot_convert_string_to_c4 : Error<
   "cannot convert string literal to bounds‑checked array">;
 def err_c4_array_init_exceeds_capacity : Error<
   "array initializer has %0 element(s) but declared capacity is %1">;
+def err_c4_reference_null : Error<
+  "reference cannot be bound to null pointer">;
 
 // C99 Designated Initializers
 def ext_designated_init : Extension<

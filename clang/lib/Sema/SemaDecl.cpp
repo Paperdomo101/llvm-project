@@ -8805,8 +8805,16 @@ NamedDecl *Sema::ActOnVariableDeclarator(
 
   if (getLangOpts().C4() && NewVD->isLocalVarDecl() && !NewVD->isInvalidDecl() &&
       !Diags.isIgnored(diag::warn_c4_decl_shadow_embed, NewVD->getLocation())) {
-    if (FunctionDecl *FD = getCurFunctionDecl(/*AllowLambda=*/true)) {
-      for (ParmVarDecl *PVD : FD->parameters()) {
+    for (DeclContext *DC = CurContext; DC; DC = DC->getParent()) {
+      ArrayRef<ParmVarDecl *> Params;
+      if (auto *FD = dyn_cast<FunctionDecl>(DC))
+        Params = FD->parameters();
+      else if (auto *BD = dyn_cast<BlockDecl>(DC))
+        Params = BD->parameters();
+      else
+        continue;
+
+      for (ParmVarDecl *PVD : Params) {
         if (PVD->isC4Embed()) {
           QualType ParamTy = PVD->getType();
           if (ParamTy->isPointerType())
@@ -14397,6 +14405,9 @@ void Sema::AddInitializerToDecl(Decl *RealDecl, Expr *Init, bool DirectInit) {
   }
 
     VarDecl *VDecl = dyn_cast<VarDecl>(RealDecl);
+    if (getLangOpts().C4() && VDecl && VDecl->getType()->isReferenceType() && Init) {
+      CheckC4NullPointerDereference(Init);
+    }
     // --- C4 REWRITE (pure C) ---
     // --- C4: Validate element count against capacity, then synthesise the
     //         runtime struct initialiser { items_ptr, count }. ---

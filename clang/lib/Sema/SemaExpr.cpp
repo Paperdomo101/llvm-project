@@ -2951,10 +2951,19 @@ ExprResult Sema::ActOnIdExpression(Scope *S, CXXScopeSpec &SS,
   }
 
   if (R.empty() && getLangOpts().C4()) {
-    if (FunctionDecl *FD = getCurFunctionDecl(/*AllowLambda=*/true)) {
-      ParmVarDecl *FoundEmbedParam = nullptr;
-      NamedDecl *FoundSubMember = nullptr;
-      for (ParmVarDecl *PVD : FD->parameters()) {
+    ParmVarDecl *FoundEmbedParam = nullptr;
+    NamedDecl *FoundSubMember = nullptr;
+    for (DeclContext *DC = CurContext; DC; DC = DC->getParent()) {
+      ArrayRef<ParmVarDecl *> Params;
+      if (auto *FD = dyn_cast<FunctionDecl>(DC)) {
+        Params = FD->parameters();
+      } else if (auto *BD = dyn_cast<BlockDecl>(DC)) {
+        Params = BD->parameters();
+      } else {
+        continue;
+      }
+
+      for (ParmVarDecl *PVD : Params) {
         if (PVD->isC4Embed()) {
           QualType ParamTy = PVD->getType();
           if (ParamTy->isPointerType())
@@ -2967,8 +2976,13 @@ ExprResult Sema::ActOnIdExpression(Scope *S, CXXScopeSpec &SS,
             LookupQualifiedName(SubR, RD);
             if (!SubR.empty()) {
               if (FoundEmbedParam) {
-                Diag(NameLoc, diag::err_ambiguous_member_multiple_embed_params)
-                    << Name << FD;
+                if (auto *FD = dyn_cast<FunctionDecl>(DC)) {
+                  Diag(NameLoc, diag::err_ambiguous_member_multiple_embed_params)
+                      << Name << FD;
+                } else {
+                  Diag(NameLoc, diag::err_ambiguous_member_multiple_embed_params)
+                      << Name << DC;
+                }
                 return ExprError();
               }
               FoundEmbedParam = PVD;
@@ -2977,23 +2991,25 @@ ExprResult Sema::ActOnIdExpression(Scope *S, CXXScopeSpec &SS,
           }
         }
       }
+      if (FoundEmbedParam)
+        break;
+    }
 
-      if (FoundEmbedParam) {
-        ExprResult ParamRef = BuildDeclRefExpr(FoundEmbedParam, FoundEmbedParam->getType(),
-                                               VK_LValue, NameLoc);
-        if (!ParamRef.isInvalid()) {
-          bool IsArrow = FoundEmbedParam->getType()->isPointerType();
-          ParamRef = PerformMemberExprBaseConversion(ParamRef.get(), IsArrow);
-          if (ParamRef.isInvalid())
-            return ExprError();
-          LookupResult MemberR(*this, R.getLookupNameInfo(), LookupMemberName);
-          MemberR.addDecl(FoundSubMember);
-          MemberR.resolveKind();
-          return BuildMemberReferenceExpr(ParamRef.get(), ParamRef.get()->getType(),
-                                          NameLoc, IsArrow, SS, TemplateKWLoc,
-                                          /*FirstQualifierInScope=*/nullptr,
-                                          MemberR, TemplateArgs, S);
-        }
+    if (FoundEmbedParam) {
+      ExprResult ParamRef = BuildDeclRefExpr(FoundEmbedParam, FoundEmbedParam->getType(),
+                                             VK_LValue, NameLoc);
+      if (!ParamRef.isInvalid()) {
+        bool IsArrow = FoundEmbedParam->getType()->isPointerType();
+        ParamRef = PerformMemberExprBaseConversion(ParamRef.get(), IsArrow);
+        if (ParamRef.isInvalid())
+          return ExprError();
+        LookupResult MemberR(*this, R.getLookupNameInfo(), LookupMemberName);
+        MemberR.addDecl(FoundSubMember);
+        MemberR.resolveKind();
+        return BuildMemberReferenceExpr(ParamRef.get(), ParamRef.get()->getType(),
+                                        NameLoc, IsArrow, SS, TemplateKWLoc,
+                                        /*FirstQualifierInScope=*/nullptr,
+                                        MemberR, TemplateArgs, S);
       }
     }
   }
@@ -6777,8 +6793,7 @@ bool Sema::GatherArgumentsForCall(SourceLocation CallLoc, FunctionDecl *FDecl,
       Arg = Args[ArgIx++];
 
       // ============================================================================
-      // C4 LANGUAGE EXTENSION: PRE-INITIALIZATION CALL-SITE ADDRESS-OF INJECTION
-      // ============================================================================
+      bool IsTargetC4Reference = false;
       if (Param && Param->getType()->isPointerType()) {
         QualType ParamCheckTy = Param->getType();
 
@@ -6786,7 +6801,6 @@ bool Sema::GatherArgumentsForCall(SourceLocation CallLoc, FunctionDecl *FDecl,
         // A parameter is a reference variable if and only if it is a pointer, its
         // start location is outside system headers, and it natively carries a
         // const qualifier on the pointer layer itself! This isolates r1 from r2 perfectly.
-        bool IsTargetC4Reference = false;
         SourceLocation ParamStart = Param->getBeginLoc();
 
         if (ParamStart.isValid() && !Context.getSourceManager().isInSystemHeader(ParamStart)) {
@@ -6814,6 +6828,7 @@ bool Sema::GatherArgumentsForCall(SourceLocation CallLoc, FunctionDecl *FDecl,
       if (!Param && getLangOpts().C4() && ProtoArgType->isPointerType()) {
         if (ProtoArgType.isLocalConstQualified() || ProtoArgType.isConstQualified() ||
             ProtoArgType.getQualifiers().hasConst()) {
+          IsTargetC4Reference = true;
           if (Arg && Arg->isGLValue() &&
               Context.hasSameUnqualifiedType(Arg->getType(), ProtoArgType->getPointeeType())) {
             ExprResult InjectedAddress = CreateBuiltinUnaryOp(
@@ -6876,9 +6891,11 @@ bool Sema::GatherArgumentsForCall(SourceLocation CallLoc, FunctionDecl *FDecl,
             << Arg->getType() << ProtoArgType;
       }
 
-      // C4: resolve implicit dot ambiguity (.BASIC) using the parameter type.
-      if (getLangOpts().C4())
+      if (getLangOpts().C4()) {
         TryC4ResolveDotExpr(Arg, ProtoArgType);
+        if (IsTargetC4Reference || ProtoArgType->isReferenceType())
+          CheckC4NullPointerDereference(Arg);
+      }
 
       ExprResult ArgE = PerformCopyInitialization(
           Entity, SourceLocation(), Arg, IsListInitialization, AllowExplicit);
@@ -8138,6 +8155,8 @@ void Sema::CheckC4DeferredFunctionCall(CallExpr *CE, FunctionDecl *FD,
       CE->setValueKind(VK_LValue);
     else if (RetTy->isRValueReferenceType())
       CE->setValueKind(VK_XValue);
+    else
+      CE->setValueKind(VK_PRValue);
   }
 
   if (!CheckArgs)

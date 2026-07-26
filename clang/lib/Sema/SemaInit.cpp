@@ -7918,6 +7918,76 @@ static void CheckForNullPointerDereference(Sema &S, const Expr *E) {
   }
 }
 
+void Sema::CheckC4NullPointerDereference(const Expr *E) {
+  if (!E) return;
+
+  const Expr *IgnoreE = E->IgnoreParenCasts()->IgnoreImpCasts();
+  SourceLocation Loc = E->getBeginLoc();
+
+  if (const UnaryOperator *UO = dyn_cast<UnaryOperator>(IgnoreE)) {
+    if (UO->getOpcode() == UO_AddrOf) {
+      if (UO->getOperatorLoc().isValid()) Loc = UO->getOperatorLoc();
+      IgnoreE = UO->getSubExpr()->IgnoreParenCasts()->IgnoreImpCasts();
+    }
+  }
+
+  const Expr *PtrExpr = nullptr;
+  bool WasDeref = false;
+  if (const UnaryOperator *UO = dyn_cast<UnaryOperator>(IgnoreE)) {
+    if (UO->getOpcode() == UO_Deref) {
+      WasDeref = true;
+      PtrExpr = UO->getSubExpr()->IgnoreParenCasts()->IgnoreImpCasts();
+      if (UO->getOperatorLoc().isValid()) Loc = UO->getOperatorLoc();
+      else Loc = PtrExpr->getBeginLoc();
+    }
+  } else {
+    PtrExpr = IgnoreE;
+    if (IgnoreE->getBeginLoc().isValid()) Loc = IgnoreE->getBeginLoc();
+  }
+
+  bool IsNull = false;
+  if (PtrExpr) {
+    if (PtrExpr->isNullPointerConstant(Context, Expr::NPC_ValueDependentIsNotNull)) {
+      IsNull = true;
+    } else {
+      Expr::EvalResult Result;
+      if (PtrExpr->EvaluateAsRValue(Result, Context) && !Result.HasSideEffects) {
+        if (Result.Val.isInt() && Result.Val.getInt() == 0)
+          IsNull = true;
+        else if (Result.Val.isLValue() && Result.Val.getLValueBase().isNull())
+          IsNull = true;
+      }
+    }
+    if (!IsNull && WasDeref) {
+      if (const DeclRefExpr *DRE = dyn_cast<DeclRefExpr>(PtrExpr)) {
+        if (const VarDecl *VD = dyn_cast<VarDecl>(DRE->getDecl())) {
+          if (VD->hasInit()) {
+            const Expr *Init = VD->getInit()->IgnoreParenCasts()->IgnoreImpCasts();
+            if (Init->isNullPointerConstant(Context, Expr::NPC_ValueDependentIsNotNull)) {
+              IsNull = true;
+            } else {
+              Expr::EvalResult InitRes;
+              if (Init->EvaluateAsRValue(InitRes, Context) && !InitRes.HasSideEffects) {
+                if (InitRes.Val.isInt() && InitRes.Val.getInt() == 0)
+                  IsNull = true;
+                else if (InitRes.Val.isLValue() && InitRes.Val.getLValueBase().isNull())
+                  IsNull = true;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  if (IsNull) {
+    if (!Loc.isValid()) Loc = E->getBeginLoc();
+    if (!Loc.isValid() && PtrExpr) Loc = PtrExpr->getBeginLoc();
+    Diag(Loc, diag::err_c4_reference_null)
+        << (PtrExpr ? PtrExpr->getSourceRange() : E->getSourceRange());
+  }
+}
+
 MaterializeTemporaryExpr *
 Sema::CreateMaterializeTemporaryExpr(QualType T, Expr *Temporary,
                                      bool BoundToLvalueReference) {
@@ -8247,6 +8317,8 @@ ExprResult InitializationSequence::Perform(Sema &S,
       }
 
       CheckForNullPointerDereference(S, CurInit.get());
+      if (S.getLangOpts().C4())
+        S.CheckC4NullPointerDereference(CurInit.get());
       break;
 
     case SK_BindReferenceToTemporary: {

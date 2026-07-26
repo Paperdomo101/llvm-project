@@ -2791,6 +2791,7 @@ public:
   llvm::DenseMap<FunctionDecl *, FunctionDecl *> C4AliasResolvedMap;
   void CheckC4DeferredFunctionCall(CallExpr *CE, FunctionDecl *FD,
                                     bool CheckArgs = true);
+  void CheckC4NullPointerDereference(const Expr *E);
 
   // END C4
 

@@ -6130,6 +6130,13 @@ bool Parser::isDeclarationSpecifier(
   switch (Tok.getKind()) {
   default: return false;
 
+  // === C4: '<-' is the embed arrow parameter prefix (e.g. <- &Binary expr).
+  // Returning true allows ParseParenDeclarator to recognise block-literal
+  // parameter lists like ^(<- &Binary expr) as function arguments.
+  case tok::lessminus:
+    if (getLangOpts().C4()) return true;
+    return false;
+
   // === C4: '&' is the pass-by-reference prefix (e.g. &int, &[] int).
   // Returning true allows ParseParenDeclarator to recognise block-literal
   // parameter lists like ^(&[] int a) as function arguments, not grouping parens.

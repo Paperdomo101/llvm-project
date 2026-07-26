@@ -2,8 +2,19 @@ attempt_abuse (&int ref) {
     int *malicious_ptr = &ref; // Must trigger your custom compilation error!
 }
 
+null_ref_abuse (&int ref) {
+}
+
 main () int {
     int a = 10;
     attempt_abuse(a);
+    null_ref_abuse(@.(0 as ^int));
+
+    // Deferred function call returning reference:
+    &int r = deferred_ref_fn(a);
     return 0;
+}
+
+&int deferred_ref_fn(&int x) {
+    return x;
 }
