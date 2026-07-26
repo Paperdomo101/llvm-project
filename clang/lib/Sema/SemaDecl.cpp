@@ -18155,6 +18155,9 @@ NamedDecl *Sema::ImplicitlyDefineFunction(SourceLocation Loc,
   // Insert this function into the enclosing block scope.
   FunctionDecl *FD = cast<FunctionDecl>(ActOnDeclarator(BlockScope, D));
   FD->setImplicit();
+  if (getLangOpts().C4()) {
+    C4ImplicitDeclsMap[FD] = Loc;
+  }
 
   AddKnownFunctionAttributes(FD);
 

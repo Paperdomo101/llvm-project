@@ -10700,6 +10700,30 @@ AssignConvertType Sema::CheckAssignmentConstraints(QualType LHSType,
   }
   // ============================================================================
 
+  // C4: Allow assigning implicit out-of-order function placeholders (^func) to
+  // function pointer types. Their signature will be verified when defined, or
+  // flagged as undeclared at end-of-TU if never defined.
+  if (getLangOpts().C4() && !RHS.isInvalid() && RHS.isUsable() &&
+      (LHSType->isFunctionPointerType() || LHSType->isBlockPointerType() ||
+       (LHSType->isPointerType() && LHSType->getPointeeType()->isFunctionType()))) {
+    Expr *RHSExpr = RHS.get()->IgnoreParenImpCasts();
+    FunctionDecl *ImplicitFD = nullptr;
+    if (auto *UO = dyn_cast<UnaryOperator>(RHSExpr)) {
+      if (UO->getOpcode() == UO_AddrOf)
+        RHSExpr = UO->getSubExpr()->IgnoreParenImpCasts();
+    }
+    if (auto *DRE = dyn_cast<DeclRefExpr>(RHSExpr)) {
+      if (auto *FD = dyn_cast<FunctionDecl>(DRE->getDecl())) {
+        if (FD->isImplicit() && !FD->getBuiltinID())
+          ImplicitFD = FD;
+      }
+    }
+    if (ImplicitFD) {
+      Kind = CK_BitCast;
+      return AssignConvertType::Compatible;
+    }
+  }
+
   QualType RHSType = RHS.get()->getType();
 
   QualType OrigLHSType = LHSType;

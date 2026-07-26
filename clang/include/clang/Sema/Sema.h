@@ -2785,6 +2785,9 @@ public:
                  llvm::SmallVector<std::pair<CallExpr *, FunctionDecl *>, 4>>
       C4ImplicitCallsMap;
 
+  // C4: maps implicit placeholder FunctionDecl → location where it was first referenced/implicitly created.
+  llvm::DenseMap<FunctionDecl *, SourceLocation> C4ImplicitDeclsMap;
+
   // C4: maps implicit alias placeholder FunctionDecl → the real FunctionDecl
   // that defines it.  Populated when the alias body is finished, consumed at
   // end-of-TU to resolve deferred calls through alias names.

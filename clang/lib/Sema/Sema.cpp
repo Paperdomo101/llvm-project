@@ -1836,7 +1836,31 @@ void Sema::ActOnEndOfTranslationUnit() {
         Context.C4DeferredFunctionDecls.erase(DC.Enclosing);
     }
 
+    for (auto &Pair : C4ImplicitDeclsMap) {
+      FunctionDecl *OldImplicit = Pair.first;
+      SourceLocation Loc = Pair.second;
+      if (!OldImplicit || !OldImplicit->isImplicit() || OldImplicit->getBuiltinID())
+        continue;
+      FunctionDecl *RealDef = nullptr;
+      for (auto *RD = OldImplicit->getMostRecentDecl(); RD;
+           RD = RD->getPreviousDecl()) {
+        if (!RD->isImplicit() && RD->isThisDeclarationADefinition()) {
+          RealDef = RD;
+          break;
+        }
+      }
+      if (!RealDef) {
+        auto AliasIt = C4AliasResolvedMap.find(OldImplicit);
+        if (AliasIt != C4AliasResolvedMap.end())
+          RealDef = AliasIt->second;
+      }
+      if (!RealDef && !C4ImplicitCallsMap.count(OldImplicit)) {
+        Diag(Loc, diag::err_undeclared_var_use) << OldImplicit->getDeclName();
+      }
+    }
+
     C4ImplicitCallsMap.clear();
+    C4ImplicitDeclsMap.clear();
     C4AliasResolvedMap.clear();
   }
 

@@ -214,13 +214,14 @@ CompilerTest custom_test_suite[] = {
     {
         "##. Capacity-of",
         "tests/capacity_of.c4",
-        false, 6, {
+        false, 7, {
             "expected a type",
             "expected a type",
             "'##.' cannot be applied to type 'struct DummyStruct'",
             "'##.' cannot be applied to type 'union DummyUnion'",
             "'##.' cannot be applied to type 'int[10]'",
-            "expected a type",
+            "the '#.' size intrinsic operator can only be applied to custom bounds-checked arrays",
+            "use of undeclared identifier 'some_undefined_identifier'",
         }
     },
     {
@@ -295,6 +296,10 @@ CompilerTest custom_test_suite[] = {
     {
         "C4 Local Functions Embed Arrow",
         "tests/local_fn_embed_runtime.c4", true
+    },
+    {
+        "C4 Out-of-Order Function Pointer Reference",
+        "tests/outoforder_undefined_test.c4", true
     },
     {
         "For-loop boolean conditions (for true {}, for (expr) {})",

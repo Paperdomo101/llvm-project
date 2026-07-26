@@ -1,0 +1,25 @@
+// tests/outoforder_undefined_test.c4
+// Runtime tests verifying out-of-order function pointer references.
+#include <stdio.h>
+#include <stdlib.h>
+
+static void chk(int cond, const char *msg) {
+    if (!cond) {
+        printf("[FAIL] %s\n", msg);
+        exit(1);
+    }
+}
+
+// Out-of-order function pointer variable assigned before target function definition
+typedef int (*BinaryOp)(int, int);
+
+main() int {
+    BinaryOp fn = ^add_func;
+    chk(fn(10, 20) == 30, "out-of-order fn call via pointer");
+    return 0;
+}
+
+// Target function defined below main
+add_func(int a, int b) int {
+    return a + b;
+}
