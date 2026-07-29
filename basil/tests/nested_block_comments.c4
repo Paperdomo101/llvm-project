@@ -1,0 +1,8 @@
+/* outer block comment
+   /* nested level 2
+      /* nested level 3 */
+      still in level 2
+   */
+   back to level 1
+*/
+int nested_block_ok = 42;

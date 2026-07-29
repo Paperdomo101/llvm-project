@@ -477,6 +477,21 @@ CompilerTest custom_test_suite[] = {
         "C4 'or' keyword (runtime)",
         "tests/or_keyword_runtime.c4", true
     },
+    /// ---------------------------
+    ///  COMMENT EDGE CASE TESTS
+    /// ---------------------------
+    {
+        "Nested Block Comments",
+        "tests/nested_block_comments.c4",
+    },
+    {
+        "Indented Bookshelf Comments",
+        "tests/indented_bookshelf.c4", false
+    },
+    {
+        "Comment Interaction (bookshelf + block)",
+        "tests/comment_interaction.c4",
+    },
 };
 
 bool run_compiler_tests(const char *compiler_path) {

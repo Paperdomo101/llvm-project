@@ -3008,6 +3008,9 @@ bool Lexer::SkipBlockComment(Token &Result, const char *CurPtr) {
   // emiting to many diagnostics (see http://unicode.org/review/pr-121.html).
   bool UnicodeDecodingAlreadyDiagnosed = false;
 
+  // C4: track nesting level for nestable block comments
+  unsigned NestingLevel = 1;
+
   while (true) {
     // Skip over all non-interesting characters until we find end of buffer or a
     // (probably ending) '/' character.
@@ -3109,8 +3112,14 @@ bool Lexer::SkipBlockComment(Token &Result, const char *CurPtr) {
 
     if (C == '/') {
   FoundSlash:
-      if (CurPtr[-2] == '*')  // We found the final */.  We're done!
-        break;
+      if (CurPtr[-2] == '*') {  // We found */
+        // C4: nestable block comments – only end when outermost level closes
+        if (LangOpts.C4() && NestingLevel > 1) {
+          NestingLevel--;
+        } else {
+          break; // We're done!
+        }
+      }
 
       if ((CurPtr[-2] == '\n' || CurPtr[-2] == '\r')) {
         if (isEndOfBlockCommentWithEscapedNewLine(CurPtr - 2, this,
@@ -3121,11 +3130,13 @@ bool Lexer::SkipBlockComment(Token &Result, const char *CurPtr) {
         }
       }
       if (CurPtr[0] == '*' && CurPtr[1] != '/') {
-        // If this is a /* inside of the comment, emit a warning.  Don't do this
-        // if this is a /*/, which will end the comment.  This misses cases with
-        // embedded escaped newlines, but oh well.
-        if (!isLexingRawMode())
+        // If this is a /* inside of the comment.
+        // C4: nestable block comments – increment nesting level.
+        if (LangOpts.C4()) {
+          NestingLevel++;
+        } else if (!isLexingRawMode()) {
           Diag(CurPtr-1, diag::warn_nested_block_comment);
+        }
       }
     } else if (C == 0 && CurPtr == BufferEnd+1) {
       if (!isLexingRawMode())
@@ -3842,58 +3853,79 @@ bool Lexer::Lex(Token &Result) {
   return returnedToken;
 }
 
-// C4: /|| BOOKSHELF COMMENTS ||/
+// C4: /|| BOOKSHELF COMMENTS — indentation-based
+// A bookshelf comment starts with /|| and continues through all subsequent
+// lines that are indented MORE than the /|| itself. The comment ends at the
+// first non-blank line whose indentation is <= the starting indentation.
 bool Lexer::SkipBookshelfComment(Token &Result, const char *CurPtr) {
-  // Save the starting point of the full comment string for diagnostic fallback reporting
-  const char *StartPtr = CurPtr - 3;
-  unsigned NestingLevel = 1; // We have already matched the first open layer
+  // CurPtr points past the "/||" delimiter.
+  // Determine the indentation of the "/||" line by scanning back to line start.
+  const char *DelimSlash = CurPtr - 3; // points to '/' of "/||"
 
-  while (NestingLevel > 0) {
-    // Loop lookahead boundary check
-    if (CurPtr >= BufferEnd) {
-      if (!isLexingRawMode())
-        Diag(StartPtr, diag::err_unterminated_block_comment);
-      BufferPtr = CurPtr;
+  // Find the start of this line.
+  const char *LineStart = DelimSlash;
+  while (LineStart > BufferStart && LineStart[-1] != '\n' && LineStart[-1] != '\r')
+    LineStart--;
+
+  // Compute starting indentation in bytes.
+  unsigned StartIndent = DelimSlash - LineStart;
+
+  // Skip the rest of the current line (after /||).
+  while (CurPtr < BufferEnd && *CurPtr != '\n' && *CurPtr != '\r')
+    CurPtr++;
+
+  // Skip the newline at end of the starting line.
+  if (CurPtr < BufferEnd && *CurPtr == '\r') CurPtr++;
+  if (CurPtr < BufferEnd && *CurPtr == '\n') CurPtr++;
+
+  // Process subsequent lines based on indentation.
+  while (CurPtr < BufferEnd) {
+    // Save start of this line for indentation computation.
+    const char *ThisLineStart = CurPtr;
+
+    // Skip leading whitespace.
+    while (CurPtr < BufferEnd && (*CurPtr == ' ' || *CurPtr == '\t'))
+      CurPtr++;
+
+    unsigned ThisLineIndent = CurPtr - ThisLineStart;
+
+    // Check if this is a blank line (only whitespace, then newline or EOF).
+    if (CurPtr >= BufferEnd || *CurPtr == '\n' || *CurPtr == '\r') {
+      // Blank line – part of the comment, skip it.
+      if (CurPtr < BufferEnd && *CurPtr == '\r') CurPtr++;
+      if (CurPtr < BufferEnd && *CurPtr == '\n') CurPtr++;
+      continue;
+    }
+
+    // Check indentation against the starting line's indentation.
+    if (ThisLineIndent > StartIndent) {
+      // This line is indented more – part of the comment.
+      // Skip to end of this line.
+      while (CurPtr < BufferEnd && *CurPtr != '\n' && *CurPtr != '\r')
+        CurPtr++;
+      if (CurPtr < BufferEnd && *CurPtr == '\r') CurPtr++;
+      if (CurPtr < BufferEnd && *CurPtr == '\n') CurPtr++;
+    } else {
+      // This line ends the comment (same or less indentation).
+      // Set BufferPtr to the start of this line for re-lexing.
+      BufferPtr = ThisLineStart;
+
+      // If comment tracking is enabled, form a comment token.
+      if (inKeepCommentMode()) {
+        FormTokenWithChars(Result, ThisLineStart, tok::comment);
+        return true;
+      }
       return false;
     }
-
-    char c = *CurPtr;
-
-    if (c == '\n' || c == '\r') {
-      // Correct modern Clang way to update state across line boundaries
-      IsAtStartOfLine = true; // Mark that the next processed token begins on a new line
-
-      // Handle multi-platform line endings cleanly (\r\n)
-      if (c == '\r' && CurPtr[1] == '\n') {
-        CurPtr++;
-      }
-      CurPtr++;
-    } else if (c == '/' && CurPtr[1] == '|' && CurPtr[2] == '|') {
-      // Step into a new nested comment tier: "/||"
-      NestingLevel++;
-      CurPtr += 3;
-    } else if (c == '|' && CurPtr[1] == '|' && CurPtr[2] == '/') {
-      // Exit out of the current nested comment tier: "||/"
-      NestingLevel--;
-      CurPtr += 3;
-    } else {
-      // Advance to look at the next individual payload character
-      CurPtr++;
-    }
   }
 
-  // If the compilation unit requested comment tracking (e.g. documentation tools),
-  // wrap it up as a legitimate comment token. Otherwise, skip it.
+  // End of file reached – comment ends naturally.
+  BufferPtr = CurPtr;
+
   if (inKeepCommentMode()) {
     FormTokenWithChars(Result, CurPtr, tok::comment);
-    // C4 fix: Ensure the lexer cursor is synchronized even when keeping comments,
-    // otherwise the next lex iteration will re-read the comment area from the old BufferPtr!
-    BufferPtr = CurPtr;
     return true;
   }
-
-  // Update the main Lexer object's buffer tracker cursor
-  BufferPtr = CurPtr;
   return false;
 }
 

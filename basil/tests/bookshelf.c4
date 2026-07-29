@@ -1,29 +1,22 @@
-/|| This is a baseline single-line bookshelf comment ||/
+/|| This is a baseline single-line bookshelf comment
 int alpha = 10;
 
 /||
     This tests a multi-line bookshelf comment layout.
     If the line-counter engine functions correctly,
     the compiler error thrown on the next line will point
-    precisely to line 10.
-||/
+    precisely to line 9.
 int beta = "This string intentional type error forces line check verification";
 
 /||
-    This is the outer layer of a bookshelf comment block.
-    /||
-        This is a second, nested bookshelf comment layer!
-        /|| This is a third layer deep inside. ||/
-        Back out to layer two.
-    ||/
-    Back out to the first layer.
-||/
+    /|| inside a bookshelf comment is just text, not nested
+        deeper indentation is still part of the comment
+    the comment continues until indentation returns
 int gamma = 42;
 
-/|| Chained formatting test ||/ /|| Back-to-back testing layout ||/
+/|| Chained single-line bookshelf comments
+/|| Next bookshelf comment at the same indent works too
 int delta = 100;
 
-/|| Unclosed edge check simulation:
-    If you remove the closing token on the line below,
-    Clang will safely log the custom 'unterminated block comment' warning.
-||/
+/|| Comment that ends at EOF without explicit closer
+    This trailing text is part of the comment

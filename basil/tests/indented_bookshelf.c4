@@ -1,0 +1,10 @@
+int main() {
+    int x = 0;
+
+    /|| bookshelf comment inside function
+        deeper indentation is comment text
+        /|| this /|| is just text, not a nested comment
+    x = 1;
+
+    return 0;
+}

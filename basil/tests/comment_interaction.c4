@@ -1,0 +1,16 @@
+/|| bookshelf comment containing /* block delimiters as text
+    /* this is just text inside the bookshelf comment, not a block comment */
+    still in bookshelf
+int after_bookshelf = 1;
+
+/* block comment containing /|| bookshelf delimiters as text
+   /|| this is just text inside the block comment
+*/
+int after_block = 2;
+
+/|| bookshelf at indent 0
+  more indented
+
+/|| next bookshelf at same indent
+  also more indented
+int after_chained = 3;
