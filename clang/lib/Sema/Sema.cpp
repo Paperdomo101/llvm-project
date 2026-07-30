@@ -496,6 +496,69 @@ InitListExpr* Sema::BuildC4ArrayFromStringLiteral(StringLiteral *SL, QualType C4
   return Result;
 }
 
+ExprResult Sema::BuildC4TypedVariadicArg(ArrayRef<Expr *> Args, QualType ElementType,
+                                   SourceLocation OpLoc) {
+  if (Args.empty())
+    return ExprError();
+
+  unsigned NumArgs = Args.size();
+
+  // 1. Build the backing array type: ElementType[NumArgs]
+  llvm::APInt ArrSize(Context.getTypeSize(Context.getSizeType()), NumArgs);
+  QualType ArrTy = Context.getConstantArrayType(ElementType, ArrSize, nullptr,
+                                                ArraySizeModifier::Normal, 0);
+
+  // 2. Collect and convert each argument to the element type
+  SmallVector<Expr *, 8> BackingInits;
+  BackingInits.reserve(NumArgs);
+  for (unsigned i = 0; i < NumArgs; ++i) {
+    Expr *Arg = Args[i];
+    ExprResult Decayed = decayExpr(Arg);
+    if (Decayed.isInvalid()) return ExprError();
+    Expr *E = Decayed.get();
+    // Cast to element type if needed
+    if (!Context.hasSameType(E->getType(), ElementType)) {
+      ExprResult Cast =
+          ImpCastExprToType(E, ElementType, CK_IntegralCast);
+      if (Cast.isInvalid()) return ExprError();
+      BackingInits.push_back(Cast.get());
+    } else {
+      BackingInits.push_back(E);
+    }
+  }
+
+  // 3. Create the C4 array type and its compound literal
+  QualType C4Type = GetOrCreateC4ArrayType(ElementType);
+
+  // 4. Build the backing array compound literal: (ElementType[NumArgs]){ ... }
+  InitListExpr *ArrayILE = new (Context) InitListExpr(
+      Context, OpLoc, BackingInits, OpLoc, /*Synthetic=*/false);
+  ArrayILE->setType(ArrTy);
+  TypeSourceInfo *ArrTSI = Context.getTrivialTypeSourceInfo(ArrTy, OpLoc);
+  bool IsFileScopeCtx = isa<TranslationUnitDecl>(CurContext);
+  CompoundLiteralExpr *ArrayCLE = new (Context) CompoundLiteralExpr(
+      OpLoc, ArrTSI, ArrTy, VK_LValue, ArrayILE, IsFileScopeCtx);
+
+  // 5. Build struct initializer: { items_ptr, count, capacity }
+  QualType PtrType = Context.getPointerType(ElementType);
+  Expr *DataExpr = ImplicitCastExpr::Create(
+      Context, PtrType, CK_ArrayToPointerDecay,
+      ArrayCLE, nullptr, VK_PRValue, FPOptionsOverride());
+
+  QualType SizeTy = Context.getSizeType();
+  auto MakeSzLit = [&](uint64_t V) -> Expr * {
+    return IntegerLiteral::Create(
+        Context, llvm::APInt(Context.getTypeSize(SizeTy), V), SizeTy, OpLoc);
+  };
+
+  SmallVector<Expr *, 3> StructInits = {DataExpr, MakeSzLit(NumArgs),
+                                        MakeSzLit(NumArgs)};
+  InitListExpr *Result = new (Context)
+      InitListExpr(Context, OpLoc, StructInits, OpLoc, /*Synthetic=*/false);
+  Result->setType(C4Type);
+
+  return Result;
+}
 
 
 QualType Sema::getArrayTypeForInitList(InitListExpr *ILE) {

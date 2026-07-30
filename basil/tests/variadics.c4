@@ -1,0 +1,44 @@
+#include <stdio.h>
+#include <stdbool.h>
+
+TokenType : {
+    nil,
+    left_paren,
+    right_paren,
+    left_brace,
+    right_brace,
+    comma,
+    semicolon,
+}
+
+// Typed variadic: TokenType... types → []TokenType types
+match (TokenType... types) bool {
+    for type..types {
+        if type == .left_paren {
+            return true;
+        }
+    }
+    return false;
+}
+
+main() int {
+    // Pass multiple values - they get packed into a C4 array
+    if (!match(.right_paren, .left_paren, .right_brace)) {
+        "FAIL: expected match to find LEFT_PAREN\n"::printf()
+        return 1;
+    }
+
+    if (match(.nil, .right_brace, .comma)) {
+        "FAIL: expected no match without LEFT_PAREN\n"::printf()
+        return 1;
+    }
+
+    // Single arg also works
+    if (!match(.left_paren)) {
+        "FAIL: single arg should match\n"::printf()
+        return 1;
+    }
+
+    "typed variadics work!\n"::printf()
+    return 0;
+}

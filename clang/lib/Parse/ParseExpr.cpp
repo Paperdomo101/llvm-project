@@ -1137,8 +1137,32 @@ ExprResult Parser::ParseMethodDispatch(
     ExprVector ArgExprs;
     bool ExpressionListIsInvalid = false;
 
-    if (Tok.isNot(tok::r_paren))
-        ExpressionListIsInvalid = ParseExpressionList(ArgExprs);
+    // C4: set up PreferredType for argument parsing so implicit dot (.member)
+    // can resolve the expected enum type.  The receiver is prepended later,
+    // so argument 0 maps to the first non-embed parameter.
+    if (getLangOpts().C4() && Callee.isUsable() && Tok.isNot(tok::r_paren)) {
+      if (auto *DRE = dyn_cast<DeclRefExpr>(Callee.get()->IgnoreParenImpCasts())) {
+        if (auto *FD = dyn_cast<FunctionDecl>(DRE->getDecl())) {
+          // Find the first non-embed parameter (index 1 after receiver injection).
+          for (unsigned P = 0; P < FD->getNumParams(); ++P) {
+            ParmVarDecl *PVD = FD->getParamDecl(P);
+            if (PVD->isC4Embed()) continue;
+            QualType ParamTy = PVD->getType();
+            // For typed variadics (lowered to []T), extract element type.
+            if (PVD->isC4TypedVariadic() && Actions.isC4ArrayType(ParamTy))
+              ParamTy = Actions.getElementTypeFromC4Array(ParamTy);
+            QualType PreferredParamTy = ParamTy;
+            auto RunSH = [PreferredParamTy]() -> QualType { return PreferredParamTy; };
+            ExpressionListIsInvalid = ParseExpressionList(ArgExprs, [&] {
+              PreferredType.enterFunctionArgument(Tok.getLocation(), RunSH);
+            });
+            break;
+          }
+        }
+      }
+    }
+    if (!ExpressionListIsInvalid && ArgExprs.empty() && Tok.isNot(tok::r_paren))
+      ExpressionListIsInvalid = ParseExpressionList(ArgExprs);
 
     if (ExpressionListIsInvalid) {
         SkipUntil(tok::r_paren, StopAtSemi);

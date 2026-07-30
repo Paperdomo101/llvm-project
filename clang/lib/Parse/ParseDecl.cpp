@@ -3613,7 +3613,7 @@ void Parser::ParseDeclarationSpecifiers(
                 if (AheadTok.isOneOf(tok::semi, tok::l_brace, tok::eof)) break;
             }
 
-            if (!IsInSystemHeader && !IsStructOrUnionContext && !IsFunctionPointerOrCast) {
+            if ((getLangOpts().C4() || !IsInSystemHeader) && !IsStructOrUnionContext && !IsFunctionPointerOrCast) {
             // Programmatically inject 'void' as the default return type specifier
                 isInvalid = DS.SetTypeSpecType(DeclSpec::TST_void, Loc, PrevSpec, DiagID, Policy);
                 if (isInvalid) return;
@@ -8217,6 +8217,17 @@ void Parser::ParseParameterDeclarationClause(
                                /*LateAttrs=*/nullptr, AllowImplicitTypename);
 
     DS.takeAttributesAppendingingFrom(ArgDeclSpecAttrs);
+
+    // C4: Detect typed variadic pack syntax: "Type... name"
+    // Lower to []Type by setting the bounds-checked array flag on the DeclSpec.
+    // The '...' is consumed here; ParseDeclarator then parses the identifier.
+    if (getLangOpts().C4() && Tok.is(tok::ellipsis) &&
+        NextToken().is(tok::identifier)) {
+      ConsumeToken(); // consume '...'
+      // Mark as typed variadic so Sema knows to wrap in C4 array Type→[]Type.
+      DS.setC4TypedVariadic(true);
+      DS.SetTypeSpecBoundsCheckedArray(true, Tok.getLocation());
+    }
 
     // Parse the declarator.  This is "PrototypeContext" or
     // "LambdaExprParameterContext", because we must accept either

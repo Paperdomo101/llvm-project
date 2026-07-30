@@ -2621,6 +2621,10 @@ public:
 
   ExprResult BuildC4DynamicArrayInit(VarDecl *VD, Expr *SizeExpr);
 
+  /// Build a C4 typed variadic argument pack from a list of expressions.
+  /// Creates a C4 array compound literal wrapping the given arguments.
+  ExprResult BuildC4TypedVariadicArg(ArrayRef<Expr *> Args, QualType ElementType,
+                                     SourceLocation OpLoc);
 
   QualType getArrayTypeForInitList(InitListExpr *ILE);
 

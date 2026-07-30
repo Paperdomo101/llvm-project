@@ -1823,7 +1823,7 @@ protected:
   ParmVarDecl(Kind DK, ASTContext &C, DeclContext *DC, SourceLocation StartLoc,
               SourceLocation IdLoc, const IdentifierInfo *Id, QualType T,
               TypeSourceInfo *TInfo, StorageClass S, Expr *DefArg)
-      : VarDecl(DK, C, DC, StartLoc, IdLoc, Id, T, TInfo, S), IsC4Embed(false) {
+      : VarDecl(DK, C, DC, StartLoc, IdLoc, Id, T, TInfo, S), IsC4Embed(false), IsC4TypedVariadic(false) {
     assert(ParmVarDeclBits.HasInheritedDefaultArg == false);
     assert(ParmVarDeclBits.DefaultArgKind == DAK_None);
     assert(ParmVarDeclBits.IsKNRPromoted == false);
@@ -1979,6 +1979,9 @@ public:
   bool isC4Embed() const { return IsC4Embed; }
   void setC4Embed(bool B) { IsC4Embed = B; }
 
+  bool isC4TypedVariadic() const { return IsC4TypedVariadic; }
+  void setC4TypedVariadic(bool B) { IsC4TypedVariadic = B; }
+
   static bool classof(const Decl *D) { return classofKind(D->getKind()); }
   static bool classofKind(Kind K) { return K == ParmVar; }
 
@@ -1986,6 +1989,7 @@ private:
   friend class ASTDeclReader;
 
   bool IsC4Embed = false;
+  bool IsC4TypedVariadic = false;
 
   enum { ParameterIndexSentinel = (1 << NumParameterIndexBits) - 1 };
   SourceLocation ExplicitObjectParameterIntroducerLoc;

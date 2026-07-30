@@ -459,6 +459,9 @@ private:
     bool C4NamedStructFreestanding = false;
     bool IsC4Embed = false;
     SourceLocation C4EmbedLoc;
+    // True when this parameter was declared with '...' syntax (Type... name),
+    // indicating a C4 typed variadic pack that should be lowered to []Type.
+    bool IsC4TypedVariadic = false;
   // ------------------------------------
 
   WrittenBuiltinSpecs writtenBS;
@@ -525,6 +528,10 @@ public:
 
   bool isC4Embed() const { return IsC4Embed; }
   SourceLocation getC4EmbedLoc() const { return C4EmbedLoc; }
+
+  // C4 typed variadic pack (Type... name → []Type name)
+  bool isC4TypedVariadic() const { return IsC4TypedVariadic; }
+  void setC4TypedVariadic(bool V) { IsC4TypedVariadic = V; }
 
   bool isC4NamedStructFreestanding() const { return C4NamedStructFreestanding; }
   void setC4NamedStructFreestanding() { C4NamedStructFreestanding = true; }

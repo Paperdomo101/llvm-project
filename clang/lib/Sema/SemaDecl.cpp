@@ -16513,6 +16513,9 @@ Decl *Sema::ActOnParamDeclarator(Scope *S, Declarator &D,
   if (D.getDeclSpec().isC4Embed()) {
     New->setC4Embed(true);
   }
+  if (D.getDeclSpec().isC4TypedVariadic()) {
+    New->setC4TypedVariadic(true);
+  }
 
   if (D.isInvalidType())
     New->setInvalidDecl();

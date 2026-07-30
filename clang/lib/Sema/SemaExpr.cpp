@@ -6502,7 +6502,18 @@ Sema::ConvertArgumentsForCall(CallExpr *Call, Expr *Fn,
   // If too many are passed and not variadic, error on the extras and drop
   // them.
   if (Args.size() > NumParams) {
-    if (!Proto->isVariadic()) {
+    // C4: typed variadic params can accept extra arguments that get packed
+    // into a C4 array. Check if the last parameter is a typed variadic pack.
+    bool HasC4TypedVariadic = false;
+    if (getLangOpts().C4() && FDecl) {
+      for (auto *Param : FDecl->parameters()) {
+        if (Param->isC4TypedVariadic()) {
+          HasC4TypedVariadic = true;
+          break;
+        }
+      }
+    }
+    if (!Proto->isVariadic() && !HasC4TypedVariadic) {
       TypoCorrection TC;
       if (FDecl && (TC = TryTypoCorrectionForCall(*this, Fn, FDecl, Args))) {
         unsigned diag_id =
@@ -6790,6 +6801,29 @@ bool Sema::GatherArgumentsForCall(SourceLocation CallLoc, FunctionDecl *FDecl,
     Expr *Arg;
     ParmVarDecl *Param = FDecl ? FDecl->getParamDecl(i) : nullptr;
     if (ArgIx < Args.size()) {
+      // C4 typed variadic pack: gather all remaining arguments into a C4 array.
+      if (getLangOpts().C4() && Param && Param->isC4TypedVariadic() &&
+          isC4ArrayType(ProtoArgType)) {
+        QualType ElemTy = getElementTypeFromC4Array(ProtoArgType);
+        if (!ElemTy.isNull()) {
+          // Collect all remaining arguments (including the current one at ArgIx).
+          SmallVector<Expr *, 8> PackArgs;
+          PackArgs.push_back(Args[ArgIx++]);
+          while (ArgIx < Args.size())
+            PackArgs.push_back(Args[ArgIx++]);
+          ExprResult Packed =
+              BuildC4TypedVariadicArg(PackArgs, ElemTy, CallLoc);
+          if (Packed.isInvalid()) {
+            Invalid = true;
+            AllArgs.push_back(nullptr);
+            continue;
+          }
+          Arg = Packed.get();
+          // Fall through to the normal AllArgs.push_back(Arg) below.
+          goto c4_variadic_arg_ready;
+        }
+      }
+
       Arg = Args[ArgIx++];
 
       // ============================================================================
@@ -6906,7 +6940,14 @@ bool Sema::GatherArgumentsForCall(SourceLocation CallLoc, FunctionDecl *FDecl,
     } else {
       assert(Param && "can't use default arguments without a known callee");
 
-      if (getLangOpts().C4() && FDecl && Param->getName().starts_with("__c4_str_")) {
+      // C4: embed params are provided implicitly via :: dispatch.
+      // When called directly without a matching argument, skip silently.
+      if (getLangOpts().C4() && Param->isC4Embed()) {
+        // Create a null/zero initializer for the embed param type.
+        QualType ParamTy = Param->getType();
+        ExprResult Init = new (Context) ImplicitValueInitExpr(ParamTy);
+        Arg = Init.get();
+      } else if (getLangOpts().C4() && FDecl && Param->getName().starts_with("__c4_str_")) {
         StringRef TargetName = Param->getName().substr(9);
         Expr *TargetArg = nullptr;
         for (unsigned j = 0; j < FDecl->getNumParams(); ++j) {
@@ -6957,6 +6998,7 @@ bool Sema::GatherArgumentsForCall(SourceLocation CallLoc, FunctionDecl *FDecl,
     // Check for violations of C99 static array rules (C99 6.7.5.3p7).
     CheckStaticArrayArgument(CallLoc, Param, Arg);
 
+  c4_variadic_arg_ready:
     AllArgs.push_back(Arg);
   }
 
@@ -17020,6 +17062,14 @@ ExprResult Sema::ActOnC4ImplicitDot(SourceLocation DotLoc,
         auto *VD = cast<ValueDecl>(D);
         return BuildDeclRefExpr(VD, VD->getType(), VK_PRValue, MemberLoc);
       }
+
+      // C4: multiple enum constants share the same name (e.g. nil in both
+      // TokenType and ObjectType).  Pick the first one found.
+      R.clear();
+      R.addDecl(FilteredDecls[0]);
+      R.resolveKind();
+      auto *VD = cast<ValueDecl>(FilteredDecls[0]);
+      return BuildDeclRefExpr(VD, VD->getType(), VK_PRValue, MemberLoc);
     }
   }
 
