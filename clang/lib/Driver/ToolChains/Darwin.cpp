@@ -2887,6 +2887,11 @@ void AppleMachO::AddClangSystemIncludeArgs(
       addSystemInclude(DriverArgs, CC1Args, P);
   }
 
+  // Add /usr/local/include (Homebrew, user-installed headers)
+  if (!NoStdInc && !NoStdlibInc) {
+      addSystemInclude(DriverArgs, CC1Args, "/usr/local/include");
+  }
+
   // Add the Clang builtin headers (<resource>/include)
   if (!(NoStdInc && !ForceBuiltinInc) && !NoBuiltinInc) {
     SmallString<128> P(D.ResourceDir);

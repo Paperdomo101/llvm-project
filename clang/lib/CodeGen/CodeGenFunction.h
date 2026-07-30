@@ -3689,6 +3689,7 @@ public:
   void EmitCaseStmtRange(const CaseStmt &S, ArrayRef<const Attr *> Attrs);
   void EmitDeferStmt(const DeferStmt &S);
   void EmitC4ErrorHandlerStmt(const C4ErrorHandlerStmt &S);
+  RValue EmitC4InterpStr(const CallExpr *E, ReturnValueSlot ReturnValue);
   void EmitAsmStmt(const AsmStmt &S);
 
   const BreakContinue *GetDestForLoopControlStmt(const LoopControlStmt &S);

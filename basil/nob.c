@@ -61,6 +61,7 @@ int main( int argc, char **argv )
         "-o", temp_sv_to_cstr(filename_no_ext),
         "-O2",
         temp_sprintf( SV_Fmt"%s", SV_Arg(filename), inferred_extension ),
+        "c4_interp.c",
         "-lraylib",
         "-I.", "-L.",
         "-I/usr/local/include",
@@ -481,6 +482,10 @@ CompilerTest custom_test_suite[] = {
         "C4 Typed Variadics",
         "tests/variadics.c4", true
     },
+    {
+        "C4 String Interpolation (%\"...`expr`...\")",
+        "tests/interp_string.c4", true
+    },
 };
 
 bool run_compiler_tests(const char *compiler_path) {
@@ -504,7 +509,8 @@ bool run_compiler_tests(const char *compiler_path) {
 
         Cmd cmd = {0};
         if (test.is_runtime_test) {
-            cmd_append(&cmd, compiler_path, "-o", temp_bin, "-O2", "-UNDEBUG", test.path);
+            cmd_append(&cmd, compiler_path, "-o", temp_bin, "-O2", "-UNDEBUG",
+                       "c4_interp.c", test.path);
         } else {
             cmd_append(&cmd, compiler_path, "-fsyntax-only", test.path);
         }

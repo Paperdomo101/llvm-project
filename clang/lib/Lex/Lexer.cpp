@@ -2266,6 +2266,51 @@ const char *Lexer::LexUDSuffix(Token &Result, const char *CurPtr,
   return CurPtr;
 }
 
+bool Lexer::LexC4InterpolatedString(Token &Result, const char *CurPtr) {
+  // CurPtr points to the first content character (after %").
+  // Scan through, matching backtick pairs, until the closing ".
+  int backtickDepth = 0;
+
+  while (CurPtr < BufferEnd) {
+    char C = *CurPtr;
+
+    if (C == '"' && backtickDepth == 0) {
+      // Closing quote — not inside a backtick expression.
+      CurPtr++;
+      break;
+    }
+
+    if (C == '`') {
+      backtickDepth = (backtickDepth + 1) % 2;
+      CurPtr++;
+      continue;
+    }
+
+    if (C == '\\') {
+      // Skip escaped characters — prevent \" from breaking out early.
+      CurPtr++;
+      if (CurPtr < BufferEnd)
+        CurPtr++;
+      continue;
+    }
+
+    if (C == '\n' && backtickDepth == 0) {
+      // Unterminated string (newline outside backtick expression).
+      if (!isLexingRawMode())
+        Diag(BufferPtr, diag::ext_unterminated_char_or_string) << 1;
+      FormTokenWithChars(Result, CurPtr, tok::unknown);
+      return true;
+    }
+
+    CurPtr++;
+  }
+
+  // Emit as a c4_interp_string token.  BufferPtr points to the opening '%',
+  // so the token spans from '%' through the closing '"'.
+  FormTokenWithChars(Result, CurPtr, tok::c4_interp_string);
+  return true;
+}
+
 bool Lexer::LexC4MultiLineString(Token &Result, const char *CurPtr) {
   // CurPtr points to the character after /"
   while (true) {
@@ -4482,6 +4527,12 @@ LexStart:
     break;
   case '%':
     Char = getCharAndSize(CurPtr, SizeTmp);
+    if (LangOpts.C4() && Char == '"') {
+      // C4 interpolated string: %"...`expr`..."
+      MIOpt.ReadToken();
+      return LexC4InterpolatedString(Result,
+          ConsumeChar(CurPtr, SizeTmp, Result));
+    }
     if (Char == '=') {
       Kind = tok::percentequal;
       CurPtr = ConsumeChar(CurPtr, SizeTmp, Result);

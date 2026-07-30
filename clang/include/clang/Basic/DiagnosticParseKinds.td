@@ -1795,6 +1795,8 @@ def ext_bit_int : Extension<
   InGroup<BitIntExtension>;
 def err_c4_postfix_qualifier_disallowed : Error<
   "qualifiers cannot appear after the base type in C4">;
+def err_unterminated_c4_interpolation : Error<
+  "unterminated C4 string interpolation (missing '`')">;
 } // end of Parse Issue category.
 
 let CategoryName = "Modules Issue" in {

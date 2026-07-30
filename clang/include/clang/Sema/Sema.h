@@ -2649,6 +2649,11 @@ public:
   ExprResult ActOnC4SymbolOf(StringRef Name, SourceLocation DollarLoc,
                              SourceLocation NameLoc);
 
+  /// C4: Process a %"...`expr`..." interpolated string literal.
+  ExprResult ActOnC4InterpolatedString(SourceLocation Loc,
+                                       StringRef FormatStr,
+                                       MultiExprArg ValArgs);
+
   ExprResult ActOnC4StringOf(IdentifierInfo *II, SourceLocation DollarLoc,
                              SourceLocation NameLoc);
 

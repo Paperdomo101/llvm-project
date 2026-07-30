@@ -1836,7 +1836,8 @@ void Sema::ActOnEndOfTranslationUnit() {
 
     for (auto &Pair : C4ImplicitCallsMap) {
       FunctionDecl *OldImplicit = Pair.first;
-      if (!OldImplicit || !OldImplicit->isImplicit() || OldImplicit->getBuiltinID())
+      if (!OldImplicit || !OldImplicit->isImplicit() || OldImplicit->getBuiltinID() ||
+          OldImplicit->getName() == "__c4_interp_str")
         continue;
       // Find the real definition.
       FunctionDecl *RealDef = nullptr;
@@ -1902,7 +1903,8 @@ void Sema::ActOnEndOfTranslationUnit() {
     for (auto &Pair : C4ImplicitDeclsMap) {
       FunctionDecl *OldImplicit = Pair.first;
       SourceLocation Loc = Pair.second;
-      if (!OldImplicit || !OldImplicit->isImplicit() || OldImplicit->getBuiltinID())
+      if (!OldImplicit || !OldImplicit->isImplicit() || OldImplicit->getBuiltinID() ||
+          OldImplicit->getName() == "__c4_interp_str")
         continue;
       FunctionDecl *RealDef = nullptr;
       for (auto *RD = OldImplicit->getMostRecentDecl(); RD;

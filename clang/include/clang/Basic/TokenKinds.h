@@ -93,14 +93,15 @@ inline bool isAnyIdentifier(TokenKind K) {
 inline bool isStringLiteral(TokenKind K) {
   return K == tok::string_literal || K == tok::wide_string_literal ||
          K == tok::utf8_string_literal || K == tok::utf16_string_literal ||
-         K == tok::utf32_string_literal;
+         K == tok::utf32_string_literal ||
+         K == tok::c4_interp_string;
 }
 
 /// Return true if this is a "literal" kind, like a numeric
 /// constant, string, etc.
 inline bool isLiteral(TokenKind K) {
   const bool isInLiteralRange =
-      K >= tok::numeric_constant && K <= tok::utf32_string_literal;
+      K >= tok::numeric_constant && K <= tok::c4_interp_string;
 
 #ifndef NDEBUG
   const bool isLiteralExplicit =

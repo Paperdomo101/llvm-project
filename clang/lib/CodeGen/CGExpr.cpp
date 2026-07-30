@@ -6922,6 +6922,13 @@ RValue CodeGenFunction::EmitCallExpr(const CallExpr *E,
 
   CGCallee callee = EmitCallee(E->getCallee());
 
+  // C4: inline __c4_interp_str — emit snprintf + alloca instead of a call.
+  if (getLangOpts().C4()) {
+    if (const auto *FD = dyn_cast_or_null<FunctionDecl>(E->getCalleeDecl()))
+      if (FD->getName() == "__c4_interp_str")
+        return EmitC4InterpStr(E, ReturnValue);
+  }
+
   if (callee.isBuiltin()) {
     return EmitBuiltinExpr(callee.getBuiltinDecl(), callee.getBuiltinID(),
                            E, ReturnValue);
@@ -8015,4 +8022,60 @@ void CodeGenFunction::FlattenAccessAndTypeLValue(
         AccessList.emplace_back(LVal);
     }
   }
+}
+
+// C4: inline __c4_interp_str — emit snprintf + alloca instead of a call.
+RValue CodeGenFunction::EmitC4InterpStr(const CallExpr *E,
+                                        ReturnValueSlot ReturnValue) {
+  // Get snprintf: int snprintf(char *buf, size_t size, const char *fmt, ...)
+  QualType CharPtrTy = getContext().getPointerType(getContext().CharTy);
+  QualType SizeTy = getContext().getSizeType();
+  QualType IntTy = getContext().IntTy;
+
+  auto *SnprintfTy = llvm::FunctionType::get(
+      ConvertType(IntTy),
+      {ConvertType(CharPtrTy), ConvertType(SizeTy), ConvertType(CharPtrTy)},
+      /*isVarArg=*/true);
+  llvm::FunctionCallee SnprintfFn =
+      CGM.CreateRuntimeFunction(SnprintfTy, "snprintf");
+
+  // Emit the format string and all variadic arguments.
+  SmallVector<llvm::Value *, 8> Args;
+  for (unsigned i = 0, n = E->getNumArgs(); i < n; ++i)
+    Args.push_back(EmitScalarExpr(E->getArg(i)));
+
+  // First call: snprintf(NULL, 0, fmt, ...) to compute the length.
+  llvm::Value *NullBuf = llvm::ConstantPointerNull::get(
+      cast<llvm::PointerType>(ConvertType(CharPtrTy)));
+  llvm::Value *Zero = llvm::ConstantInt::get(ConvertType(SizeTy), 0);
+  SmallVector<llvm::Value *, 8> LenArgs = {NullBuf, Zero};
+  LenArgs.append(Args.begin(), Args.end());
+
+  llvm::CallInst *LenCall =
+      Builder.CreateCall(SnprintfFn, LenArgs, "c4_interp_len");
+  LenCall->setDoesNotThrow();
+
+  // Alloca: char *buf = alloca(len + 1).
+  llvm::Value *Len = LenCall;
+  // snprintf returns int; we need size_t for the second call.
+  if (Len->getType() != ConvertType(SizeTy))
+    Len = Builder.CreateIntCast(Len, ConvertType(SizeTy), /*isSigned=*/true);
+  llvm::Value *Len1 = Builder.CreateAdd(
+      Len, llvm::ConstantInt::get(Len->getType(), 1), "c4_interp_sz");
+  llvm::AllocaInst *Buf =
+      Builder.CreateAlloca(Builder.getInt8Ty(), Len1, "c4_interp_buf");
+  Buf->setAlignment(llvm::Align(1));
+
+  // Second call: snprintf(buf, len + 1, fmt, ...) to format.
+  SmallVector<llvm::Value *, 8> FmtArgs = {
+      Builder.CreateBitCast(Buf, ConvertType(CharPtrTy)), Len1};
+  FmtArgs.append(Args.begin(), Args.end());
+
+  llvm::CallInst *FmtCall =
+      Builder.CreateCall(SnprintfFn, FmtArgs, "c4_interp_fmt");
+  FmtCall->setDoesNotThrow();
+
+  // Return the buffer pointer (as char*).
+  llvm::Value *Result = Builder.CreateBitCast(Buf, ConvertType(CharPtrTy));
+  return RValue::get(Result);
 }

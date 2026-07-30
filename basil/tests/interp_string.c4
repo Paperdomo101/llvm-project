@@ -1,0 +1,123 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+void assert_streq(const char *actual, const char *expected, const char *msg) {
+    if (!actual || strcmp(actual, expected) != 0) {
+        printf("[FAIL] String Interpolation: %s\n", msg);
+        printf("       Expected: \"%s\"\n", expected);
+        printf("       Got:      \"%s\"\n", actual ? actual : "(null)");
+        exit(1);
+    }
+}
+
+main() int {
+    printf("==================================================\n");
+    printf("   C4 String Interpolation Test Suite\n");
+    printf("==================================================\n\n");
+
+    // ------------------------------------------------------------
+    // TEST 1: Single integer interpolation
+    // ------------------------------------------------------------
+    {
+        n := 5;
+        char *result = %"`n`";
+        assert_streq(result, "5", "Test 1: Single integer");
+        printf("  [OK] Test 1: %%\"`n`\" where n=5  ->  \"%s\"\n", result);
+    }
+
+    // ------------------------------------------------------------
+    // TEST 2: Interpolation with surrounding text
+    // ------------------------------------------------------------
+    {
+        // Use C string literal directly — C4 := creates array structs
+        // which need special handling (V2).
+        const char *lang = "C4";
+        char *result = %"Hello, `lang`!";
+        assert_streq(result, "Hello, C4!", "Test 2: Surrounding text");
+        printf("  [OK] Test 2: %%\"Hello, `lang`!\"  ->  \"%s\"\n", result);
+    }
+
+    // ------------------------------------------------------------
+    // TEST 3: Multiple interpolated values
+    // ------------------------------------------------------------
+    {
+        a := 10;
+        b := 20;
+        char *result = %"`a` + `b` = `a+b`";
+        assert_streq(result, "10 + 20 = 30", "Test 3: Multiple values");
+        printf("  [OK] Test 3: %%\"`a` + `b` = `a+b`\"  ->  \"%s\"\n", result);
+    }
+
+    // ------------------------------------------------------------
+    // TEST 4: Interpolation in conditional branches
+    // ------------------------------------------------------------
+    {
+        n := -3;
+        char *result = NULL;
+
+        if n < 0 {
+            result = %"`n` is negative";
+        }
+        or n > 0 {
+            result = %"`n` is positive";
+        }
+        or {
+            result = %"`n` is zero";
+        }
+
+        assert_streq(result, "-3 is negative", "Test 4: if/or branch");
+        printf("  [OK] Test 4: if/or interpolation  ->  \"%s\"\n", result);
+    }
+
+    // ------------------------------------------------------------
+    // TEST 5: Escape sequences
+    // ------------------------------------------------------------
+    {
+        x := 42;
+        char *result = %"value: `x`\n";
+        assert_streq(result, "value: 42\n", "Test 5: Escape sequences");
+        printf("  [OK] Test 5: %%\"value: `x`\\n\"  ->  \"%s\"", result);
+    }
+
+    // ------------------------------------------------------------
+    // TEST 6: Persistence via strdup
+    // ------------------------------------------------------------
+    {
+        score := 9001;
+        char *persistent = %"Score: `score`"::strdup();
+        if strcmp(persistent, "Score: 9001") != 0 {
+            printf("[FAIL] Test 6: Persistence via strdup\n");
+            printf("       Expected: \"Score: 9001\"\n");
+            printf("       Got:      \"%s\"\n", persistent);
+            exit(1);
+        }
+        printf("  [OK] Test 6: strdup persistence  ->  \"%s\"\n", persistent);
+        persistent::free();
+    }
+
+    // ------------------------------------------------------------
+    // TEST 7: String variable interpolation
+    // ------------------------------------------------------------
+    {
+        const char *lang = "C4";
+        ver := 1;
+        char *result = %"`lang` v`ver` is awesome";
+        assert_streq(result, "C4 v1 is awesome", "Test 7: String variable");
+        printf("  [OK] Test 7: %%\"`lang` v`ver` is awesome\"  ->  \"%s\"\n", result);
+    }
+
+    // ------------------------------------------------------------
+    // TEST 8: Interpolation passed directly to printf
+    // ------------------------------------------------------------
+    {
+        count := 3;
+        printf("  [OK] Test 8: direct printf: ");
+        %"saw `count` items\n"::printf();
+    }
+
+    printf("\n==================================================\n");
+    printf("   All interpolation tests PASSED\n");
+    printf("==================================================\n");
+    return 0;
+}

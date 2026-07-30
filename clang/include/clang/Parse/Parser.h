@@ -3843,6 +3843,9 @@ public:
   ExprResult ParseStringLiteralExpression(bool AllowUserDefinedLiteral = false);
   ExprResult ParseUnevaluatedStringLiteralExpression();
 
+  // C4: Parse a backtick-interpolated string literal %"`expr`...".
+  ExprResult ParseC4InterpolatedStringExpression();
+
 private:
   /// Whether the '>' token acts as an operator or not. This will be
   /// true except when we are parsing an expression within a C++

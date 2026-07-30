@@ -2130,6 +2130,9 @@ case tok::period: {
       break;
     }
     [[fallthrough]]; // treat MS function local macros as concatenable strings
+  case tok::c4_interp_string:  // C4 primary-expression: %"`expr`..."
+    Res = ParseC4InterpolatedStringExpression();
+    break;
   case tok::string_literal:    // primary-expression: string-literal
   case tok::wide_string_literal:
   case tok::utf8_string_literal:
@@ -4371,6 +4374,135 @@ ExprResult Parser::ParseStringLiteralExpression(bool AllowUserDefinedLiteral,
   return Actions.ActOnStringLiteral(StringToks,
                                     AllowUserDefinedLiteral ? getCurScope()
                                                             : nullptr);
+}
+
+/// ParseC4InterpolatedStringExpression — Parse %"...`ident`..." and build
+/// a CallExpr to the runtime helper __c4_interp_str.
+ExprResult Parser::ParseC4InterpolatedStringExpression() {
+  assert(Tok.is(tok::c4_interp_string) && "Expected c4_interp_string token");
+
+  Token InterpTok = Tok;
+  ConsumeAnyToken();
+
+  SourceLocation Loc = InterpTok.getLocation();
+
+  bool Invalid = false;
+  std::string RawText = PP.getSpelling(InterpTok, &Invalid);
+  if (Invalid || RawText.size() < 5) // need at least %"`x`"
+    return ExprError();
+
+  // Strip %" prefix and " suffix.
+  if (RawText.size() < 4 || RawText[0] != '%' || RawText[1] != '"' ||
+      RawText.back() != '"')
+    return ExprError();
+  StringRef Content(RawText.data() + 2, RawText.size() - 3);
+
+  // Unescape the content and split on `identifier` patterns.
+  SmallString<256> FormatStr;
+  SmallVector<StringRef, 4> ExprStrings;
+
+  size_t i = 0;
+  while (i < Content.size()) {
+    if (Content[i] == '`') {
+      i++; // skip opening '`'
+      const char *IdentStart = Content.data() + i;
+      while (i < Content.size() && Content[i] != '`')
+        i++;
+      if (i >= Content.size()) {
+        Diag(Loc, diag::err_unterminated_c4_interpolation);
+        return ExprError();
+      }
+      StringRef Ident(IdentStart, Content.data() + i - IdentStart);
+      i++; // skip closing '`'
+
+      if (Ident.empty()) {
+        Diag(Loc, diag::err_unterminated_c4_interpolation);
+        return ExprError();
+      }
+      ExprStrings.push_back(Ident);
+      FormatStr += "%s";
+    } else if (Content[i] == '\\' && i + 1 < Content.size()) {
+      char next = Content[i + 1];
+      switch (next) {
+      case 'n':  FormatStr += '\n'; break;
+      case 't':  FormatStr += '\t'; break;
+      case 'r':  FormatStr += '\r'; break;
+      case '\\': FormatStr += '\\'; break;
+      case '"':  FormatStr += '"';  break;
+      case '`':  FormatStr += '`';  break;
+      case '%':  FormatStr += '%';  break;
+      case '0':  FormatStr += '\0'; break;
+      default:   FormatStr += next; break;
+      }
+      i += 2;
+    } else {
+      FormatStr += Content[i];
+      i++;
+    }
+  }
+
+  SmallVector<Expr *, 4> Exprs;
+  for (StringRef ExprStr : ExprStrings) {
+    std::string NullTerminatedExpr(ExprStr);
+    SourceLocation SpellingBeginLoc = PP.getSourceManager().getSpellingLoc(Loc);
+    Lexer RawLex(SpellingBeginLoc, getLangOpts(),
+                 NullTerminatedExpr.data(), NullTerminatedExpr.data(),
+                 NullTerminatedExpr.data() + NullTerminatedExpr.size());
+    SmallVector<Token, 16> ExprToks;
+    while (true) {
+      Token T;
+      RawLex.LexFromRawLexer(T);
+      if (T.is(tok::eof))
+        break;
+      if (T.is(tok::raw_identifier))
+        PP.LookUpIdentifierInfo(T);
+      T.setFlag(Token::IsReinjected);
+      ExprToks.push_back(T);
+    }
+
+    if (ExprToks.empty()) {
+      Diag(Loc, diag::err_unterminated_c4_interpolation);
+      return ExprError();
+    }
+
+    // Append an EOF sentinel.
+    Token EofTok;
+    EofTok.startToken();
+    EofTok.setKind(tok::eof);
+    EofTok.setLocation(Loc);
+    EofTok.setFlag(Token::IsReinjected);
+    ExprToks.push_back(EofTok);
+
+    // Save current Token and Lexer state.
+    Token SavedTok = Tok;
+
+    // Enter token stream.
+    auto ToksArray = std::make_unique<Token[]>(ExprToks.size());
+    std::copy(ExprToks.begin(), ExprToks.end(), ToksArray.get());
+    PP.EnterTokenStream(std::move(ToksArray), ExprToks.size(),
+                        /*DisableMacroExpansion=*/false, /*IsReinject=*/true);
+
+    // Prime the parser.
+    PP.Lex(Tok);
+
+    // Parse the expression inside the backticks.
+    ExprResult E = ParseAssignmentExpression();
+    if (E.isInvalid()) {
+      Tok = SavedTok;
+      return ExprError();
+    }
+    Exprs.push_back(E.get());
+
+    // Consume any leftover tokens in the stream until EOF.
+    while (!Tok.is(tok::eof)) {
+      PP.Lex(Tok);
+    }
+
+    // Restore the parser token.
+    Tok = SavedTok;
+  }
+
+  return Actions.ActOnC4InterpolatedString(Loc, FormatStr, Exprs);
 }
 
 ExprResult Parser::ParseGenericSelectionExpression() {

@@ -16976,6 +16976,104 @@ ExprResult Sema::ActOnC4StringOf(IdentifierInfo *II, SourceLocation DollarLoc,
   return BuildDeclRefExpr(HiddenPVD, HiddenPVD->getType(), VK_LValue, NameLoc);
 }
 
+ExprResult Sema::ActOnC4InterpolatedString(SourceLocation Loc,
+                                           StringRef FormatStr,
+                                           MultiExprArg ValArgs) {
+  SmallVector<Expr *, 8> CallArgs;
+  std::string Fmt(FormatStr);
+
+  // Replace %s placeholders with type-correct specifiers.
+  size_t pos = 0;
+  size_t valIdx = 0;
+  std::string RealFmt;
+  while (pos < Fmt.size() && valIdx < ValArgs.size()) {
+    size_t pct = Fmt.find("%s", pos);
+    if (pct == std::string::npos)
+      break;
+    RealFmt += Fmt.substr(pos, pct - pos);
+
+    Expr *E = ValArgs[valIdx];
+    CallArgs.push_back(E);
+
+    // Choose format specifier from the resolved expression type.
+    QualType Ty = E->getType();
+    if (Ty->isIntegerType())
+      RealFmt += "%d";
+    else if (Ty->isCharType())
+      RealFmt += "%c";
+    else if (Ty->isFloatingType())
+      RealFmt += "%f";
+    else
+      RealFmt += "%s"; // fallback: pointer types, strings
+
+    pos = pct + 2;
+    valIdx++;
+  }
+  RealFmt += Fmt.substr(pos);
+
+  // Rebuild the format StringLiteral with correct specifiers.
+  QualType CharTy = Context.CharTy;
+  QualType StrTy =
+      Context.getStringLiteralArrayType(CharTy, RealFmt.size());
+  SourceLocation FmtLocs[] = {Loc};
+  StringLiteral *FormatSL = StringLiteral::Create(
+      Context, RealFmt, StringLiteralKind::Ordinary,
+      /*Pascal=*/false, StrTy, FmtLocs);
+
+  // Prepend format string as first argument.
+  SmallVector<Expr *, 8> AllArgs;
+  AllArgs.push_back(FormatSL);
+  AllArgs.append(CallArgs.begin(), CallArgs.end());
+  CallArgs = std::move(AllArgs);
+
+  // 3. Look up __c4_interp_str or create it with char* return type.
+  IdentifierInfo &FnII = Context.Idents.get("__c4_interp_str");
+  FunctionDecl *FD = nullptr;
+  DeclContext *TU = Context.getTranslationUnitDecl();
+  for (auto *D : TU->lookup(&FnII)) {
+    if (auto *TempFD = dyn_cast<FunctionDecl>(D)) {
+      FD = TempFD;
+      break;
+    }
+  }
+
+  if (!FD) {
+    // Build: char *__c4_interp_str(const char *, ...);
+    // Prevents ABI mismatch / garbage varargs on arm64 macOS.
+    QualType CharPtrTy = Context.getPointerType(Context.CharTy);
+    QualType ConstCharPtrTy = Context.getPointerType(Context.CharTy.withConst());
+
+    FunctionProtoType::ExtProtoInfo EPI;
+    EPI.Variadic = true;
+    QualType FuncTy = Context.getFunctionType(CharPtrTy, {ConstCharPtrTy}, EPI);
+
+    FD = FunctionDecl::Create(
+        Context, Context.getTranslationUnitDecl(),
+        Loc, Loc, &FnII, FuncTy, /*TInfo=*/nullptr, SC_Extern);
+    // Do NOT call setImplicit() here: if we did, the C4 implicit-call
+    // deferred-emission code in BuildResolvedCallExpr would inflate NumParams
+    // to 16 and crash the ConvertArgumentsForCall assert.
+
+    // Attach the ParmVarDecl for the format string so that
+    // getMinRequiredArguments() does not dereference a null param decl.
+    ParmVarDecl *FmtParam = ParmVarDecl::Create(
+        Context, FD, Loc, Loc,
+        &Context.Idents.get("fmt"), ConstCharPtrTy,
+        Context.getTrivialTypeSourceInfo(ConstCharPtrTy, Loc),
+        SC_None, /*DefArg=*/nullptr);
+    FD->setParams({FmtParam});
+
+    Context.getTranslationUnitDecl()->addDecl(FD);
+  }
+
+  ExprResult FnExpr = BuildDeclRefExpr(FD, FD->getType(), VK_LValue, Loc);
+  if (FnExpr.isInvalid())
+    return ExprError();
+
+  // 4. Build the call: __c4_interp_str(format, arg1, arg2, ...)
+  return BuildCallExpr(/*Scope=*/nullptr, FnExpr.get(), Loc, CallArgs, Loc);
+}
+
 // .MemberName → look up enum constant in current scope
 ExprResult Sema::ActOnC4ImplicitDot(SourceLocation DotLoc,
                                      IdentifierInfo *MemberII,
