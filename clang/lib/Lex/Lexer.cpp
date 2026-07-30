@@ -2311,6 +2311,59 @@ bool Lexer::LexC4InterpolatedString(Token &Result, const char *CurPtr) {
   return true;
 }
 
+/// Check if the content after ' has 2+ characters (escapes count as 1).
+static bool isC4MultiCharLiteral(const char *CurPtr, const char *BufferEnd) {
+  unsigned count = 0;
+  while (CurPtr < BufferEnd && *CurPtr != '\'') {
+    if (*CurPtr == '\\') {
+      CurPtr++;
+      if (CurPtr < BufferEnd && *CurPtr != '\n')
+        CurPtr++;
+    } else {
+      CurPtr++;
+    }
+    count++;
+    if (count >= 2) return true;
+  }
+  return count >= 2;
+}
+
+bool Lexer::LexC4CharBuffer(Token &Result, const char *CurPtr) {
+  // CurPtr points to the first content character (after ').
+  // Scan for the closing ', handling escape sequences.
+  while (CurPtr < BufferEnd) {
+    char C = *CurPtr;
+
+    if (C == '\'') {
+      // Closing quote.
+      CurPtr++;
+      break;
+    }
+
+    if (C == '\\') {
+      // Skip escaped characters.
+      CurPtr++;
+      if (CurPtr < BufferEnd)
+        CurPtr++;
+      continue;
+    }
+
+    if (C == '\n') {
+      // Unterminated buffer literal.
+      if (!isLexingRawMode())
+        Diag(BufferPtr, diag::ext_unterminated_char_or_string) << 0;
+      FormTokenWithChars(Result, CurPtr, tok::unknown);
+      return true;
+    }
+
+    CurPtr++;
+  }
+
+  // Emit as c4_char_buffer token.
+  FormTokenWithChars(Result, CurPtr, tok::c4_char_buffer);
+  return true;
+}
+
 bool Lexer::LexC4MultiLineString(Token &Result, const char *CurPtr) {
   // CurPtr points to the character after /"
   while (true) {
@@ -4317,6 +4370,10 @@ LexStart:
   case '\'':
     // Notify MIOpt that we read a non-whitespace/non-comment token.
     MIOpt.ReadToken();
+    // C4: single-quoted buffers for 2+ characters (e.g. 'hello', '👌').
+    // Single-character 'x' stays a regular C char constant.
+    if (LangOpts.C4() && isC4MultiCharLiteral(CurPtr, BufferEnd))
+      return LexC4CharBuffer(Result, CurPtr);
     return LexCharConstant(Result, CurPtr, tok::char_constant);
 
   // C99 6.4.5: String Literals.

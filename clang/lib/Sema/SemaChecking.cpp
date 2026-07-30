@@ -7989,6 +7989,12 @@ bool Sema::CheckFormatArguments(ArrayRef<const Expr *> Args,
   if (Type == FormatStringType::Strftime)
     return false;
 
+  // C4: interpolated strings (%"...") are compiler-generated and safe.
+  if (const auto *CE = dyn_cast<CallExpr>(OrigFormatExpr))
+    if (const auto *FD = CE->getDirectCallee())
+      if (FD->getName() == "__c4_interp_str")
+        return false;
+
   // If there are no arguments specified, warn with -Wformat-security, otherwise
   // warn only with -Wformat-nonliteral.
   if (Args.size() == firstDataArg) {

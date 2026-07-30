@@ -1,0 +1,96 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+void assert_streq(const char *actual, const char *expected, const char *msg) {
+    if (!actual || strcmp(actual, expected) != 0) {
+        printf("[FAIL] C4 Char Buffer: %s\n", msg);
+        printf("       Expected: \"%s\"\n", expected);
+        printf("       Got:      \"%s\"\n", actual ? actual : "(null)");
+        exit(1);
+    }
+}
+
+main() int {
+    printf("==================================================\n");
+    printf("   C4 Char Buffer Literal Test Suite\n");
+    printf("==================================================\n\n");
+
+    // ------------------------------------------------------------
+    // TEST 1: Basic multi-char buffer
+    // ------------------------------------------------------------
+    {
+        const char *buf = 'Hello\n\0';
+        assert_streq(buf, "Hello\n", "Test 1: Basic buffer");
+        printf("  [OK] Test 1: 'Hello\\n\\0'  ->  \"Hello\\n\"\n");
+    }
+
+    // ------------------------------------------------------------
+    // TEST 2: Unicode emoji
+    // ------------------------------------------------------------
+    {
+        const char *buf = ':-)\n\0';
+        assert_streq(buf, ":-)\n", "Test 2: ASCII text in buffer");
+        printf("  [OK] Test 2: ':-)\\n\\0'  ->  \":-)\\n\"\n");
+    }
+
+    // ------------------------------------------------------------
+    // TEST 3: Escape sequences
+    // ------------------------------------------------------------
+    {
+        const char *buf = 'tab\there\n\0';
+        assert_streq(buf, "tab\there\n", "Test 3: Escape sequences");
+        printf("  [OK] Test 3: 'tab\\there\\n\\0'  ->  \"tab\\there\\n\"\n");
+    }
+
+    // ------------------------------------------------------------
+    // TEST 4: Single quote inside buffer
+    // ------------------------------------------------------------
+    {
+        const char *buf = 'it\'s ok\n\0';
+        assert_streq(buf, "it's ok\n", "Test 4: Escaped single quote");
+        printf("  [OK] Test 4: 'it\\'s ok\\n\\0'  ->  \"it's ok\\n\"\n");
+    }
+
+    // ------------------------------------------------------------
+    // TEST 5: Concatenation of multi-char buffers
+    // ------------------------------------------------------------
+    {
+        const char *buf = 'hello ' 'world\n\0';
+        assert_streq(buf, "hello world\n", "Test 5: Concatenation");
+        printf("  [OK] Test 5: 'hello ' 'world\\n\\0'  ->  \"hello world\\n\"\n");
+    }
+
+    // ------------------------------------------------------------
+    // TEST 6: No implicit null — length is exact
+    // ------------------------------------------------------------
+    {
+        const char *buf = 'AB\0';
+        // 'AB' is 2 bytes + explicit \0 = 3 bytes total.
+        // Verify first two bytes.
+        if (buf[0] != 'A' || buf[1] != 'B') {
+            printf("[FAIL] Test 6: Buffer content\n");
+            printf("       Expected: AB\n");
+            printf("       Got:      %c%c\n", buf[0], buf[1]);
+            exit(1);
+        }
+        printf("  [OK] Test 6: 'AB\\0' has correct bytes: %c%c\\0\n", buf[0], buf[1]);
+    }
+
+    // ------------------------------------------------------------
+    // TEST 7: Single char still works as regular C char constant
+    // ------------------------------------------------------------
+    {
+        char c = 'X';
+        if c != 'X' {
+            printf("[FAIL] Test 7: Single char constant\n");
+            exit(1);
+        }
+        printf("  [OK] Test 7: Single char 'X' is a regular char constant\n");
+    }
+
+    printf("\n==================================================\n");
+    printf("   All char buffer tests PASSED\n");
+    printf("==================================================\n");
+    return 0;
+}

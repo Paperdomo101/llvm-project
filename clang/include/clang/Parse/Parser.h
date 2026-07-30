@@ -3845,6 +3845,8 @@ public:
 
   // C4: Parse a backtick-interpolated string literal %"`expr`...".
   ExprResult ParseC4InterpolatedStringExpression();
+  // C4: Parse a single-quoted character buffer 'bytes...'.
+  ExprResult ParseC4CharBufferExpression();
 
 private:
   /// Whether the '>' token acts as an operator or not. This will be

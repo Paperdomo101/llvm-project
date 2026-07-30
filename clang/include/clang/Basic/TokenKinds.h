@@ -101,14 +101,15 @@ inline bool isStringLiteral(TokenKind K) {
 /// constant, string, etc.
 inline bool isLiteral(TokenKind K) {
   const bool isInLiteralRange =
-      K >= tok::numeric_constant && K <= tok::c4_interp_string;
+      K >= tok::numeric_constant && K <= tok::c4_char_buffer;
 
 #ifndef NDEBUG
   const bool isLiteralExplicit =
       K == tok::numeric_constant || K == tok::char_constant ||
       K == tok::wide_char_constant || K == tok::utf8_char_constant ||
       K == tok::utf16_char_constant || K == tok::utf32_char_constant ||
-      isStringLiteral(K) || K == tok::header_name || K == tok::binary_data;
+      isStringLiteral(K) || K == tok::header_name || K == tok::binary_data ||
+      K == tok::c4_interp_string || K == tok::c4_char_buffer;
   assert(isInLiteralRange == isLiteralExplicit &&
          "TokenKind literals should be contiguous");
 #endif

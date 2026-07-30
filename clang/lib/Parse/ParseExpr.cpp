@@ -2133,6 +2133,9 @@ case tok::period: {
   case tok::c4_interp_string:  // C4 primary-expression: %"`expr`..."
     Res = ParseC4InterpolatedStringExpression();
     break;
+  case tok::c4_char_buffer:    // C4 primary-expression: 'bytes...'
+    Res = ParseC4CharBufferExpression();
+    break;
   case tok::string_literal:    // primary-expression: string-literal
   case tok::wide_string_literal:
   case tok::utf8_string_literal:
@@ -4503,6 +4506,20 @@ ExprResult Parser::ParseC4InterpolatedStringExpression() {
   }
 
   return Actions.ActOnC4InterpolatedString(Loc, FormatStr, Exprs);
+}
+
+/// ParseC4CharBufferExpression — Parse single-quoted 'bytes...' buffer literal.
+ExprResult Parser::ParseC4CharBufferExpression() {
+  assert(Tok.is(tok::c4_char_buffer) && "Expected c4_char_buffer token");
+
+  // Collect adjacent char buffer literals for concatenation.
+  SmallVector<Token, 4> Toks;
+  do {
+    Toks.push_back(Tok);
+    ConsumeAnyToken();
+  } while (Tok.is(tok::c4_char_buffer));
+
+  return Actions.ActOnC4CharBuffer(Toks);
 }
 
 ExprResult Parser::ParseGenericSelectionExpression() {

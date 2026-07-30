@@ -2654,6 +2654,9 @@ public:
                                        StringRef FormatStr,
                                        MultiExprArg ValArgs);
 
+  /// C4: Process a '...' character buffer literal.
+  ExprResult ActOnC4CharBuffer(ArrayRef<Token> Toks);
+
   ExprResult ActOnC4StringOf(IdentifierInfo *II, SourceLocation DollarLoc,
                              SourceLocation NameLoc);
 

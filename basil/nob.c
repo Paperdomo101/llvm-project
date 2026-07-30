@@ -483,6 +483,10 @@ CompilerTest custom_test_suite[] = {
         "tests/variadics.c4", true
     },
     {
+        "C4 Char Buffer Literals ('...')",
+        "tests/char_buffer.c4", true
+    },
+    {
         "C4 String Interpolation (%\"...`expr`...\")",
         "tests/interp_string.c4", true
     },

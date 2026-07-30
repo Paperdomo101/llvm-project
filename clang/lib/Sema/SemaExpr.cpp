@@ -17074,6 +17074,55 @@ ExprResult Sema::ActOnC4InterpolatedString(SourceLocation Loc,
   return BuildCallExpr(/*Scope=*/nullptr, FnExpr.get(), Loc, CallArgs, Loc);
 }
 
+ExprResult Sema::ActOnC4CharBuffer(ArrayRef<Token> Toks) {
+  assert(!Toks.empty() && "Must have at least one token!");
+
+  // Process each token's raw text and concatenate.
+  SmallString<256> Buffer;
+  SmallVector<SourceLocation, 4> Locs;
+  for (const Token &Tok : Toks) {
+    bool Invalid = false;
+    StringRef Raw = PP.getSpelling(Tok, &Invalid);
+    if (Invalid)
+      return ExprError();
+    Locs.push_back(Tok.getLocation());
+    // Strip the single quotes: '...' -> ...
+    assert(Raw.size() >= 2 && Raw.front() == '\'' && Raw.back() == '\'');
+    StringRef Content = Raw.drop_front(1).drop_back(1);
+    // Process escape sequences.
+    for (size_t i = 0; i < Content.size(); ) {
+      if (Content[i] == '\\' && i + 1 < Content.size()) {
+        char next = Content[i + 1];
+        switch (next) {
+        case 'n':  Buffer += '\n'; break;
+        case 't':  Buffer += '\t'; break;
+        case 'r':  Buffer += '\r'; break;
+        case '0':  Buffer += '\0'; break;
+        case '\\': Buffer += '\\'; break;
+        case '\'': Buffer += '\''; break;
+        case '"':  Buffer += '"';  break;
+        default:   Buffer += next; break;
+        }
+        i += 2;
+      } else {
+        Buffer += Content[i];
+        i++;
+      }
+    }
+  }
+
+  // Type: char[N] — NO null terminator.
+  QualType CharTy = Context.CharTy;
+  unsigned N = Buffer.size();
+  QualType ArrTy =
+      Context.getConstantArrayType(CharTy, llvm::APInt(32, N),
+                                   nullptr, ArraySizeModifier::Normal,
+                                   /*IndexTypeQuals=*/0);
+
+  return StringLiteral::Create(Context, Buffer, StringLiteralKind::Ordinary,
+                               /*Pascal=*/false, ArrTy, Locs);
+}
+
 // .MemberName → look up enum constant in current scope
 ExprResult Sema::ActOnC4ImplicitDot(SourceLocation DotLoc,
                                      IdentifierInfo *MemberII,
