@@ -5820,8 +5820,13 @@ TypeSourceInfo *Sema::GetTypeForDeclarator(Declarator &D) {
       QualType R = TInfo->getType();
       bool IsFnOrFnPtr = R->isFunctionType() || (R->isPointerType() && R->getPointeeType()->isFunctionType());
       if (!IsFnOrFnPtr) {
-        if (HasArray && PtrDepth > 0 && DS.isC4ArrayBeforeCaret()) {
-          // '[] ^T'
+        // C4 typed variadic: '^T... name' means an array of pointers, so apply
+        // pointer levels *before* wrapping in the C4 array (same as '[] ^T').
+        bool TypedVariadicNeedsCaretFirst =
+            DS.isC4TypedVariadic() && HasArray && PtrDepth > 0;
+        if ((HasArray && PtrDepth > 0 && DS.isC4ArrayBeforeCaret()) ||
+            TypedVariadicNeedsCaretFirst) {
+          // '[] ^T'  or  '^T...'
           const auto &LevelQuals = DS.getC4PointerLevelQuals();
           for (unsigned i = 0; i < PtrDepth; ++i) {
             unsigned levelIdx = PtrDepth - 1 - i;

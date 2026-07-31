@@ -483,6 +483,10 @@ CompilerTest custom_test_suite[] = {
         "tests/variadics.c4", true
     },
     {
+        "C4 Typed Variadics: ^ptr, local fn, multi-arg bugs",
+        "tests/typed_variadic_bugs.c4", true
+    },
+    {
         "C4 Char Buffer Literals ('...')",
         "tests/char_buffer.c4", true
     },

@@ -1,0 +1,46 @@
+#include <stdio.h>
+#include <stdbool.h>
+
+// Bug 1: Direct pointer type with typed variadic (^const char...)
+// This exercises the fix where ^ is applied before C4 array wrapping.
+hash_test_direct_ptr (^const char... names) {
+    for name..names {
+        printf("%s\n", name);
+    }
+}
+
+// Bug 2: Local function with typed variadic parameters
+main() int {
+    // Define a local function (C4 ^ block) with typed variadic params
+    hash_test_local := ^(^const char... names) {
+        for name..names {
+            printf("%s\n", name);
+        }
+    }
+
+    // Bug 3: calling with multiple args after packing fixed
+    "--- direct pointer variadic (bug 1) ---\n"::printf()
+    hash_test_direct_ptr("alpha", "beta", "gamma");
+
+    "--- local function variadic (bug 2) ---\n"::printf()
+    hash_test_local("delta", "epsilon", "zeta", "eta");
+
+    // Edge case: single argument
+    "--- single arg ---\n"::printf()
+    hash_test_direct_ptr("single");
+
+    // Edge case: 9 arguments (original crash case)
+    "--- nine args ---\n"::printf()
+    hash_test_direct_ptr(
+        "Jacob",
+        "Natalie",
+        "Sara",
+        "Mpho",
+        "Tebogo",
+        "Ron",
+        "Jane",
+        "Maren",
+        "Bill");
+
+    return 0;
+}

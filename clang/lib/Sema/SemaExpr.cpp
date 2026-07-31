@@ -6673,7 +6673,7 @@ Sema::ConvertArgumentsForCall(CallExpr *Call, Expr *Fn,
 
 
 
-  if (getLangOpts().C4() && TotalNumArgs > Call->getNumArgs()) {
+  if (getLangOpts().C4()) {
     Call->setNumArgsUnsafe(TotalNumArgs);
   }
 
@@ -7646,6 +7646,10 @@ ExprResult Sema::BuildCallExpr(Scope *Scope, Expr *Fn, SourceLocation LParenLoc,
         FD = dyn_cast_or_null<FunctionDecl>(DRE->getDecl());
       }
     }
+    // Propagate the resolved FunctionDecl so downstream callers
+    // (BuildResolvedCallExpr) can find typed variadic params etc.
+    if (FD)
+      NDecl = FD;
   }
 
   if (FD) {
