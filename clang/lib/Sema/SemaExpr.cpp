@@ -16993,18 +16993,71 @@ ExprResult Sema::ActOnC4InterpolatedString(SourceLocation Loc,
     RealFmt += Fmt.substr(pos, pct - pos);
 
     Expr *E = ValArgs[valIdx];
-    CallArgs.push_back(E);
 
     // Choose format specifier from the resolved expression type.
     QualType Ty = E->getType();
-    if (Ty->isIntegerType())
+    if (Ty->isIntegerType()) {
       RealFmt += "%d";
-    else if (Ty->isCharType())
+    } else if (Ty->isCharType()) {
       RealFmt += "%c";
-    else if (Ty->isFloatingType())
+    } else if (Ty->isFloatingType()) {
       RealFmt += "%f";
-    else
+    } else if (isC4ArrayType(Ty)) {
+      // C4 array: decompose into count (as int) + items (data pointer)
+      // for printf %.*s, which takes (int max, const char *str).
+      RealFmt += "%.*s";
+
+      const RecordType *RT = Ty->getAs<RecordType>();
+      RecordDecl *RD = RT->getDecl();
+      FieldDecl *CountField = nullptr;
+      FieldDecl *ItemsField = nullptr;
+      for (auto *Field : RD->fields()) {
+        if (Field->getName() == C4_ARRAY_SIZE_FIELD)
+          CountField = Field;
+        else if (Field->getName() == C4_ARRAY_DATA_FIELD)
+          ItemsField = Field;
+      }
+      assert(CountField && ItemsField && "C4 array missing count/items fields");
+
+      // Build member expression for .count, cast from size_t to int.
+      DeclarationName CountDN = CountField->getDeclName();
+      LookupResult CountR(*this, CountDN, Loc, LookupMemberName);
+      CountR.addDecl(CountField);
+      CountR.resolveKind();
+      ExprResult CountExpr = BuildMemberReferenceExpr(
+          E, Ty, Loc, /*IsArrow=*/false, CXXScopeSpec(), SourceLocation(),
+          /*FirstQualifierInScope=*/nullptr, CountR,
+          /*TemplateArgs=*/nullptr, getCurScope());
+      if (CountExpr.isInvalid()) return ExprError();
+      // Convert lvalue to rvalue before the integral cast.
+      CountExpr = DefaultLvalueConversion(CountExpr.get());
+      if (CountExpr.isInvalid()) return ExprError();
+      // Cast size_t -> int for the %.*s precision argument.
+      ExprResult CountCast = ImpCastExprToType(CountExpr.get(),
+                                               Context.IntTy, CK_IntegralCast);
+      if (CountCast.isInvalid()) return ExprError();
+
+      // Build member expression for .items (the data pointer).
+      DeclarationName ItemsDN = ItemsField->getDeclName();
+      LookupResult ItemsR(*this, ItemsDN, Loc, LookupMemberName);
+      ItemsR.addDecl(ItemsField);
+      ItemsR.resolveKind();
+      ExprResult ItemsExpr = BuildMemberReferenceExpr(
+          E, Ty, Loc, /*IsArrow=*/false, CXXScopeSpec(), SourceLocation(),
+          /*FirstQualifierInScope=*/nullptr, ItemsR,
+          /*TemplateArgs=*/nullptr, getCurScope());
+      if (ItemsExpr.isInvalid()) return ExprError();
+
+      CallArgs.push_back(CountCast.get());
+      CallArgs.push_back(ItemsExpr.get());
+    } else {
       RealFmt += "%s"; // fallback: pointer types, strings
+    }
+
+    // Only push the original expression for non-C4-array types (C4 arrays
+    // already had their decomposed args pushed above).
+    if (!isC4ArrayType(Ty))
+      CallArgs.push_back(E);
 
     pos = pct + 2;
     valIdx++;

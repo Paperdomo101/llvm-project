@@ -3614,9 +3614,12 @@ void Parser::ParseDeclarationSpecifiers(
             }
 
             if ((getLangOpts().C4() || !IsInSystemHeader) && !IsStructOrUnionContext && !IsFunctionPointerOrCast) {
-            // Programmatically inject 'void' as the default return type specifier
-                isInvalid = DS.SetTypeSpecType(DeclSpec::TST_void, Loc, PrevSpec, DiagID, Policy);
-                if (isInvalid) return;
+            // C4: inject 'int' for main(), allow 'void' for everything else.
+            IdentifierInfo *II = Tok.getIdentifierInfo();
+            bool IsC4Main = getLangOpts().C4() && II && II->isStr("main");
+            DeclSpec::TST injectedType = IsC4Main ? DeclSpec::TST_int : DeclSpec::TST_void;
+            isInvalid = DS.SetTypeSpecType(injectedType, Loc, PrevSpec, DiagID, Policy);
+            if (isInvalid) return;
 
                 break;
             }
@@ -7946,7 +7949,10 @@ void Parser::ParseFunctionDeclarator(Declarator &D,
   bool TypeWasOmittedOnLeft =
       (D.getDeclSpec().getSourceRange().getBegin() == D.getIdentifierLoc()) ||
       // C4: implicit-void path (type injected at identifier location)
-      (getLangOpts().C4() && D.getDeclSpec().getTypeSpecType() == DeclSpec::TST_void &&
+      //     Also covers C4 main() which gets implicit-int instead of void.
+      (getLangOpts().C4() &&
+       (D.getDeclSpec().getTypeSpecType() == DeclSpec::TST_void ||
+        D.getDeclSpec().getTypeSpecType() == DeclSpec::TST_int) &&
        D.getDeclSpec().getSourceRange().getBegin().isInvalid()) ||
       // C4: struct field function pointer `^field (params) rettype;` — no type
       //     specifier was set (void injection is suppressed in struct context)

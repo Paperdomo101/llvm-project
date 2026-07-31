@@ -1703,8 +1703,30 @@ auto CodeGenFunction::GetDestForLoopControlStmt(const LoopControlStmt &S)
   if (!S.hasLabelTarget())
     return &BreakContinueStack.back();
 
+  // C4: when the LabelDecl has no Stmt (no LabelStmt wrapping the loop),
+  // the standard getNamedLoopOrSwitch() would crash dereferencing null.
+  // Fall back to searching BreakContinueStack by matching the label name
+  // against loop init variable names.
+  if (!S.getLabelDecl()->getStmt()) {
+    IdentifierInfo *TargetII = S.getLabelDecl()->getIdentifier();
+    if (TargetII) {
+      for (const BreakContinue &BC : llvm::reverse(BreakContinueStack)) {
+        if (const auto *FS = dyn_cast<ForStmt>(BC.LoopOrSwitch)) {
+          if (auto *DS = dyn_cast_or_null<DeclStmt>(FS->getInit())) {
+            for (const Decl *D : DS->decls()) {
+              if (const auto *VD = dyn_cast<VarDecl>(D)) {
+                if (VD->getIdentifier() == TargetII)
+                  return &BC;
+              }
+            }
+          }
+        }
+      }
+    }
+    llvm_unreachable("C4 break/continue target not found");
+  }
+
   const Stmt *LoopOrSwitch = S.getNamedLoopOrSwitch();
-  assert(LoopOrSwitch && "break/continue target not set?");
   for (const BreakContinue &BC : llvm::reverse(BreakContinueStack))
     if (BC.LoopOrSwitch == LoopOrSwitch)
       return &BC;

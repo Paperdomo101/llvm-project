@@ -1797,6 +1797,8 @@ def err_c4_postfix_qualifier_disallowed : Error<
   "qualifiers cannot appear after the base type in C4">;
 def err_unterminated_c4_interpolation : Error<
   "unterminated C4 string interpolation (missing '`')">;
+def err_c4_interp_bad_string_concat : Error<
+  "cannot concatenate wide/UTF string literals with C4 interpolated strings">;
 } // end of Parse Issue category.
 
 let CategoryName = "Modules Issue" in {

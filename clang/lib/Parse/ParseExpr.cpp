@@ -2131,17 +2131,19 @@ case tok::period: {
     }
     [[fallthrough]]; // treat MS function local macros as concatenable strings
   case tok::c4_interp_string:  // C4 primary-expression: %"`expr`..."
-    Res = ParseC4InterpolatedStringExpression();
-    break;
-  case tok::c4_char_buffer:    // C4 primary-expression: 'bytes...'
-    Res = ParseC4CharBufferExpression();
-    break;
+    // Let ParseStringLiteralExpression handle concatenation with adjacent
+    // regular strings. It will detect the c4_interp_string token and build
+    // a combined interpolated string.
+    [[fallthrough]];
   case tok::string_literal:    // primary-expression: string-literal
   case tok::wide_string_literal:
   case tok::utf8_string_literal:
   case tok::utf16_string_literal:
   case tok::utf32_string_literal:
     Res = ParseStringLiteralExpression(true);
+    break;
+  case tok::c4_char_buffer:    // C4 primary-expression: 'bytes...'
+    Res = ParseC4CharBufferExpression();
     break;
   case tok::kw__Generic:   // primary-expression: generic-selection [C11 6.5.1]
     Res = ParseGenericSelectionExpression();
@@ -4368,6 +4370,19 @@ ExprResult Parser::ParseStringLiteralExpression(bool AllowUserDefinedLiteral,
     ConsumeAnyToken();
   } while (tokenIsLikeStringLiteral(Tok, getLangOpts()));
 
+  // C4: When C4 interpolated strings are mixed with regular strings, build
+  // a combined interpolated string rather than passing to StringLiteralParser
+  // (which doesn't understand c4_interp_string tokens).
+  bool HasC4Interp = false;
+  for (const Token &T : StringToks) {
+    if (T.is(tok::c4_interp_string)) {
+      HasC4Interp = true;
+      break;
+    }
+  }
+  if (HasC4Interp)
+    return ParseC4MixedStringExpression(StringToks);
+
   if (Unevaluated) {
     assert(!AllowUserDefinedLiteral && "UDL are always evaluated");
     return Actions.ActOnUnevaluatedStringLiteral(StringToks);
@@ -4506,6 +4521,131 @@ ExprResult Parser::ParseC4InterpolatedStringExpression() {
   }
 
   return Actions.ActOnC4InterpolatedString(Loc, FormatStr, Exprs);
+}
+
+/// ParseC4MixedStringExpression — Handle concatenation of C4 interpolated
+/// strings (%"...") with regular string literals. All adjacent tokens are
+/// merged into a single __c4_interp_str call.
+ExprResult Parser::ParseC4MixedStringExpression(ArrayRef<Token> StringToks) {
+  assert(!StringToks.empty() && "expected at least one token");
+  SourceLocation Loc = StringToks[0].getLocation();
+
+  std::string CombinedFormat;
+  SmallVector<std::string, 4> AllExprStrings;
+
+  for (const Token &Tok : StringToks) {
+    if (Tok.is(tok::c4_interp_string)) {
+      // Parse the C4 interpolated string token content.
+      bool Invalid = false;
+      std::string RawText = PP.getSpelling(Tok, &Invalid);
+      if (Invalid || RawText.size() < 5)
+        return ExprError();
+      if (RawText.size() < 4 || RawText[0] != '%' || RawText[1] != '"' ||
+          RawText.back() != '"')
+        return ExprError();
+      StringRef Content(RawText.data() + 2, RawText.size() - 3);
+
+      // Unescape and split on backtick expressions.
+      size_t i = 0;
+      while (i < Content.size()) {
+        if (Content[i] == '`') {
+          i++;
+          const char *IdentStart = Content.data() + i;
+          while (i < Content.size() && Content[i] != '`')
+            i++;
+          if (i >= Content.size()) {
+            Diag(Loc, diag::err_unterminated_c4_interpolation);
+            return ExprError();
+          }
+          std::string Ident(IdentStart, Content.data() + i - IdentStart);
+          i++;
+          if (Ident.empty()) {
+            Diag(Loc, diag::err_unterminated_c4_interpolation);
+            return ExprError();
+          }
+          AllExprStrings.push_back(std::move(Ident));
+          CombinedFormat += "%s";
+        } else if (Content[i] == '\\' && i + 1 < Content.size()) {
+          char next = Content[i + 1];
+          switch (next) {
+          case 'n':  CombinedFormat += '\n'; break;
+          case 't':  CombinedFormat += '\t'; break;
+          case 'r':  CombinedFormat += '\r'; break;
+          case '\\': CombinedFormat += '\\'; break;
+          case '"':  CombinedFormat += '"'; break;
+          case '`':  CombinedFormat += '`'; break;
+          case '%':  CombinedFormat += '%'; break;
+          case '0':  CombinedFormat += '\0'; break;
+          default:   CombinedFormat += next; break;
+          }
+          i += 2;
+        } else {
+          CombinedFormat += Content[i];
+          i++;
+        }
+      }
+    } else if (Tok.is(tok::string_literal)) {
+      // Use StringLiteralParser to properly extract and unescape content.
+      StringLiteralParser Literal(Tok, PP);
+      if (Literal.hadError)
+        return ExprError();
+      CombinedFormat += Literal.GetString();
+    } else if (Tok.isNot(tok::string_literal)) {
+      // C4 doesn't support mixing wide/UTF strings with interpolated strings.
+      Diag(Tok.getLocation(), diag::err_c4_interp_bad_string_concat);
+      return ExprError();
+    }
+  }
+
+  // Parse all collected expression strings into Exprs.
+  SmallVector<Expr *, 4> Exprs;
+  for (const std::string &ExprStr : AllExprStrings) {
+    SourceLocation SpellingLoc = PP.getSourceManager().getSpellingLoc(Loc);
+    Lexer RawLex(SpellingLoc, getLangOpts(),
+                 ExprStr.data(), ExprStr.data(),
+                 ExprStr.data() + ExprStr.size());
+    SmallVector<Token, 16> ExprToks;
+    while (true) {
+      Token T;
+      RawLex.LexFromRawLexer(T);
+      if (T.is(tok::eof))
+        break;
+      if (T.is(tok::raw_identifier))
+        PP.LookUpIdentifierInfo(T);
+      T.setFlag(Token::IsReinjected);
+      ExprToks.push_back(T);
+    }
+    if (ExprToks.empty()) {
+      Diag(Loc, diag::err_unterminated_c4_interpolation);
+      return ExprError();
+    }
+    Token EofTok;
+    EofTok.startToken();
+    EofTok.setKind(tok::eof);
+    EofTok.setLocation(Loc);
+    EofTok.setFlag(Token::IsReinjected);
+    ExprToks.push_back(EofTok);
+
+    Token SavedTok = Tok;
+    auto ToksArray = std::make_unique<Token[]>(ExprToks.size());
+    std::copy(ExprToks.begin(), ExprToks.end(), ToksArray.get());
+    PP.EnterTokenStream(std::move(ToksArray), ExprToks.size(),
+                        /*DisableMacroExpansion=*/false, /*IsReinject=*/true);
+    PP.Lex(Tok);
+
+    ExprResult E = ParseAssignmentExpression();
+    if (E.isInvalid()) {
+      Tok = SavedTok;
+      return ExprError();
+    }
+    Exprs.push_back(E.get());
+
+    while (!Tok.is(tok::eof))
+      PP.Lex(Tok);
+    Tok = SavedTok;
+  }
+
+  return Actions.ActOnC4InterpolatedString(Loc, CombinedFormat, Exprs);
 }
 
 /// ParseC4CharBufferExpression — Parse single-quoted 'bytes...' buffer literal.

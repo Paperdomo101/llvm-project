@@ -3845,6 +3845,8 @@ public:
 
   // C4: Parse a backtick-interpolated string literal %"`expr`...".
   ExprResult ParseC4InterpolatedStringExpression();
+  // C4: Parse mixed regular + interpolated string concatenation.
+  ExprResult ParseC4MixedStringExpression(ArrayRef<Token> StringToks);
   // C4: Parse a single-quoted character buffer 'bytes...'.
   ExprResult ParseC4CharBufferExpression();
 

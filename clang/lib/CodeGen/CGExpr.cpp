@@ -8027,8 +8027,57 @@ void CodeGenFunction::FlattenAccessAndTypeLValue(
 // C4: inline __c4_interp_str — emit snprintf + alloca instead of a call.
 RValue CodeGenFunction::EmitC4InterpStr(const CallExpr *E,
                                         ReturnValueSlot ReturnValue) {
-  // Get snprintf: int snprintf(char *buf, size_t size, const char *fmt, ...)
+  // Emit the format string and all variadic arguments.
+  SmallVector<llvm::Value *, 8> Args;
+  for (unsigned i = 0, n = E->getNumArgs(); i < n; ++i)
+    Args.push_back(EmitScalarExpr(E->getArg(i)));
+
   QualType CharPtrTy = getContext().getPointerType(getContext().CharTy);
+
+  // Short-path: when there are no variadic arguments (only the format string),
+  // just copy the format string literal into an alloca and return it.
+  // Passing a format string with % specifiers to snprintf without matching
+  // arguments produces garbage.
+  if (Args.size() == 1) {
+    // Args[0] is the format string literal (a pointer to the string data).
+    // Compute the string length with strlen.
+    llvm::FunctionCallee StrlenFn = CGM.CreateRuntimeFunction(
+        llvm::FunctionType::get(ConvertType(getContext().getSizeType()),
+                                {ConvertType(CharPtrTy)}, /*isVarArg=*/false),
+        "strlen");
+    llvm::CallInst *LenCall =
+        Builder.CreateCall(StrlenFn, Args[0], "c4_interp_strlen");
+    LenCall->setDoesNotThrow();
+
+    // Alloca: char *buf = alloca(len + 1).
+    llvm::Value *Len1 = Builder.CreateAdd(
+        LenCall, llvm::ConstantInt::get(LenCall->getType(), 1),
+        "c4_interp_sz");
+    llvm::AllocaInst *Buf =
+        Builder.CreateAlloca(Builder.getInt8Ty(), Len1, "c4_interp_buf");
+    Buf->setAlignment(llvm::Align(1));
+
+    // memcpy(buf, fmt, len + 1).
+    llvm::Type *VoidPtrTy = ConvertType(CharPtrTy);
+    llvm::FunctionCallee MemcpyFn = CGM.CreateRuntimeFunction(
+        llvm::FunctionType::get(
+            Builder.getVoidTy(),
+            {VoidPtrTy, VoidPtrTy,
+             ConvertType(getContext().getSizeType())},
+            /*isVarArg=*/false),
+        "memcpy");
+    llvm::CallInst *MemcpyCall = Builder.CreateCall(
+        MemcpyFn,
+        {Builder.CreateBitCast(Buf, VoidPtrTy), Args[0], Len1});
+    MemcpyCall->setDoesNotThrow();
+
+    // Return the buffer pointer (as char*).
+    llvm::Value *Result = Builder.CreateBitCast(Buf, ConvertType(CharPtrTy));
+    return RValue::get(Result);
+  }
+
+  // Full path: use snprintf for format strings with variadic arguments.
+  // Get snprintf: int snprintf(char *buf, size_t size, const char *fmt, ...)
   QualType SizeTy = getContext().getSizeType();
   QualType IntTy = getContext().IntTy;
 
@@ -8038,11 +8087,6 @@ RValue CodeGenFunction::EmitC4InterpStr(const CallExpr *E,
       /*isVarArg=*/true);
   llvm::FunctionCallee SnprintfFn =
       CGM.CreateRuntimeFunction(SnprintfTy, "snprintf");
-
-  // Emit the format string and all variadic arguments.
-  SmallVector<llvm::Value *, 8> Args;
-  for (unsigned i = 0, n = E->getNumArgs(); i < n; ++i)
-    Args.push_back(EmitScalarExpr(E->getArg(i)));
 
   // First call: snprintf(NULL, 0, fmt, ...) to compute the length.
   llvm::Value *NullBuf = llvm::ConstantPointerNull::get(
