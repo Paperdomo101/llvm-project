@@ -6918,6 +6918,92 @@ bool Parser::ParseC4NamedFunctionPointerDeclarator(Declarator &D) {
   return true;
 }
 
+void Parser::ParseC4NamedReturnFields(Declarator &D) {
+  IdentifierInfo *NameII = Tok.getIdentifierInfo();
+  SourceLocation NameLoc = ConsumeToken();
+  ExprResult InitResult;
+  if (Tok.is(tok::equal)) {
+    ConsumeToken();
+    InitResult = ParseAssignmentExpression();
+    if (InitResult.isInvalid()) {
+      SkipUntil(tok::l_brace, StopAtSemi | StopBeforeMatch);
+      return;
+    }
+  }
+  D.addC4NamedReturnField(NameII, NameLoc,
+                           InitResult.isUsable() ? InitResult.get() : nullptr,
+                           D.getDeclSpec().getTypeSpecType(),
+                           D.getDeclSpec().getTypeSpecTypeLoc());
+
+  while (Tok.is(tok::comma)) {
+    ConsumeToken();
+    DeclSpec NextDS(AttrFactory);
+    ParsedTemplateInfo EmptyTemplateInfo;
+    ParseDeclarationSpecifiers(NextDS, EmptyTemplateInfo, AS_none,
+                                DeclSpecContext::DSC_trailing);
+    IdentifierInfo *NextName = nullptr;
+    SourceLocation NextNameLoc;
+    if (Tok.is(tok::identifier)) {
+      if (NextToken().is(tok::comma) || NextToken().is(tok::l_brace) ||
+          NextToken().is(tok::semi) || NextToken().is(tok::equal)) {
+        if (auto *II = Tok.getIdentifierInfo()) {
+          if (Actions.getTypeName(*II, Tok.getLocation(), getCurScope())) {
+            // It's a type — this is an anonymous field.
+          } else {
+            NextName = II;
+            NextNameLoc = ConsumeToken();
+          }
+        }
+      }
+    }
+    if (!NextName) {
+      llvm::SmallString<16> NameBuf;
+      ("_c4_r" + Twine(D.getC4NamedReturnFields().size())).toVector(NameBuf);
+      NextName = &PP.getIdentifierTable().get(NameBuf);
+      NextNameLoc = NextDS.getTypeSpecTypeLoc();
+    }
+    ExprResult NextInit;
+    if (Tok.is(tok::equal)) {
+      ConsumeToken();
+      NextInit = ParseAssignmentExpression();
+      if (NextInit.isInvalid()) {
+        SkipUntil(tok::l_brace, StopAtSemi | StopBeforeMatch);
+        return;
+      }
+    }
+    D.addC4NamedReturnField(NextName, NextNameLoc,
+                             NextInit.isUsable() ? NextInit.get() : nullptr,
+                             NextDS.getTypeSpecType(),
+                             NextDS.getTypeSpecTypeLoc());
+  }
+
+  if (D.getC4NamedReturnFields().size() == 1 && !InitResult.isUsable()) {
+    D.setC4NamedReturn(NameII, NameLoc);
+  }
+}
+
+void Parser::ParseC4AnonymousReturnFields(Declarator &D) {
+  IdentifierInfo *NameII = &PP.getIdentifierTable().get("_c4_r0");
+  SourceLocation Loc = Tok.getLocation();
+  D.addC4NamedReturnField(NameII, Loc, nullptr,
+                           D.getDeclSpec().getTypeSpecType(),
+                           D.getDeclSpec().getTypeSpecTypeLoc());
+
+  while (Tok.is(tok::comma)) {
+    ConsumeToken();
+    DeclSpec NextDS(AttrFactory);
+    ParsedTemplateInfo EmptyTemplateInfo;
+    ParseDeclarationSpecifiers(NextDS, EmptyTemplateInfo, AS_none,
+                                DeclSpecContext::DSC_trailing);
+    llvm::SmallString<16> NameBuf;
+    ("_c4_r" + Twine(D.getC4NamedReturnFields().size())).toVector(NameBuf);
+    IdentifierInfo *FieldName = &PP.getIdentifierTable().get(NameBuf);
+    D.addC4NamedReturnField(FieldName, NextDS.getTypeSpecTypeLoc(), nullptr,
+                             NextDS.getTypeSpecType(),
+                             NextDS.getTypeSpecTypeLoc());
+  }
+}
+
 void Parser::ParseDeclaratorInternal(Declarator &D,
                                      DirectDeclParseFunction DirectDeclParser) {
   if (Diags.hasAllExtensionsSilenced())
@@ -7974,7 +8060,8 @@ void Parser::ParseFunctionDeclarator(Declarator &D,
 
   bool IsC4NamedReturn = false;
   if (getLangOpts().C4() && Tok.is(tok::identifier) &&
-      (NextToken().is(tok::l_brace) || NextToken().is(tok::semi))) {
+      (NextToken().is(tok::l_brace) || NextToken().is(tok::semi) ||
+       NextToken().is(tok::comma) || NextToken().is(tok::equal))) {
     IsC4NamedReturn = true;
     if (auto *II = Tok.getIdentifierInfo()) {
       if (Actions.getTypeName(*II, Tok.getLocation(), getCurScope())) {
@@ -7984,8 +8071,7 @@ void Parser::ParseFunctionDeclarator(Declarator &D,
   }
 
   if (IsC4NamedReturn) {
-    D.setC4NamedReturn(Tok.getIdentifierInfo(), Tok.getLocation());
-    ConsumeToken();
+    ParseC4NamedReturnFields(D);
   }
 
   if (getLangOpts().C4() && TypeWasOmittedOnLeft &&
@@ -8055,13 +8141,16 @@ void Parser::ParseFunctionDeclarator(Declarator &D,
           ParseBracketDeclarator(D);
       }
 
-      if (Tok.is(tok::identifier) && (NextToken().is(tok::l_brace) || NextToken().is(tok::semi))) {
+      if (Tok.is(tok::identifier) &&
+          (NextToken().is(tok::l_brace) || NextToken().is(tok::semi) ||
+           NextToken().is(tok::comma) || NextToken().is(tok::equal))) {
         if (auto *II = Tok.getIdentifierInfo()) {
           if (!Actions.getTypeName(*II, Tok.getLocation(), getCurScope())) {
-            D.setC4NamedReturn(Tok.getIdentifierInfo(), Tok.getLocation());
-            ConsumeToken();
+            ParseC4NamedReturnFields(D);
           }
         }
+      } else if (getLangOpts().C4() && Tok.is(tok::comma)) {
+        ParseC4AnonymousReturnFields(D);
       }
     }
 }

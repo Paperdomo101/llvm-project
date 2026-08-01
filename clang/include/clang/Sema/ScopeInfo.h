@@ -400,6 +400,11 @@ public:
 
   const IdentifierInfo *C4NamedReturnII = nullptr;
 
+  // C4: Multi-return fields (from 'int i = -1, bool ok = true').
+  // Stored as pairs of (VarDecl, InitExpr) for each named return variable.
+  llvm::SmallVector<VarDecl *, 4> C4MultiReturnVars;
+  QualType C4MultiReturnStructTy;  // synthesized struct type
+
   /// Determine whether an unrecoverable error has occurred within this
   /// function. Note that this may return false even if the function body is
   /// invalid, because the errors may be suppressed if they're caused by prior

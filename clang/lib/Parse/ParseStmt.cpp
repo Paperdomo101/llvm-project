@@ -212,8 +212,19 @@ StmtResult Parser::ParseTypeInferredAssignment() {
       SwizzleCount = ILE->getNumInits();
     else if (auto *PLE = dyn_cast<ParenListExpr>(E))
       SwizzleCount = PLE->getNumExprs();
-    else
+    else if (E->getType()->isStructureType() || E->getType()->isUnionType()) {
+      if (const auto *RD = E->getType()->getAsRecordDecl()) {
+        SwizzleCount = 0;
+        for (auto *D : RD->decls())
+          if (isa<FieldDecl>(D))
+            ++SwizzleCount;
+      }
+    } else {
       SwizzleCount = 1;
+    }
+    // If still unknown, defer to Sema (e.g., for multi-return calls).
+    if (SwizzleCount == 0)
+      SwizzleCount = LHSVars.size();
   }
 
   if (LHSVars.size() != SwizzleCount) {
@@ -2899,14 +2910,10 @@ StmtResult Parser::ParseForStatement(SourceLocation *TrailingElseLoc,
       else if (Tok.is(tok::identifier) &&
                GetLookAheadToken(1).is(tok::period) &&
                GetLookAheadToken(2).is(tok::period)) {
-        IdentifierInfo *II = Tok.getIdentifierInfo();
-        bool IsDeclared = Actions.LookupSingleName(getCurScope(), II, Tok.getLocation(), Sema::LookupOrdinaryName) != nullptr;
-        if (!IsDeclared) {
-          IsArrayIteration = true;
-          ElementII = II;
-          ElementLoc = Tok.getLocation();
-          ConsumeToken(); // eat identifier
-        }
+        IsArrayIteration = true;
+        ElementII = Tok.getIdentifierInfo();
+        ElementLoc = Tok.getLocation();
+        ConsumeToken(); // eat identifier
       }
 
       if (IsArrayIteration) {
@@ -3036,7 +3043,30 @@ StmtResult Parser::ParseForStatement(SourceLocation *TrailingElseLoc,
         } else {
           return StmtError();
         }
+      if (FirstPart.isInvalid()) return StmtError();
       }
+    }
+    else if (HasEqual && Tok.is(tok::identifier)) {
+      IdentifierInfo *II = Tok.getIdentifierInfo();
+      SourceLocation IdLoc = ConsumeToken();
+      ConsumeToken(); // eat '='
+      if (!ParseRangeOrArray()) return StmtError();
+      LHSVarInfo LHSVar;
+      LHSVar.Ident = II;
+      LHSVar.IdentLoc = IdLoc;
+      LHSVar.Kind = ArrayKind::None;
+      LHSVar.IsConst = false;
+      LHSVar.IsStatic = false;
+      LHSVar.SizeExpr = nullptr;
+      if (IsArrayIteration) {
+        ExprResult Zero = Actions.ActOnIntegerConstant(ForLoc, 0);
+        FirstPart = Actions.ActOnTypeInferredAssignment(getCurScope(), LHSVar,
+                                                         Zero.get());
+      } else {
+        FirstPart = Actions.ActOnTypeInferredAssignment(getCurScope(), LHSVar,
+                                                         Start.get());
+      }
+      if (FirstPart.isInvalid()) return StmtError();
     }
     else {
       if (!ParseRangeOrArray()) return StmtError();
@@ -3538,9 +3568,24 @@ StmtResult Parser::ParseReturnStatement() {
     // We remove the strict C++ check so your custom language dialect can use it universally.
     if (Tok.is(tok::l_brace)) {
       R = ParseInitializer();
-      // This automatically constructs an InitListExpr AST node out of the braced body
+    } else if (getLangOpts().C4()) {
+      R = ParseAssignmentExpression();
+      if (!R.isInvalid() && Tok.is(tok::comma)) {
+        SmallVector<Expr *, 4> Exprs;
+        Exprs.push_back(R.get());
+        while (Tok.is(tok::comma)) {
+          ConsumeToken();
+          ExprResult Next = ParseAssignmentExpression();
+          if (Next.isInvalid()) {
+            SkipUntil(tok::semi, StopAtSemi);
+            return StmtError();
+          }
+          Exprs.push_back(Next.get());
+        }
+        R = Actions.ActOnParenListExpr(Tok.getLocation(), Tok.getLocation(),
+                                        Exprs);
+      }
     } else {
-      // Otherwise, parse it as a traditional standard expression
       R = ParseExpression();
     }
     // --- STRUCT INFERENCE IMPLEMENTATION END ---

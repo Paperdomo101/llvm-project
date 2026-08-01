@@ -4249,7 +4249,21 @@ Sema::ActOnReturnStmt(SourceLocation ReturnLoc, Expr *RetValExp,
 
   if (getLangOpts().C4() && !RetValExp) {
     if (const auto *FSI = getCurFunction()) {
-      if (FSI->C4NamedReturnII) {
+      if (!FSI->C4MultiReturnVars.empty()) {
+        SourceLocation Loc = ReturnLoc;
+        SmallVector<Expr *, 4> FieldExprs;
+        for (VarDecl *VD : FSI->C4MultiReturnVars) {
+          ExprResult Ref =
+              BuildDeclRefExpr(VD, VD->getType(), VK_LValue, Loc);
+          if (Ref.isInvalid())
+            return StmtError();
+          FieldExprs.push_back(Ref.get());
+        }
+        InitListExpr *ILE = new (Context)
+            InitListExpr(Context, Loc, FieldExprs, Loc, /*Synthetic=*/false);
+        ILE->setType(FSI->C4MultiReturnStructTy);
+        RetValExp = ILE;
+      } else if (FSI->C4NamedReturnII) {
         LookupResult Found(*this, const_cast<IdentifierInfo*>(FSI->C4NamedReturnII), ReturnLoc, LookupOrdinaryName);
         LookupName(Found, CurScope);
         if (ValueDecl *VD = Found.getAsSingle<ValueDecl>()) {
@@ -4257,6 +4271,37 @@ Sema::ActOnReturnStmt(SourceLocation ReturnLoc, Expr *RetValExp,
           if (!Ref.isInvalid()) {
             RetValExp = Ref.get();
           }
+        }
+      }
+    }
+  }
+
+  // C4: return a, b, c for multi-return functions.
+  if (getLangOpts().C4() && RetValExp) {
+    if (const auto *FSI = getCurFunction()) {
+      if (!FSI->C4MultiReturnVars.empty()) {
+        SmallVector<Expr *, 4> Values;
+        // Handle ParenListExpr (from the parser's comma-list parsing).
+        if (auto *PLE = dyn_cast<ParenListExpr>(RetValExp)) {
+          for (unsigned I = 0; I < PLE->getNumExprs(); ++I)
+            Values.push_back(PLE->getExpr(I));
+        } else {
+          // Handle BinaryOperator comma chain (legacy path).
+          Expr *E = RetValExp;
+          while (auto *BO = dyn_cast<BinaryOperator>(E)) {
+            if (BO->getOpcode() != BO_Comma)
+              break;
+            Values.push_back(BO->getLHS());
+            E = BO->getRHS();
+          }
+          Values.push_back(E);
+        }
+        if (Values.size() > 1) {
+          SourceLocation Loc = ReturnLoc;
+          InitListExpr *ILE = new (Context)
+              InitListExpr(Context, Loc, Values, Loc, /*Synthetic=*/false);
+          ILE->setType(FSI->C4MultiReturnStructTy);
+          RetValExp = ILE;
         }
       }
     }

@@ -7182,9 +7182,74 @@ StmtResult Sema::ActOnMultiTypeInferredAssignment(Scope *S,
   Expr *E = InitExpr->IgnoreImplicit();
   bool isInitList = isa<InitListExpr>(E);
   bool isParenList = isa<ParenListExpr>(E);
+  // C4: destructure a struct-returning expression.
+  const RecordDecl *StructRD = nullptr;
+  QualType StructTy;
   if (!isInitList && !isParenList) {
-    Diag(Vars.front().IdentLoc, diag::err_swizzle_requires_initlist);
-    return StmtError();
+    StructTy = E->getType();
+    StructRD = StructTy->getAsRecordDecl();
+    if (!StructRD) {
+      Diag(Vars.front().IdentLoc, diag::err_swizzle_requires_initlist);
+      return StmtError();
+    }
+
+    // Count fields in the struct.
+    SmallVector<FieldDecl *, 8> StructFields;
+    for (auto *D2 : StructRD->decls())
+      if (auto *FD = dyn_cast<FieldDecl>(D2))
+        StructFields.push_back(FD);
+
+    if (Vars.size() != StructFields.size()) {
+      Diag(Vars.front().IdentLoc, diag::err_swizzle_variable_count_mismatch)
+          << (int)StructFields.size() << (int)Vars.size();
+      return StmtError();
+    }
+
+    // Store the call result in a compound literal so multiple field
+    // accesses share the same evaluation.
+    TypeSourceInfo *TSI =
+        Context.getTrivialTypeSourceInfo(StructTy, E->getBeginLoc());
+    ExprResult CLE = BuildCompoundLiteralExpr(E->getBeginLoc(), TSI,
+                                               E->getEndLoc(), E);
+    if (CLE.isInvalid()) return StmtError();
+
+    SmallVector<Decl *, 4> DeclsInGroup2;
+    for (unsigned i = 0; i < Vars.size(); ++i) {
+      FieldDecl *FD = StructFields[i];
+      DeclarationNameInfo NameInfo(FD->getIdentifier(), E->getBeginLoc());
+      bool HadMC = false;
+      ExprResult SubInitExpr = BuildMemberExpr(
+          CLE.get(), /*IsArrow=*/false, E->getBeginLoc(),
+          NestedNameSpecifierLoc(), SourceLocation(), FD,
+          DeclAccessPair::make(FD, FD->getAccess()),
+          HadMC, NameInfo, FD->getType(), VK_LValue, OK_Ordinary);
+
+      QualType ElementType = FD->getType();
+      QualType FinalType = ElementType;
+      if (Vars[i].Kind != ArrayKind::None) {
+        QualType Applied = ApplyArrayQualifier(ElementType, Vars[i].Kind);
+        if (Applied.isNull()) { return StmtError(); }
+        FinalType = Applied;
+      }
+      if (Vars[i].IsConst)
+        FinalType = Context.getConstType(FinalType);
+      StorageClass SC = Vars[i].IsStatic ? SC_Static : SC_None;
+      VarDecl *NewVD = VarDecl::Create(
+          Context, CurContext, Vars[i].IdentLoc, Vars[i].IdentLoc,
+          Vars[i].Ident, FinalType,
+          Context.getTrivialTypeSourceInfo(FinalType, Vars[i].IdentLoc), SC);
+      if (!isa<TranslationUnitDecl>(CurContext))
+        NewVD->setLocalExternDecl();
+      PushOnScopeChains(NewVD, S);
+      CheckShadow(S, NewVD);
+      AddInitializerToDecl(NewVD, SubInitExpr.get(), /*DirectInit=*/false);
+      DeclsInGroup2.push_back(NewVD);
+    }
+    return ActOnDeclStmt(
+        DeclGroupPtrTy::make(
+            DeclGroupRef::Create(Context, DeclsInGroup2.data(),
+                                (unsigned)DeclsInGroup2.size())),
+        Vars.front().IdentLoc, E->getEndLoc());
   }
 
   unsigned NumComponents = isInitList ? cast<InitListExpr>(E)->getNumInits()
@@ -11715,7 +11780,53 @@ Sema::ActOnFunctionDeclarator(Scope *S, Declarator &D, DeclContext *DC,
   // `routine(name)`.
   // --- C4: Named return & Identifier aliasing ---
   if (getLangOpts().C4() && NewFD && !NewFD->isInvalidDecl()) {
-    if (D.getC4NamedReturnII()) {
+    if (D.hasC4NamedReturnFields() &&
+        (D.getC4NamedReturnFields().size() > 1 ||
+         D.getC4NamedReturnFields()[0].Init)) {
+      // Multi-return: synthesize the return struct type now, BEFORE
+      // the function body is parsed (avoids double-call from setType).
+      auto Fields = D.getC4NamedReturnFields();
+      SmallVector<QualType, 4> FieldTypes;
+      for (unsigned I = 0; I < Fields.size(); ++I) {
+        QualType Ty;
+        if (I == 0) {
+          Ty = NewFD->getReturnType();
+        } else {
+          switch (Fields[I].TypeSpecType) {
+          case DeclSpec::TST_int: Ty = Context.IntTy; break;
+          case DeclSpec::TST_bool: Ty = Context.BoolTy; break;
+          case DeclSpec::TST_char: Ty = Context.CharTy; break;
+          case DeclSpec::TST_float: Ty = Context.FloatTy; break;
+          case DeclSpec::TST_double: Ty = Context.DoubleTy; break;
+          default: Ty = Context.IntTy; break;
+          }
+        }
+        FieldTypes.push_back(Ty);
+      }
+      RecordDecl *RD = RecordDecl::Create(
+          Context, TagDecl::TagKind::Struct,
+          Context.getTranslationUnitDecl(),
+          NewFD->getLocation(), NewFD->getLocation(), nullptr);
+      RD->startDefinition();
+      for (unsigned I = 0; I < Fields.size(); ++I) {
+        FieldDecl *FiD = FieldDecl::Create(
+            Context, RD, Fields[I].NameLoc, Fields[I].NameLoc,
+            Fields[I].Name, FieldTypes[I], nullptr, nullptr, false,
+            ICIS_NoInit);
+        FiD->setAccess(AS_public);
+        RD->addDecl(FiD);
+      }
+      RD->completeDefinition();
+      QualType StructTy = Context.getTypeDeclType(cast<TypeDecl>(RD));
+      SmallVector<QualType, 8> ParamTypes;
+      for (ParmVarDecl *P : NewFD->parameters())
+        ParamTypes.push_back(P->getType());
+      if (const auto *FPT = NewFD->getType()->getAs<FunctionProtoType>()) {
+        QualType NewFnTy = Context.getFunctionType(
+            StructTy, ParamTypes, FPT->getExtProtoInfo());
+        NewFD->setType(NewFnTy);
+      }
+    } else if (D.getC4NamedReturnII()) {
       const IdentifierInfo *NamedReturnII = D.getC4NamedReturnII();
       if (NewFD->getReturnType()->isVoidType()) {
         for (ParmVarDecl *P : NewFD->parameters()) {
@@ -16792,7 +16903,36 @@ Sema::ActOnStartOfFunctionDef(Scope *FnBodyScope, Declarator &D,
     OpenMP().ActOnFinishedFunctionDefinitionInOpenMPDeclareVariantScope(Dcl,
                                                                         Bases);
 
-  if (getLangOpts().C4() && D.getC4NamedReturnII()) {
+  if (getLangOpts().C4() && D.hasC4NamedReturnFields() &&
+      (D.getC4NamedReturnFields().size() > 1 ||
+       D.getC4NamedReturnFields()[0].Init)) {
+    if (FunctionDecl *FD = dyn_cast_if_present<FunctionDecl>(Dcl)) {
+      auto Fields = D.getC4NamedReturnFields();
+      // The struct type was already created in ActOnFunctionDeclarator.
+      // Just store it and create local VarDecls.
+      QualType StructTy = FD->getReturnType();
+      getCurFunction()->C4MultiReturnStructTy = StructTy;
+      SmallVector<FieldDecl*, 8> SFields;
+      if (const auto *RD = StructTy->getAsRecordDecl())
+        for (auto *D2 : RD->decls())
+          if (auto *FiD = dyn_cast<FieldDecl>(D2))
+            SFields.push_back(FiD);
+      for (unsigned I = 0; I < Fields.size() && I < SFields.size(); ++I) {
+        QualType FieldTy = SFields[I]->getType();
+        VarDecl *NewVD = VarDecl::Create(
+            Context, FD, Fields[I].NameLoc, Fields[I].NameLoc,
+            Fields[I].Name, FieldTy,
+            Context.getTrivialTypeSourceInfo(FieldTy, Fields[I].NameLoc),
+            SC_None);
+        if (Fields[I].Init)
+          NewVD->setInit(Fields[I].Init);
+        else
+          NewVD->setInit(new (Context) ImplicitValueInitExpr(FieldTy));
+        PushOnScopeChains(NewVD, FnBodyScope);
+        getCurFunction()->C4MultiReturnVars.push_back(NewVD);
+      }
+    }
+  } else if (getLangOpts().C4() && D.getC4NamedReturnII()) {
     getCurFunction()->C4NamedReturnII = D.getC4NamedReturnII();
     if (FunctionDecl *FD = dyn_cast_if_present<FunctionDecl>(Dcl)) {
       const IdentifierInfo *NamedReturnII = D.getC4NamedReturnII();
@@ -17433,6 +17573,36 @@ Decl *Sema::ActOnFinishFunctionBody(Decl *dcl, Stmt *Body, bool IsInstantiation,
                                     bool RetainFunctionScopeInfo) {
   FunctionScopeInfo *FSI = getCurFunction();
   FunctionDecl *FD = dcl ? dcl->getAsFunction() : nullptr;
+
+  if (getLangOpts().C4() && FD && FSI &&
+      !FSI->C4MultiReturnVars.empty() && Body) {
+    SourceLocation EndLoc = Body->getEndLoc();
+    SmallVector<Expr *, 4> FieldExprs;
+    for (VarDecl *VD : FSI->C4MultiReturnVars) {
+      ExprResult Ref =
+          BuildDeclRefExpr(VD, VD->getType(), VK_LValue, EndLoc);
+      if (Ref.isInvalid()) return dcl;
+      FieldExprs.push_back(Ref.get());
+    }
+    InitListExpr *ILE = new (Context)
+        InitListExpr(Context, EndLoc, FieldExprs, EndLoc, /*Synthetic=*/false);
+    ILE->setType(FSI->C4MultiReturnStructTy);
+    StmtResult RetStmt = BuildReturnStmt(EndLoc, ILE);
+    if (!RetStmt.isInvalid()) {
+      if (CompoundStmt *CS = dyn_cast<CompoundStmt>(Body)) {
+        SmallVector<Stmt *, 16> Stmts;
+        for (VarDecl *VD : FSI->C4MultiReturnVars) {
+          DeclStmt *DS = new (Context)
+              DeclStmt(DeclGroupRef(VD), VD->getLocation(), VD->getLocation());
+          Stmts.push_back(DS);
+        }
+        Stmts.insert(Stmts.end(), CS->body_begin(), CS->body_end());
+        Stmts.push_back(RetStmt.get());
+        Body = CompoundStmt::Create(Context, Stmts, FPOptionsOverride(),
+                                    CS->getLBracLoc(), CS->getRBracLoc());
+      }
+    }
+  }
 
   if (getLangOpts().C4() && FD && FSI && FSI->C4NamedReturnII && Body) {
     const IdentifierInfo *NamedReturnII = FSI->C4NamedReturnII;

@@ -476,6 +476,10 @@ CompilerTest custom_test_suite[] = {
         "tests/named_return_runtime.c4", true
     },
     {
+        "Multi-Return & Destructuring (runtime)",
+        "tests/multi_return_runtime.c4", true
+    },
+    {
         "C4 Named Return Variable Matching Parameter Name (runtime)",
         "tests/named_return_param_runtime.c4", true
     },

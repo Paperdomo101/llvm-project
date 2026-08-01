@@ -1,0 +1,298 @@
+// tests/multi_return_runtime.c4
+//
+// Runtime regression tests for C4 multi-return, destructuring, and
+// related features.  All test helper functions are at file scope.
+//
+//   A. Named multi-return:           fn() int a, int b { ... }
+//   B. Anonymous multi-return:       fn() int, int { ... }
+//   C. Default initializers:         fn() int a = -1, bool b = true { ... }
+//   D. Explicit return:              return a, b, c;
+//   E. Destructuring (non-call):     a, b := {10, 20}
+//   F. Variadic pack + multi-return
+//
+// Exit 0 = all assertions passed.  A single failure exits 1 immediately.
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdbool.h>
+
+// ---------------------------------------------------------------------------
+// Test helpers
+// ---------------------------------------------------------------------------
+static void fail(const char *msg, int got, int expected) {
+    printf("[FAIL] %s  (got %d, expected %d)\n", msg, got, expected);
+    exit(1);
+}
+#define CHECK(actual, expected, msg) \
+    do { if ((int)(actual) != (expected)) fail(msg, (int)(actual), (expected)); } while(0)
+
+// ===========================================================================
+// A. Named multi-return with explicit body assignments
+// ===========================================================================
+
+divide(int a, int b) int quot, int rem {
+    quot = a / b;
+    rem = a % b;
+}
+
+static void test_named_fields() {
+    q, r := divide(10, 3);
+    CHECK(q, 3, "A1: quot 10/3");
+    CHECK(r, 1, "A1: rem  10%3");
+
+    // Also verify via single assign (avoiding double-eval of call destructure)
+    dr := divide(20, 7);
+    CHECK(dr.quot, 2, "A2: single-assign quot");
+    CHECK(dr.rem,  6, "A2: single-assign rem");
+
+    printf("[PASS] A: named multi-return fields\n");
+}
+
+// ===========================================================================
+// B. Anonymous multi-return (types only, no names)
+// ===========================================================================
+
+split(int x) int, int {
+    return x / 2, x % 2;
+}
+
+static void test_anonymous() {
+    a, b := split(7);
+    CHECK(a, 3, "B1: split/2");
+    CHECK(b, 1, "B1: split%2");
+
+    s := split(11);
+    CHECK(s._c4_r0, 5, "B2: single-assign first");
+    CHECK(s._c4_r1, 1, "B2: single-assign second");
+
+    printf("[PASS] B: anonymous multi-return\n");
+}
+
+// ===========================================================================
+// C. Default initializers on named return fields
+// ===========================================================================
+
+safe_div(int a, int b) int quot = -1, int ok = 0 {
+    if (b == 0) return;
+    quot = a / b;
+    ok = 1;
+}
+
+mixed(int x) int a = 100, int b, int c = 99 {
+    b = x;
+}
+
+static void test_default_inits() {
+    // Call with valid divisor — explicit body values
+    q1, o1 := safe_div(10, 3);
+    CHECK(q1, 3,  "C1: safe_div ok quot");
+    CHECK(o1, 1,  "C1: safe_div ok flag");
+
+    // Call with zero divisor — bare return preserves defaults
+    q2, o2 := safe_div(10, 0);
+    CHECK(q2, -1, "C2: safe_div fail quot (default)");
+    CHECK(o2, 0,  "C2: safe_div fail ok   (default)");
+
+    // Mixed: some fields have defaults, some don't
+    ma, mb, mc := mixed(7);
+    CHECK(ma, 100, "C3: default survives");
+    CHECK(mb, 7,   "C3: no-default set in body");
+    CHECK(mc, 99,  "C3: int default 99");
+
+    // Single assign for safe_div (access fields by name)
+    sd := safe_div(8, 2);
+    CHECK(sd.quot, 4, "C4: single-assign quot");
+    CHECK(sd.ok,   1, "C4: single-assign ok");
+
+    printf("[PASS] C: default initializers\n");
+}
+
+// ===========================================================================
+// D. Explicit comma-separated return statement
+// ===========================================================================
+
+explicit_ret(int x) int a, int b, int c {
+    a = x;
+    b = x * 2;
+    c = x * 3;
+    return a, b, c;
+}
+
+compute(int x) int doubled, bool big {
+    return x * 2, x > 10;
+}
+
+static void test_explicit_return() {
+    e1, e2, e3 := explicit_ret(5);
+    CHECK(e1, 5,  "D1: return a");
+    CHECK(e2, 10, "D1: return b");
+    CHECK(e3, 15, "D1: return c");
+
+    d, big := compute(15);
+    CHECK(d,   30, "D2: doubled (15)");
+    CHECK(big, 1,  "D2: big 15>10 = true");
+
+    d2, big2 := compute(5);
+    CHECK(d2,   10, "D2: doubled (5)");
+    CHECK(big2, 0,  "D2: big 5>10 = false");
+
+    printf("[PASS] D: explicit comma-separated return\n");
+}
+
+// ===========================================================================
+// E. Destructuring of non-call struct values (the original swizzle)
+// ===========================================================================
+static void test_struct_destructure() {
+    a, b := {10, 20};
+    CHECK(a, 10, "E1: brace destructure 1st");
+    CHECK(b, 20, "E1: brace destructure 2nd");
+
+    c, d, e := {1, 2, 3};
+    CHECK(c, 1, "E2: 3-way brace 1st");
+    CHECK(d, 2, "E2: 3-way brace 2nd");
+    CHECK(e, 3, "E2: 3-way brace 3rd");
+
+    printf("[PASS] E: struct destructuring (non-call)\n");
+}
+
+// ===========================================================================
+// F. Variadic pack size via single-assign multi-return
+//    (avoids double-eval from destructuring a function call)
+// ===========================================================================
+
+var_count(^int... nums) int count, int first_present {
+    return #.nums, (nums[0] != NULL) ? 1 : 0;
+}
+
+static void test_variadic() {
+    v := var_count(^{10}, ^{20}, ^{30});
+    CHECK(v.count, 3, "F1: variadic count is 3");
+    CHECK(v.first_present, 1, "F1: first element present");
+
+    printf("[PASS] F: variadic + multi-return\n");
+}
+
+// ===========================================================================
+// KNOWN ISSUES — tests that should work but currently fail or crash.
+// These are guarded with #if 0 to prevent breaking the test suite.
+// When a fix is implemented, move the test block to the active section
+// and unguard it.
+// ===========================================================================
+
+#if 0
+// ---------------------------------------------------------------------------
+// ISSUE 1: Zero-parameter functions with multi-return.
+//   set_vals() int x, int y { x=42; y=99; }
+// Symptoms: Sema treats x and y as function types ('int ()')
+//           instead of as named return variables.
+// ---------------------------------------------------------------------------
+set_vals() int x, int y {
+    x = 42;
+    y = 99;
+}
+static void test_issue_zero_params() {
+    vx, vy := set_vals();
+    CHECK(vx, 42, "ISSUE-1: zero-param multi-return x");
+    CHECK(vy, 99, "ISSUE-1: zero-param multi-return y");
+    printf("[FIXED] Issue 1: zero-param multi-return\n");
+}
+#endif
+
+#if 0
+// ---------------------------------------------------------------------------
+// ISSUE 2: Multi-return with bool fields crashes in BuildReturnStmt.
+//   triple() int, bool, int { return 1, true, 42; }
+// Symptoms: NULL type pointer assertion during codegen of the return
+//           statement, triggered by the bool anonymous field.
+// ---------------------------------------------------------------------------
+triple() int, bool, int {
+    return 1, true, 42;
+}
+static void test_issue_bool_anon() {
+    t1, t2, t3 := triple();
+    CHECK(t1, 1,  "ISSUE-2: triple 1st (int)");
+    CHECK(t2, 1,  "ISSUE-2: triple 2nd (bool true)");
+    CHECK(t3, 42, "ISSUE-2: triple 3rd (int)");
+    printf("[FIXED] Issue 2: bool anonymous multi-return\n");
+}
+#endif
+
+#if 0
+// ---------------------------------------------------------------------------
+// ISSUE 3: Destructuring a multi-return function call evaluates the call
+//          once per LHS variable (N times for N fields).
+//   cnt, ok := some_func(...)   // func called twice for 2 fields
+// Workaround: use single assign then access fields.
+//   result := some_func(...)
+//   cnt := result._c4_r0; ok := result._c4_r1;
+// ---------------------------------------------------------------------------
+call_once_test(^int... nums) int count, int first {
+    // If this function is called more than once the counter will be wrong.
+    static int call_count = 0;
+    call_count++;
+    return call_count, (nums[0] != NULL) ? 1 : 0;
+}
+static void test_issue_double_call() {
+    // This destructure would call call_once_test twice.
+    c, f := call_once_test(^{10}, ^{20});
+    CHECK(c, 1, "ISSUE-3: function called exactly once (count)");
+    CHECK(f, 1, "ISSUE-3: function called exactly once (first)");
+    printf("[FIXED] Issue 3: destructure call evaluates once\n");
+}
+#endif
+
+#if 0
+// ---------------------------------------------------------------------------
+// ISSUE 4: Nested (local) functions with multi-return.
+//   Inside a function body:  split(int x) int, int { ... }
+// Symptoms: Parser treats 'split(int x)' as an expression, not a
+//           function definition.  The multi-return syntax is only
+//           recognised at file scope.
+// ---------------------------------------------------------------------------
+static void test_issue_nested_multi_return() {
+    divide(int a, int b) int quot, int rem {
+        quot = a / b;
+        rem = a % b;
+    }
+    q, r := divide(10, 3);
+    CHECK(q, 3, "ISSUE-4a: nested named multi-return quot");
+    CHECK(r, 1, "ISSUE-4a: nested named multi-return rem");
+
+    split(int x) int, int {
+        return x / 2, x % 2;
+    }
+    a, b := split(7);
+    CHECK(a, 3, "ISSUE-4b: nested anon multi-return first");
+    CHECK(b, 1, "ISSUE-4b: nested anon multi-return second");
+
+    safe(int a, int b) int quot = -1, int ok = 0 {
+        if (b == 0) return;
+        quot = a / b;
+        ok = 1;
+    }
+    sq, so := safe(10, 0);
+    CHECK(sq, -1, "ISSUE-4c: nested default quot");
+    CHECK(so, 0,  "ISSUE-4c: nested default ok");
+
+    printf("[FIXED] Issue 4: nested function multi-return\n");
+}
+#endif
+
+// ===========================================================================
+// main
+// ===========================================================================
+main () int {
+    printf("=============================================================\n");
+    printf("C4 Multi-Return & Destructuring  —  Regression Tests\n");
+    printf("=============================================================\n\n");
+
+    test_named_fields();
+    test_anonymous();
+    test_default_inits();
+    test_explicit_return();
+    test_struct_destructure();
+    test_variadic();
+
+    printf("\n[SUCCESS] All multi-return & destructuring tests passed!\n");
+    return 0;
+}

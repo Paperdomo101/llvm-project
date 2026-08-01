@@ -2151,6 +2151,19 @@ private:
   const IdentifierInfo *C4NamedReturnII = nullptr;
   SourceLocation C4NamedReturnLoc;
 
+  // C4: Multiple named return values with optional initializers.
+  // E.g.  int i = -1, bool ok = true  at the end of a function signature.
+  struct C4NamedReturnField {
+    IdentifierInfo *Name = nullptr;
+    SourceLocation NameLoc;
+    QualType Type;                  // resolved in Sema
+    Expr *Init = nullptr;            // optional default value
+    // For fields after the first, we store the parsed type spec info.
+    DeclSpec::TST TypeSpecType = DeclSpec::TST_unspecified;
+    SourceLocation TypeSpecLoc;
+  };
+  llvm::SmallVector<C4NamedReturnField, 4> C4NamedReturnFields;
+
   // C4: Identifier aliasing (AddInts / add)
   const IdentifierInfo *C4AliasII = nullptr;
   SourceLocation C4AliasLoc;
@@ -2895,6 +2908,24 @@ public:
   }
   const IdentifierInfo *getC4NamedReturnII() const { return C4NamedReturnII; }
   SourceLocation getC4NamedReturnLoc() const { return C4NamedReturnLoc; }
+
+  void addC4NamedReturnField(IdentifierInfo *Name, SourceLocation NameLoc,
+                              Expr *Init, DeclSpec::TST TypeSpecType,
+                              SourceLocation TypeSpecLoc) {
+    C4NamedReturnField F;
+    F.Name = Name;
+    F.NameLoc = NameLoc;
+    F.Init = Init;
+    F.TypeSpecType = TypeSpecType;
+    F.TypeSpecLoc = TypeSpecLoc;
+    C4NamedReturnFields.push_back(F);
+  }
+  bool hasC4NamedReturnFields() const {
+    return !C4NamedReturnFields.empty();
+  }
+  ArrayRef<C4NamedReturnField> getC4NamedReturnFields() const {
+    return C4NamedReturnFields;
+  }
 
   void setC4Alias(const IdentifierInfo *II, SourceLocation Loc) {
     C4AliasII = II;

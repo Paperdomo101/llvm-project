@@ -6818,6 +6818,23 @@ bool Sema::GatherArgumentsForCall(SourceLocation CallLoc, FunctionDecl *FDecl,
           PackArgs.push_back(Args[ArgIx++]);
           while (ArgIx < Args.size())
             PackArgs.push_back(Args[ArgIx++]);
+          // Resolve OVEs in the packed arguments.
+          if (getLangOpts().C4() && ElemTy->isPointerType()) {
+            QualType PackPointeeTy = ElemTy->getPointeeType();
+            for (Expr *&PA : PackArgs) {
+              Expr *Unwrapped = PA->IgnoreImplicit();
+              if (auto *OVE = dyn_cast<OpaqueValueExpr>(Unwrapped)) {
+                Expr *Src = OVE->getSourceExpr();
+                if (Src) Src = Src->IgnoreImplicit();
+                if (isa_and_nonnull<InitListExpr>(Src)) {
+                  ExprResult Resolved = ActOnC4AddrOfBraceInit(
+                      OVE->getLocation(), PackPointeeTy, cast<InitListExpr>(Src));
+                  if (!Resolved.isInvalid())
+                    PA = Resolved.get();
+                }
+              }
+            }
+          }
           ExprResult Packed =
               BuildC4TypedVariadicArg(PackArgs, ElemTy, CallLoc);
           if (Packed.isInvalid()) {
@@ -6885,11 +6902,13 @@ bool Sema::GatherArgumentsForCall(SourceLocation CallLoc, FunctionDecl *FDecl,
       // OpaqueValueExpr wrapping an InitListExpr and the parameter is a
       // pointer, synthesise &(PointeeType){init_list}.
       if (getLangOpts().C4() && ProtoArgType->isPointerType()) {
-        if (auto *OVE = dyn_cast<OpaqueValueExpr>(Arg)) {
-          if (auto *ILE = dyn_cast_or_null<InitListExpr>(
-                  OVE->getSourceExpr()->IgnoreImplicit())) {
+        Expr *Unwrapped = Arg->IgnoreImplicit();
+        if (auto *OVE = dyn_cast<OpaqueValueExpr>(Unwrapped)) {
+          Expr *Src = OVE->getSourceExpr();
+          if (Src)
+            Src = Src->IgnoreImplicit();
+          if (auto *ILE = dyn_cast_or_null<InitListExpr>(Src)) {
             QualType PointeeTy = ProtoArgType->getPointeeType();
-            // Call the same helper used by the type-inferred caret path.
             ExprResult Resolved =
                 ActOnC4AddrOfBraceInit(OVE->getLocation(), PointeeTy, ILE);
             if (!Resolved.isInvalid())

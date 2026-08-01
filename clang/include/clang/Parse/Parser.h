@@ -2777,6 +2777,8 @@ private:
                                BalancedDelimiterTracker &Tracker,
                                bool IsAmbiguous, bool RequiresArg = false);
   bool ParseC4NamedFunctionPointerDeclarator(Declarator &D);
+  void ParseC4NamedReturnFields(Declarator &D);
+  void ParseC4AnonymousReturnFields(Declarator &D);
   void InitCXXThisScopeForDeclaratorIfRelevant(
       const Declarator &D, const DeclSpec &DS,
       std::optional<Sema::CXXThisScopeRAII> &ThisScope);
@@ -7437,6 +7439,7 @@ public:
                                 bool MissingCase = false,
                                 ExprResult Expr = ExprResult());
   bool isC4CaseLabel();
+  bool isC4NestedFunctionDefinition();
   bool isC4File();
 
   /// ParseDefaultStatement

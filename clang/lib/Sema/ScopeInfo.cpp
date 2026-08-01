@@ -41,6 +41,8 @@ void FunctionScopeInfo::Clear() {
   FirstVLALoc = SourceLocation();
   FoundImmediateEscalatingExpression = false;
   C4NamedReturnII = nullptr;
+  C4MultiReturnVars.clear();
+  C4MultiReturnStructTy = QualType();
 
   // Coroutine state
   FirstCoroutineStmtLoc = SourceLocation();
