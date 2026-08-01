@@ -7205,21 +7205,30 @@ StmtResult Sema::ActOnMultiTypeInferredAssignment(Scope *S,
       return StmtError();
     }
 
-    // Store the call result in a compound literal so multiple field
-    // accesses share the same evaluation.
-    TypeSourceInfo *TSI =
-        Context.getTrivialTypeSourceInfo(StructTy, E->getBeginLoc());
-    ExprResult CLE = BuildCompoundLiteralExpr(E->getBeginLoc(), TSI,
-                                               E->getEndLoc(), E);
-    if (CLE.isInvalid()) return StmtError();
+    // Create a temporary variable to hold the call result so it is
+    // evaluated exactly once, then reference it in member accesses.
+    IdentifierInfo &TmpII = Context.Idents.get("__c4_multiret_tmp");
+    VarDecl *TmpVD = VarDecl::Create(
+        Context, CurContext, E->getBeginLoc(), E->getBeginLoc(),
+        &TmpII, StructTy,
+        Context.getTrivialTypeSourceInfo(StructTy, E->getBeginLoc()),
+        SC_None);
+    if (!isa<TranslationUnitDecl>(CurContext))
+      TmpVD->setLocalExternDecl();
+    PushOnScopeChains(TmpVD, S);
+    AddInitializerToDecl(TmpVD, E, /*DirectInit=*/false);
 
     SmallVector<Decl *, 4> DeclsInGroup2;
+    DeclsInGroup2.push_back(TmpVD);
     for (unsigned i = 0; i < Vars.size(); ++i) {
       FieldDecl *FD = StructFields[i];
       DeclarationNameInfo NameInfo(FD->getIdentifier(), E->getBeginLoc());
       bool HadMC = false;
+      ExprResult TmpRef = BuildDeclRefExpr(TmpVD, StructTy, VK_LValue,
+                                            E->getBeginLoc());
+      if (TmpRef.isInvalid()) return StmtError();
       ExprResult SubInitExpr = BuildMemberExpr(
-          CLE.get(), /*IsArrow=*/false, E->getBeginLoc(),
+          TmpRef.get(), /*IsArrow=*/false, E->getBeginLoc(),
           NestedNameSpecifierLoc(), SourceLocation(), FD,
           DeclAccessPair::make(FD, FD->getAccess()),
           HadMC, NameInfo, FD->getType(), VK_LValue, OK_Ordinary);

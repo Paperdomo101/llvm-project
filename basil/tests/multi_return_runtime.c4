@@ -217,7 +217,7 @@ static void test_issue_bool_anon() {
 }
 #endif
 
-#if 0
+#if 1
 // ---------------------------------------------------------------------------
 // ISSUE 3: Destructuring a multi-return function call evaluates the call
 //          once per LHS variable (N times for N fields).
@@ -241,16 +241,15 @@ static void test_issue_double_call() {
 }
 #endif
 
-#if 0
+#if 1
 // ---------------------------------------------------------------------------
 // ISSUE 4: Nested (local) functions with multi-return.
-//   Inside a function body:  split(int x) int, int { ... }
-// Symptoms: Parser treats 'split(int x)' as an expression, not a
-//           function definition.  The multi-return syntax is only
-//           recognised at file scope.
+//   Inside a function body:  split := ^(int x) int, int { ... }
+// Symptoms: The ^ block literal parser didn't handle multi-return
+//           fields after the trailing return type.
 // ---------------------------------------------------------------------------
 static void test_issue_nested_multi_return() {
-    divide(int a, int b) int quot, int rem {
+    divide := ^(int a, int b) int quot, int rem {
         quot = a / b;
         rem = a % b;
     }
@@ -258,14 +257,14 @@ static void test_issue_nested_multi_return() {
     CHECK(q, 3, "ISSUE-4a: nested named multi-return quot");
     CHECK(r, 1, "ISSUE-4a: nested named multi-return rem");
 
-    split(int x) int, int {
+    split := ^(int x) int, int {
         return x / 2, x % 2;
     }
     a, b := split(7);
     CHECK(a, 3, "ISSUE-4b: nested anon multi-return first");
     CHECK(b, 1, "ISSUE-4b: nested anon multi-return second");
 
-    safe(int a, int b) int quot = -1, int ok = 0 {
+    safe := ^(int a, int b) int quot = -1, int ok = 0 {
         if (b == 0) return;
         quot = a / b;
         ok = 1;
@@ -292,6 +291,8 @@ main () int {
     test_explicit_return();
     test_struct_destructure();
     test_variadic();
+    test_issue_double_call();
+    test_issue_nested_multi_return();
 
     printf("\n[SUCCESS] All multi-return & destructuring tests passed!\n");
     return 0;

@@ -19749,8 +19749,81 @@ void Sema::ActOnBlockArguments(SourceLocation CaretLoc, Declarator &ParamInfo,
       PushOnScopeChains(NewVD, CurBlock->TheScope);
     }
   }
-}
 
+  // C4: Multi-return fields for block literals.
+  if (getLangOpts().C4() && ParamInfo.hasC4NamedReturnFields() &&
+      (ParamInfo.getC4NamedReturnFields().size() > 1 ||
+       ParamInfo.getC4NamedReturnFields()[0].Init)) {
+    auto Fields = ParamInfo.getC4NamedReturnFields();
+    SmallVector<QualType, 4> FieldTypes;
+    for (unsigned I = 0; I < Fields.size(); ++I) {
+      QualType Ty;
+      if (I == 0) {
+        Ty = CurBlock->ReturnType;
+        if (Ty.isNull() || Ty == Context.DependentTy)
+          Ty = Context.VoidTy;
+      } else {
+        switch (Fields[I].TypeSpecType) {
+        case DeclSpec::TST_int: Ty = Context.IntTy; break;
+        case DeclSpec::TST_bool: Ty = Context.BoolTy; break;
+        case DeclSpec::TST_char: Ty = Context.CharTy; break;
+        case DeclSpec::TST_float: Ty = Context.FloatTy; break;
+        case DeclSpec::TST_double: Ty = Context.DoubleTy; break;
+        default: Ty = Context.IntTy; break;
+        }
+      }
+      FieldTypes.push_back(Ty);
+    }
+    RecordDecl *RD = RecordDecl::Create(
+        Context, TagDecl::TagKind::Struct,
+        Context.getTranslationUnitDecl(),
+        CurBlock->TheDecl->getLocation(), CurBlock->TheDecl->getLocation(), nullptr);
+    RD->startDefinition();
+    for (unsigned I = 0; I < Fields.size(); ++I) {
+      FieldDecl *FiD = FieldDecl::Create(
+          Context, RD, Fields[I].NameLoc, Fields[I].NameLoc,
+          Fields[I].Name, FieldTypes[I], nullptr, nullptr, false,
+          ICIS_NoInit);
+      FiD->setAccess(AS_public);
+      RD->addDecl(FiD);
+    }
+    RD->completeDefinition();
+    QualType StructTy = Context.getTypeDeclType(cast<TypeDecl>(RD));
+    CurBlock->C4MultiReturnStructTy = StructTy;
+    CurBlock->ReturnType = StructTy;
+    CurBlock->TheDecl->setBlockMissingReturnType(false);
+    CurBlock->HasImplicitReturnType = false;
+
+    if (!CurBlock->FunctionType.isNull()) {
+      const FunctionProtoType *FPT = CurBlock->FunctionType->getAs<FunctionProtoType>();
+      if (FPT) {
+        FunctionProtoType::ExtProtoInfo EPI = FPT->getExtProtoInfo();
+        CurBlock->FunctionType = Context.getFunctionType(
+            StructTy, FPT->getParamTypes(), EPI);
+      }
+    }
+
+    SmallVector<FieldDecl*, 8> SFields;
+    if (const auto *RD2 = StructTy->getAsRecordDecl())
+      for (auto *D2 : RD2->decls())
+        if (auto *FiD = dyn_cast<FieldDecl>(D2))
+          SFields.push_back(FiD);
+    for (unsigned I = 0; I < Fields.size() && I < SFields.size(); ++I) {
+      QualType FieldTy = SFields[I]->getType();
+      VarDecl *NewVD = VarDecl::Create(
+          Context, CurBlock->TheDecl, Fields[I].NameLoc, Fields[I].NameLoc,
+          Fields[I].Name, FieldTy,
+          Context.getTrivialTypeSourceInfo(FieldTy, Fields[I].NameLoc),
+          SC_None);
+      if (Fields[I].Init)
+        NewVD->setInit(Fields[I].Init);
+      else
+        NewVD->setInit(new (Context) ImplicitValueInitExpr(FieldTy));
+      PushOnScopeChains(NewVD, CurBlock->TheScope);
+      CurBlock->C4MultiReturnVars.push_back(NewVD);
+    }
+  }
+}
 void Sema::ActOnBlockError(SourceLocation CaretLoc, Scope *CurScope) {
   // Leave the expression-evaluation context.
   DiscardCleanupsInEvaluationContext();
@@ -19814,6 +19887,39 @@ ExprResult Sema::ActOnBlockStmtExpr(SourceLocation CaretLoc,
             Stmts.push_back(RetStmt.get());
             Body = CompoundStmt::Create(Context, Stmts, FPOptionsOverride(), CS->getLBracLoc(), CS->getRBracLoc());
           }
+        }
+      }
+    }
+  }
+
+  // C4: Multi-return body handling for block literals.
+  if (getLangOpts().C4() && !BSI->C4MultiReturnVars.empty() && Body) {
+    SourceLocation EndLoc = Body->getEndLoc();
+    SmallVector<Expr *, 4> FieldExprs;
+    for (VarDecl *VD : BSI->C4MultiReturnVars) {
+      ExprResult Ref =
+          BuildDeclRefExpr(VD, VD->getType(), VK_LValue, EndLoc);
+      if (Ref.isInvalid()) break;
+      FieldExprs.push_back(Ref.get());
+    }
+    if (FieldExprs.size() == BSI->C4MultiReturnVars.size() &&
+        !BSI->C4MultiReturnStructTy.isNull()) {
+      InitListExpr *ILE = new (Context)
+          InitListExpr(Context, EndLoc, FieldExprs, EndLoc, /*Synthetic=*/false);
+      ILE->setType(BSI->C4MultiReturnStructTy);
+      StmtResult RetStmt = BuildReturnStmt(EndLoc, ILE);
+      if (!RetStmt.isInvalid()) {
+        if (CompoundStmt *CS = dyn_cast<CompoundStmt>(Body)) {
+          SmallVector<Stmt *, 16> Stmts;
+          for (VarDecl *VD : BSI->C4MultiReturnVars) {
+            DeclStmt *DS = new (Context)
+                DeclStmt(DeclGroupRef(VD), VD->getLocation(), VD->getLocation());
+            Stmts.push_back(DS);
+          }
+          Stmts.insert(Stmts.end(), CS->body_begin(), CS->body_end());
+          Stmts.push_back(RetStmt.get());
+          Body = CompoundStmt::Create(Context, Stmts, FPOptionsOverride(),
+                                      CS->getLBracLoc(), CS->getRBracLoc());
         }
       }
     }
