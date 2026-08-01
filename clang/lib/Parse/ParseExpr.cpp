@@ -1137,27 +1137,32 @@ ExprResult Parser::ParseMethodDispatch(
     ExprVector ArgExprs;
     bool ExpressionListIsInvalid = false;
 
-    // C4: set up PreferredType for argument parsing so implicit dot (.member)
-    // can resolve the expected enum type.  The receiver is prepended later,
-    // so argument 0 maps to the first non-embed parameter.
+    // C4: set up PreferredType for argument parsing so that:
+    //   - implicit dot (.member) can resolve the expected enum type
+    //   - ^{ expr } can infer the compound-literal pointee type
     if (getLangOpts().C4() && Callee.isUsable() && Tok.isNot(tok::r_paren)) {
       if (auto *DRE = dyn_cast<DeclRefExpr>(Callee.get()->IgnoreParenImpCasts())) {
         if (auto *FD = dyn_cast<FunctionDecl>(DRE->getDecl())) {
-          // Find the first non-embed parameter (index 1 after receiver injection).
+          // Collect parameter types for all non-embed parameters.
+          SmallVector<QualType, 4> ParamTypes;
           for (unsigned P = 0; P < FD->getNumParams(); ++P) {
             ParmVarDecl *PVD = FD->getParamDecl(P);
             if (PVD->isC4Embed()) continue;
             QualType ParamTy = PVD->getType();
-            // For typed variadics (lowered to []T), extract element type.
             if (PVD->isC4TypedVariadic() && Actions.isC4ArrayType(ParamTy))
               ParamTy = Actions.getElementTypeFromC4Array(ParamTy);
-            QualType PreferredParamTy = ParamTy;
-            auto RunSH = [PreferredParamTy]() -> QualType { return PreferredParamTy; };
-            ExpressionListIsInvalid = ParseExpressionList(ArgExprs, [&] {
-              PreferredType.enterFunctionArgument(Tok.getLocation(), RunSH);
-            });
-            break;
+            ParamTypes.push_back(ParamTy);
           }
+          // Per-argument callback: returns the type for the current argument.
+          unsigned ArgIdx = 0;
+          auto RunSH = [&]() -> QualType {
+            if (ArgIdx < ParamTypes.size())
+              return ParamTypes[ArgIdx++];
+            return QualType();
+          };
+          ExpressionListIsInvalid = ParseExpressionList(ArgExprs, [&] {
+            PreferredType.enterFunctionArgument(Tok.getLocation(), RunSH);
+          });
         }
       }
     }
@@ -2706,9 +2711,17 @@ case tok::period: {
     return ParseObjCAtExpression(AtLoc);
   }
   case tok::caret: {
+    const Token &Next = NextToken();
+    // C4: ^ followed by { is address-of-inferred-type, not a block literal.
+    if (getLangOpts().C4() && Next.is(tok::l_brace)) {
+      SourceLocation CaretLoc = ConsumeToken(); // consume '^'
+      ExprResult Init = ParseBraceInitializer();
+      if (Init.isInvalid())
+        return ExprError();
+      return Actions.ActOnC4AddrOfBraceInit(CaretLoc, QualType(), Init.get());
+    }
     // C4: ^expr is address-of (equivalent to C's &expr) unless the caret is
     // immediately followed by '(' or '{', which introduce a block literal.
-    const Token &Next = NextToken();
     if (Next.isNot(tok::l_paren) && Next.isNot(tok::l_brace)) {
       SourceLocation CaretLoc = ConsumeToken(); // consume '^'
       ExprResult Operand = ParseCastExpression(CastParseKind::AnyCastExpr,

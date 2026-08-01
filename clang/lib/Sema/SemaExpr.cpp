@@ -6881,6 +6881,23 @@ bool Sema::GatherArgumentsForCall(SourceLocation CallLoc, FunctionDecl *FDecl,
       }
       // ============================================================================
 
+      // C4: Resolve ^{ expr } placeholders. When the argument is an
+      // OpaqueValueExpr wrapping an InitListExpr and the parameter is a
+      // pointer, synthesise &(PointeeType){init_list}.
+      if (getLangOpts().C4() && ProtoArgType->isPointerType()) {
+        if (auto *OVE = dyn_cast<OpaqueValueExpr>(Arg)) {
+          if (auto *ILE = dyn_cast_or_null<InitListExpr>(
+                  OVE->getSourceExpr()->IgnoreImplicit())) {
+            QualType PointeeTy = ProtoArgType->getPointeeType();
+            // Call the same helper used by the type-inferred caret path.
+            ExprResult Resolved =
+                ActOnC4AddrOfBraceInit(OVE->getLocation(), PointeeTy, ILE);
+            if (!Resolved.isInvalid())
+              Arg = Resolved.get();
+          }
+        }
+      }
+
 
       if (RequireCompleteType(Arg->getBeginLoc(), ProtoArgType,
                               diag::err_call_incomplete_argument, Arg))
@@ -8406,6 +8423,10 @@ Sema::BuildCompoundLiteralExpr(SourceLocation LParenLoc, TypeSourceInfo *TInfo,
                diag::err_typecheck_decl_incomplete_type,
                SourceRange(LParenLoc, LiteralExpr->getSourceRange().getEnd())))
     return ExprError();
+
+  // C4: rewrite StringLiteral sub-inits in struct fields that are []char.
+  if (getLangOpts().C4())
+    RewriteC4StringLiteralsInStructInit(literalType, LiteralExpr);
 
   InitializedEntity Entity
     = InitializedEntity::InitializeCompoundLiteralInit(TInfo);
@@ -16852,6 +16873,90 @@ ExprResult Sema::ActOnC4CapacityOf(Expr *SubExpr, SourceLocation OpLoc) {
                                   /*S=*/getCurScope());
 }
 
+
+ExprResult Sema::ActOnC4AddrOfBraceInit(SourceLocation CaretLoc,
+                                         QualType PointeeTy, Expr *Init) {
+  if (!Init)
+    return ExprError();
+
+  if (PointeeTy.isNull()) {
+    // Type not yet known — create a placeholder that will be resolved
+    // during initialization when the expected type is available.
+    OpaqueValueExpr *OVE = new (Context)
+        OpaqueValueExpr(CaretLoc, Init->getType(), VK_PRValue,
+                        OK_Ordinary, Init);
+    return OVE;
+  }
+
+  // Type is known: synthesise (PointeeTy){Init} as a compound literal.
+  TypeSourceInfo *TInfo = Context.getTrivialTypeSourceInfo(PointeeTy, CaretLoc);
+  ExprResult CLE = BuildCompoundLiteralExpr(CaretLoc, TInfo, CaretLoc, Init);
+  if (CLE.isInvalid())
+    return ExprError();
+
+  // Take the address: &(PointeeTy){Init}
+  return BuildUnaryOp(getCurScope(), CaretLoc, UO_AddrOf, CLE.get());
+}
+
+void Sema::RewriteC4StringLiteralsInStructInit(QualType StructTy, Expr *Init) {
+  if (!getLangOpts().C4() || StructTy.isNull() || !Init)
+    return;
+
+  const RecordDecl *RD = StructTy->getAsRecordDecl();
+  if (!RD)
+    return;
+
+  Expr *InitExpr = Init->IgnoreImplicit();
+  auto *ILE = dyn_cast<InitListExpr>(InitExpr);
+  if (!ILE)
+    return;
+
+  SmallVector<FieldDecl *, 16> Fields;
+  for (auto *D : RD->decls())
+    if (auto *FD = dyn_cast<FieldDecl>(D))
+      Fields.push_back(FD);
+
+  if (ILE->hasDesignatedInit()) {
+    for (unsigned I = 0, N = ILE->getNumInits(); I < N; ++I) {
+      auto *DIE = dyn_cast<DesignatedInitExpr>(ILE->getInit(I));
+      if (!DIE || DIE->size() != 1)
+        continue;
+      const DesignatedInitExpr::Designator *D = DIE->getDesignator(0);
+      if (!D->isFieldDesignator())
+        continue;
+      const IdentifierInfo *FieldName = D->getFieldName();
+      if (!FieldName)
+        continue;
+      FieldDecl *FD = nullptr;
+      for (auto *F : Fields)
+        if (F->getIdentifier() == FieldName) {
+          FD = F;
+          break;
+        }
+      if (!FD || !isC4ArrayType(FD->getType()))
+        continue;
+      Expr *SubInit = DIE->getInit();
+      if (auto *SL = dyn_cast<StringLiteral>(SubInit->IgnoreImplicit())) {
+        if (InitListExpr *NewSub =
+                BuildC4ArrayFromStringLiteral(SL, FD->getType()))
+          DIE->setInit(NewSub);
+      }
+    }
+  } else {
+    unsigned MaxF = (unsigned)Fields.size();
+    for (unsigned I = 0, N = ILE->getNumInits(); I < N && I < MaxF; ++I) {
+      FieldDecl *FD = Fields[I];
+      if (!isC4ArrayType(FD->getType()))
+        continue;
+      Expr *SubInit = ILE->getInit(I)->IgnoreImplicit();
+      if (auto *SL = dyn_cast<StringLiteral>(SubInit)) {
+        if (InitListExpr *NewSub =
+                BuildC4ArrayFromStringLiteral(SL, FD->getType()))
+          ILE->setInit(I, NewSub);
+      }
+    }
+  }
+}
 
 ExprResult Sema::ActOnCapacityOfExpr(SourceLocation OpLoc, TypeSourceInfo *TInfo) {
   if (!TInfo) return ExprError();

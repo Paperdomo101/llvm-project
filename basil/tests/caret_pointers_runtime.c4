@@ -35,6 +35,10 @@ struct Node {
     ^Node next;
 };
 
+// Structs used by the type-inferred address-of brace-init tests.
+struct S16 { int x; int y; };
+struct NameId { []char name; int id; };
+
 // Receives &^Node (reference to a ^Node pointer) and inserts at head.
 void insert_at_head(&^Node head, ^Node node_to_insert) {
     node_to_insert.next = head;
@@ -355,6 +359,44 @@ main () int {
         CHECK(head.next.value, 10, "S15: head.next is n1");
 
         printf("[PASS] Scenario 15: Passing pointer by reference (&^Node)\n");
+    }
+
+    // =========================================================================
+    // SCENARIO 16: Type-inferred address-of brace-init ^{ expr }
+    //              with positional and designated initializers.
+    // =========================================================================
+    {
+        // Helper that expects a ^int
+        add_one := ^(^int p) int { return (*p) + 1; };
+        int r16a = add_one(^{42});
+        CHECK(r16a, 43, "S16a: ^{42} infers int* from ^int param");
+
+        // Struct with ^S16 parameter
+        sum_s16 := ^(^S16 p) int { return p.x + p.y; };
+        int r16b = sum_s16(^{.x=10, .y=20});
+        CHECK(r16b, 30, "S16b: ^{.x=10,.y=20} with designated init");
+
+        // Positional init
+        int r16c = sum_s16(^{5, 7});
+        CHECK(r16c, 12, "S16c: ^{5,7} with positional init");
+
+        printf("[PASS] Scenario 16: Type-inferred address-of brace-init\n");
+    }
+
+    // =========================================================================
+    // SCENARIO 17: ^{} with C4 array string-literal field
+    // =========================================================================
+    {
+        []char greet = "hello";
+        CHECK((int)greet.count, 5, "S17a: []char = count");
+        CHECK(greet[0], 'h', "S17b: greet[0]");
+
+        // ^{} with NameId (has []char field) containing a string literal
+        name_len := ^(^NameId p) int { return (int)p.name.count; };
+        int r17 = name_len(^{.name="Jacob", .id=100});
+        CHECK(r17, 5, "S17c: ^{.name=\"Jacob\"} name.count == 5");
+
+        printf("[PASS] Scenario 17: ^{} with []char string-literal field\n");
     }
 
     printf("\n[SUCCESS] All pointer-syntax and sized-array tests passed!\n");

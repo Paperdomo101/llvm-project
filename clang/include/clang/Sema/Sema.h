@@ -2640,6 +2640,17 @@ public:
   ExprResult ActOnArraySizeIntrinsic(Expr *SubExpr, SourceLocation HashLoc, SourceLocation PeriodLoc);
   ExprResult ActOnC4CapacityOf(Expr *SubExpr, SourceLocation OpLoc);
 
+  // C4: Address-of brace-init with type inference.
+  // Used for:  ^{ .name="Kate", .age=27 }
+  // Infers the pointee type from context and creates &(Type){...init...}.
+  ExprResult ActOnC4AddrOfBraceInit(SourceLocation CaretLoc, QualType PointeeTy,
+                                    Expr *Init);
+
+  // C4: Rewrite StringLiteral sub-inits inside struct InitListExprs whose
+  // fields are C4 arrays ([]char). Used by variable decls and compound
+  // literals to convert e.g. {.name = "Kate"} where name is []char.
+  void RewriteC4StringLiteralsInStructInit(QualType StructTy, Expr *Init);
+
   ExprResult ActOnCapacityOfExpr(SourceLocation OpLoc, TypeSourceInfo *TInfo);
 
   ExprResult ActOnC4EnumMemberAccess(SourceLocation EnumLoc, IdentifierInfo *EnumII,
