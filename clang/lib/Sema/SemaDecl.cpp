@@ -11790,8 +11790,7 @@ Sema::ActOnFunctionDeclarator(Scope *S, Declarator &D, DeclContext *DC,
   // --- C4: Named return & Identifier aliasing ---
   if (getLangOpts().C4() && NewFD && !NewFD->isInvalidDecl()) {
     if (D.hasC4NamedReturnFields() &&
-        (D.getC4NamedReturnFields().size() > 1 ||
-         D.getC4NamedReturnFields()[0].Init)) {
+        D.getC4NamedReturnFields().size() > 1) {
       // Multi-return: synthesize the return struct type now, BEFORE
       // the function body is parsed (avoids double-call from setType).
       auto Fields = D.getC4NamedReturnFields();
@@ -16913,8 +16912,7 @@ Sema::ActOnStartOfFunctionDef(Scope *FnBodyScope, Declarator &D,
                                                                         Bases);
 
   if (getLangOpts().C4() && D.hasC4NamedReturnFields() &&
-      (D.getC4NamedReturnFields().size() > 1 ||
-       D.getC4NamedReturnFields()[0].Init)) {
+      D.getC4NamedReturnFields().size() > 1) {
     if (FunctionDecl *FD = dyn_cast_if_present<FunctionDecl>(Dcl)) {
       auto Fields = D.getC4NamedReturnFields();
       // The struct type was already created in ActOnFunctionDeclarator.
@@ -16958,8 +16956,15 @@ Sema::ActOnStartOfFunctionDef(Scope *FnBodyScope, Declarator &D,
                                         FD->getReturnType(),
                                         Context.getTrivialTypeSourceInfo(FD->getReturnType(), D.getC4NamedReturnLoc()),
                                         SC_None);
-        ImplicitValueInitExpr *Init = new (Context) ImplicitValueInitExpr(FD->getReturnType());
-        NewVD->setInit(Init);
+        // Use the field's init expression if a single-field named return has one
+        // (e.g. '^Person result = NULL').
+        if (D.hasC4NamedReturnFields() && D.getC4NamedReturnFields().size() == 1 &&
+            D.getC4NamedReturnFields()[0].Init) {
+          NewVD->setInit(D.getC4NamedReturnFields()[0].Init);
+        } else {
+          ImplicitValueInitExpr *Init = new (Context) ImplicitValueInitExpr(FD->getReturnType());
+          NewVD->setInit(Init);
+        }
         PushOnScopeChains(NewVD, FnBodyScope);
       }
     }

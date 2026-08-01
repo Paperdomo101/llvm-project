@@ -6977,7 +6977,9 @@ void Parser::ParseC4NamedReturnFields(Declarator &D) {
                              NextDS.getTypeSpecTypeLoc());
   }
 
-  if (D.getC4NamedReturnFields().size() == 1 && !InitResult.isUsable()) {
+  // Single-field named returns always set C4NamedReturnII so Sema uses
+  // the named-return path.  The fields are kept for the init expression.
+  if (D.getC4NamedReturnFields().size() == 1) {
     D.setC4NamedReturn(NameII, NameLoc);
   }
 }

@@ -6917,6 +6917,32 @@ bool Sema::GatherArgumentsForCall(SourceLocation CallLoc, FunctionDecl *FDecl,
         }
       }
 
+      // C4: Promote string literals to &[]char (or ^[]char) parameters.
+      if (getLangOpts().C4() && ProtoArgType->isPointerType()) {
+        QualType PointeeTy = ProtoArgType->getPointeeType();
+        if (isC4ArrayType(PointeeTy)) {
+          Expr *Unwrapped = Arg->IgnoreImplicit();
+          if (auto *SL = dyn_cast<StringLiteral>(Unwrapped)) {
+            QualType ElemTy = getElementTypeFromC4Array(PointeeTy);
+            if (!ElemTy.isNull() && ElemTy->isCharType()) {
+              if (InitListExpr *C4Init =
+                      BuildC4ArrayFromStringLiteral(SL, PointeeTy)) {
+                TypeSourceInfo *TInfo = Context.getTrivialTypeSourceInfo(
+                    PointeeTy, SL->getBeginLoc());
+                ExprResult CLE = BuildCompoundLiteralExpr(
+                    SL->getBeginLoc(), TInfo, SL->getEndLoc(), C4Init);
+                if (!CLE.isInvalid()) {
+                  ExprResult AddrOf = BuildUnaryOp(
+                      getCurScope(), SL->getBeginLoc(), UO_AddrOf, CLE.get());
+                  if (!AddrOf.isInvalid())
+                    Arg = AddrOf.get();
+                }
+              }
+            }
+          }
+        }
+      }
+
 
       if (RequireCompleteType(Arg->getBeginLoc(), ProtoArgType,
                               diag::err_call_incomplete_argument, Arg))
@@ -19744,16 +19770,20 @@ void Sema::ActOnBlockArguments(SourceLocation CaretLoc, Declarator &ParamInfo,
                                       CurBlock->ReturnType,
                                       Context.getTrivialTypeSourceInfo(CurBlock->ReturnType, ParamInfo.getC4NamedReturnLoc()),
                                       SC_None);
-      ImplicitValueInitExpr *Init = new (Context) ImplicitValueInitExpr(CurBlock->ReturnType);
-      NewVD->setInit(Init);
+      if (ParamInfo.hasC4NamedReturnFields() && ParamInfo.getC4NamedReturnFields().size() == 1 &&
+          ParamInfo.getC4NamedReturnFields()[0].Init) {
+        NewVD->setInit(ParamInfo.getC4NamedReturnFields()[0].Init);
+      } else {
+        ImplicitValueInitExpr *Init = new (Context) ImplicitValueInitExpr(CurBlock->ReturnType);
+        NewVD->setInit(Init);
+      }
       PushOnScopeChains(NewVD, CurBlock->TheScope);
     }
   }
 
   // C4: Multi-return fields for block literals.
   if (getLangOpts().C4() && ParamInfo.hasC4NamedReturnFields() &&
-      (ParamInfo.getC4NamedReturnFields().size() > 1 ||
-       ParamInfo.getC4NamedReturnFields()[0].Init)) {
+      ParamInfo.getC4NamedReturnFields().size() > 1) {
     auto Fields = ParamInfo.getC4NamedReturnFields();
     SmallVector<QualType, 4> FieldTypes;
     for (unsigned I = 0; I < Fields.size(); ++I) {
