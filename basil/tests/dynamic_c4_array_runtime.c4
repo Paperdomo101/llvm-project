@@ -150,6 +150,62 @@ static void test_element_types() {
     printf("[PASS] F: different element types\n");
 }
 
+// ---------------------------------------------------------------------------
+// G. []char var = "literal"  — no explicit capacity, count/capacity = strlen
+// ---------------------------------------------------------------------------
+static void test_string_literal_no_capacity() {
+    []char a = "Hello";
+    chk(#.a,  5, "str-lit []char: count");
+    chk(##.a, 5, "str-lit []char: capacity");
+
+    []char b = "";
+    chk(#.b,  0, "str-lit []char empty: count");
+    chk(##.b, 0, "str-lit []char empty: capacity");
+
+    // Verify content is accessible.
+    chk(a[0], 'H', "str-lit []char: a[0]");
+    chk(a[4], 'o', "str-lit []char: a[4]");
+
+    printf("[PASS] G: []char var = \"literal\"\n");
+}
+
+// ---------------------------------------------------------------------------
+// H. [capacity]char var = "literal"  — explicit capacity, count = strlen
+// ---------------------------------------------------------------------------
+static void test_string_literal_with_capacity() {
+    // String shorter than capacity.
+    [10]char a = "Hi";
+    chk(#.a,   2, "str-lit [10]char: count");
+    chk(##.a, 10, "str-lit [10]char: capacity");
+
+    // String exactly equal to capacity.
+    [5]char b = "Hello";
+    chk(#.b,  5, "str-lit [5]char exact: count");
+    chk(##.b, 5, "str-lit [5]char exact: capacity");
+
+    // Verify content is accessible.
+    chk(a[0], 'H', "str-lit [10]char: a[0]");
+    chk(a[1], 'i', "str-lit [10]char: a[1]");
+    chk(b[0], 'H', "str-lit [5]char: b[0]");
+    chk(b[4], 'o', "str-lit [5]char: b[4]");
+
+    printf("[PASS] H: [capacity]char var = \"literal\"\n");
+}
+
+// ---------------------------------------------------------------------------
+// I. Type-inferred := with string literal (sanity check)
+// ---------------------------------------------------------------------------
+static void test_string_literal_inferred() {
+    s := "World";
+    chk(#.s,  5, "str-lit :=: count");
+    chk(##.s, 5, "str-lit :=: capacity");
+
+    chk(s[0], 'W', "str-lit :=: s[0]");
+    chk(s[4], 'd', "str-lit :=: s[4]");
+
+    printf("[PASS] I: inferred := with string literal\n");
+}
+
 int main() {
     test_uninit();
     test_empty_init();
@@ -158,6 +214,9 @@ int main() {
     test_c_vla_size(13);
     test_static_size();
     test_element_types();
+    test_string_literal_no_capacity();
+    test_string_literal_with_capacity();
+    test_string_literal_inferred();
 
     printf("\n[SUCCESS] All dynamic C4 array runtime tests passed.\n");
     return 0;

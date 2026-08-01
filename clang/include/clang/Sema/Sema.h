@@ -2617,7 +2617,7 @@ public:
   InitListExpr* BuildC4ArrayFromInitList(InitListExpr *ILE, QualType C4Type, unsigned Capacity = 0);
 
   /// Build a CompoundLiteralExpr of the C4 array struct from a StringLiteral.
-  InitListExpr* BuildC4ArrayFromStringLiteral(StringLiteral *SL, QualType C4Type);
+  InitListExpr* BuildC4ArrayFromStringLiteral(StringLiteral *SL, QualType C4Type, unsigned Capacity = 0);
 
   ExprResult BuildC4DynamicArrayInit(VarDecl *VD, Expr *SizeExpr);
 

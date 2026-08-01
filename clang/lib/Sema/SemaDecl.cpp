@@ -14516,7 +14516,7 @@ void Sema::AddInitializerToDecl(Decl *RealDecl, Expr *Init, bool DirectInit) {
           if (auto *ILE = dyn_cast<InitListExpr>(SynthSrc)) {
             NewInit = BuildC4ArrayFromInitList(ILE, VarType, SynthCapacity);
           } else if (auto *SL = dyn_cast<StringLiteral>(SynthSrc)) {
-            NewInit = BuildC4ArrayFromStringLiteral(SL, VarType);
+            NewInit = BuildC4ArrayFromStringLiteral(SL, VarType, SynthCapacity);
           } else {
             Diag(InitExpr->getBeginLoc(), diag::err_cannot_create_c4_array);
             return;
@@ -14529,6 +14529,66 @@ void Sema::AddInitializerToDecl(Decl *RealDecl, Expr *Init, bool DirectInit) {
         } else {
           Diag(InitExpr->getBeginLoc(), diag::err_cannot_create_c4_array);
           return;
+        }
+      } else if (VarType->isStructureType() || VarType->isUnionType()) {
+        // Rewrite StringLiteral inits inside structs when a field is a
+        // C4 array ([]char) and its initializer is a StringLiteral.
+        const RecordDecl *RD = VarType->getAsRecordDecl();
+        if (RD && Init) {
+          Expr *InitExpr = Init->IgnoreImplicit();
+          if (auto *ILE = dyn_cast<InitListExpr>(InitExpr)) {
+            SmallVector<FieldDecl *, 16> Fields;
+            for (auto *D : RD->decls())
+              if (auto *FD = dyn_cast<FieldDecl>(D))
+                Fields.push_back(FD);
+
+            bool HasDesignated = ILE->hasDesignatedInit();
+
+            if (HasDesignated) {
+              for (unsigned I = 0, N = ILE->getNumInits(); I < N; ++I) {
+                auto *DIE = dyn_cast<DesignatedInitExpr>(ILE->getInit(I));
+                if (!DIE || DIE->size() != 1)
+                  continue;
+                const DesignatedInitExpr::Designator *D =
+                    DIE->getDesignator(0);
+                if (!D->isFieldDesignator())
+                  continue;
+                // FieldDecl may not be resolved yet; match by name.
+                const IdentifierInfo *FieldName = D->getFieldName();
+                if (!FieldName)
+                  continue;
+                FieldDecl *FD = nullptr;
+                for (auto *F : Fields)
+                  if (F->getIdentifier() == FieldName) {
+                    FD = F;
+                    break;
+                  }
+                if (!FD || !isC4ArrayType(FD->getType()))
+                  continue;
+                Expr *SubInit = DIE->getInit();
+                if (auto *SL =
+                        dyn_cast<StringLiteral>(SubInit->IgnoreImplicit())) {
+                  if (InitListExpr *NewSub =
+                          BuildC4ArrayFromStringLiteral(SL, FD->getType()))
+                    DIE->setInit(NewSub);
+                }
+              }
+            } else {
+              unsigned MaxF = (unsigned)Fields.size();
+              for (unsigned I = 0, N = ILE->getNumInits(); I < N && I < MaxF;
+                   ++I) {
+                FieldDecl *FD = Fields[I];
+                if (!isC4ArrayType(FD->getType()))
+                  continue;
+                Expr *SubInit = ILE->getInit(I)->IgnoreImplicit();
+                if (auto *SL = dyn_cast<StringLiteral>(SubInit)) {
+                  if (InitListExpr *NewSub =
+                          BuildC4ArrayFromStringLiteral(SL, FD->getType()))
+                    ILE->setInit(I, NewSub);
+                }
+              }
+            }
+          }
         }
       }
     }

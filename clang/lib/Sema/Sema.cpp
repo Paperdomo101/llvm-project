@@ -461,7 +461,7 @@ InitListExpr* Sema::BuildC4ArrayFromInitList(InitListExpr *ILE, QualType C4Type,
 }
 
 
-InitListExpr* Sema::BuildC4ArrayFromStringLiteral(StringLiteral *SL, QualType C4Type) {
+InitListExpr* Sema::BuildC4ArrayFromStringLiteral(StringLiteral *SL, QualType C4Type, unsigned Capacity) {
   if (!SL || C4Type.isNull()) return nullptr;
 
   // Ensure the element type is a character type.
@@ -485,9 +485,10 @@ InitListExpr* Sema::BuildC4ArrayFromStringLiteral(StringLiteral *SL, QualType C4
       SizeTy, Loc);
 
   // 3. Build the struct initializer: { items, count, capacity }
+  unsigned EffCap = (Capacity > 0) ? Capacity : (unsigned)Len;
   Expr *CapacityExpr = IntegerLiteral::Create(
       Context,
-      llvm::APInt(Context.getTypeSize(SizeTy), Len),
+      llvm::APInt(Context.getTypeSize(SizeTy), EffCap),
       SizeTy, Loc);
   SmallVector<Expr*, 3> StructInits = {DataExpr, SizeExpr, CapacityExpr};
   InitListExpr *Result = new (Context) InitListExpr(Context, Loc, StructInits, Loc,
