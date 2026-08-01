@@ -1850,7 +1850,19 @@ Parser::ParsedCondition Parser::ParseCondition(SourceLocation StmtLoc,
       TmpLParen = ConsumeParen(); // consume '('
 
       // Parse optional init (:= or declaration) if present.
-      if (Tok.is(tok::identifier) && GetLookAheadToken(1).is(tok::colonequal)) {
+      // C4: multi-return destructuring init (e.g. if (a,b := expr; cond))
+      if (getLangOpts().C4() && Tok.is(tok::identifier) &&
+          GetLookAheadToken(1).is(tok::comma) && isTypeInferredAssignment()) {
+          TmpInit = ParseTypeInferredAssignment();
+          if (TmpInit.isInvalid())
+              return Result;
+          if (Tok.is(tok::semi))
+              ConsumeToken();
+          else {
+              Diag(Tok, diag::err_expected_semi_after_expr);
+              return Result;
+          }
+      } else if (Tok.is(tok::identifier) && GetLookAheadToken(1).is(tok::colonequal)) {
           TmpInit = ParseTypeInferredAssignment();
           if (TmpInit.isInvalid()) {
               return Result;
@@ -1910,8 +1922,21 @@ Parser::ParsedCondition Parser::ParseCondition(SourceLocation StmtLoc,
   }
 
   // Unparenthesized condition (no '(' seen).
+  // C4: multi-return destructuring init (e.g. if a,b := expr; cond)
+  if (getLangOpts().C4() && Tok.is(tok::identifier) &&
+      GetLookAheadToken(1).is(tok::comma) && isTypeInferredAssignment()) {
+      Result.InitStmt = ParseTypeInferredAssignment();
+      if (Result.InitStmt.isInvalid())
+          return Result;
+      if (Tok.is(tok::semi))
+          ConsumeToken();
+      else {
+          Diag(Tok, diag::err_expected_semi_declaration);
+          return Result;
+      }
+  }
   // Handle `:=` assignment as init.
-  if (Tok.is(tok::identifier) && GetLookAheadToken(1).is(tok::colonequal)) {
+  else if (Tok.is(tok::identifier) && GetLookAheadToken(1).is(tok::colonequal)) {
       Result.InitStmt = ParseTypeInferredAssignment();
       if (Result.InitStmt.isInvalid()) {
           return Result;
