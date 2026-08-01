@@ -6215,13 +6215,17 @@ bool Parser::isDeclarationSpecifier(
 
   case tok::identifier:   // foo::bar
     if (getLangOpts().C4() && NextToken().is(tok::l_brace)) {
-      const Token &AfterBrace = GetLookAheadToken(2);
-      if (!AfterBrace.isOneOf(tok::kw_break, tok::kw_continue, tok::kw_return,
-                             tok::kw_goto, tok::kw_if, tok::kw_switch,
-                             tok::kw_for, tok::kw_while, tok::kw_do,
-                             tok::period, tok::kw_case, tok::kw_default)) {
+      // C4: Allow identifier { ... } as a declaration specifier only when the
+      // identifier is a known type name or C4 enum.  Otherwise, a for-loop body
+      // or other braced block might be misidentified as a declaration context
+      // (e.g. for i := 0..<#.arr { sum += arr[i]; }).
+      IdentifierInfo *II = Tok.getIdentifierInfo();
+      if (II && (Actions.getTypeName(*II, Tok.getLocation(), getCurScope()) ||
+                 (getLangOpts().C4() && Actions.IsC4EnumName(II))))
         return true;
-      }
+      // For non-type identifiers followed by '{', this is not a declaration
+      // specifier — it's likely a for-loop body or other braced block.
+      return false;
     }
     // Unfortunate hack to support "Class.factoryMethod" notation.
     if (getLangOpts().ObjC && NextToken().is(tok::period))

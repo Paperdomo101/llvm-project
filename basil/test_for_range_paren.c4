@@ -1,0 +1,17 @@
+#include <stdio.h>
+
+test_no_parens () int {
+    int sum = 0;
+    [4] int arr = {10, 20, 30, 40};
+
+    for i := 0..<#.arr {
+        sum += arr[i];
+    }
+
+    return sum;
+}
+
+main () int {
+    printf("%d\n", test_no_parens());
+    return 0;
+}
