@@ -2513,7 +2513,12 @@ VarDecl *Sema::ActOnC4ArrayIterationVar(Scope *S, IdentifierInfo *II, SourceLoca
   if (IsRef) {
     VarType = Context.getLValueReferenceType(ElementTy);
   } else if (IsPtr) {
-    VarType = Context.getPointerType(ElementTy);
+    // ^entry means the variable should be a pointer.  If the element type
+    // is already a pointer (e.g. []^T with ^entry), don't double-wrap.
+    if (ElementTy->isPointerType())
+      VarType = ElementTy;
+    else
+      VarType = Context.getPointerType(ElementTy);
   }
 
   VarDecl *NewVD = VarDecl::Create(Context, CurContext, Loc, Loc, II, VarType,

@@ -1,0 +1,38 @@
+// tests/forloop_hashdot_noparens.c4
+// Regression test: for-loop range with #. operator without parentheses
+// was misparsed as a declaration, causing "unknown type name" errors.
+// Fix: isDeclarationSpecifier() must not treat non-type identifiers
+// followed by '{' as declaration specifiers.
+
+#include <stdio.h>
+
+main () int {
+    [4] int arr = {10, 20, 30, 40};
+    int sum = 0;
+
+    // Without parens — this is the specific case that was broken
+    for i := 0..<#.arr {
+        sum += arr[i];
+    }
+
+    if (sum != 100) {
+        printf("[FAIL] forloop_hashdot_noparens: sum=%d, expected 100\n", sum);
+        return 1;
+    }
+
+    // With parens — should work the same way
+    sum = 0;
+    for (i := 0..<#.arr) {
+        sum += arr[i];
+    }
+    if (sum != 100) {
+        printf("[FAIL] forloop_hashdot_noparens: sum=%d, expected 100\n", sum);
+        return 1;
+    }
+
+    // Sanity check: #. on a non-array should fail at compile time.
+    // (This is tested elsewhere, e.g. capacity_of.c4.)
+
+    printf("[PASS] For-loop range with #. operator (no-parens variant)\n");
+    return 0;
+}

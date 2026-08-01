@@ -8029,8 +8029,21 @@ RValue CodeGenFunction::EmitC4InterpStr(const CallExpr *E,
                                         ReturnValueSlot ReturnValue) {
   // Emit the format string and all variadic arguments.
   SmallVector<llvm::Value *, 8> Args;
-  for (unsigned i = 0, n = E->getNumArgs(); i < n; ++i)
-    Args.push_back(EmitScalarExpr(E->getArg(i)));
+  for (unsigned i = 0, n = E->getNumArgs(); i < n; ++i) {
+    const Expr *Arg = E->getArg(i);
+    QualType ArgTy = Arg->getType();
+    // Interpolated string arguments must have scalar type; passing an
+    // aggregate (struct) is a user error.  Emit a diagnostic and produce
+    // an undef value so codegen does not crash.
+    if (!ArgTy->isScalarType()) {
+      CGM.Error(Arg->getExprLoc(),
+                "C4 interpolated string argument has non-scalar type '" +
+                    ArgTy.getAsString() + "'");
+      Args.push_back(llvm::UndefValue::get(ConvertType(getContext().IntTy)));
+      continue;
+    }
+    Args.push_back(EmitScalarExpr(Arg));
+  }
 
   QualType CharPtrTy = getContext().getPointerType(getContext().CharTy);
 

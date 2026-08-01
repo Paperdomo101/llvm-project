@@ -157,6 +157,11 @@ CompilerTest custom_test_suite[] = {
         "tests/forloop.c4",
     },
     {
+        "For-loop range with #. operator (no-parens variant)",
+        "tests/forloop_hashdot_noparens.c4",
+        true,
+    },
+    {
         "Postfix '->' after GNU statement-expression macro (cross-macro spelling-line false positive)",
         "tests/macro_arrow.c4",
     },
@@ -437,6 +442,10 @@ CompilerTest custom_test_suite[] = {
     {
         "C4 Array Capacity Operator (runtime)",
         "tests/array_capacity_operator_runtime.c4", true
+    },
+    {
+        "C4 Pointer Array Zero-Init and ^entry..arr Iteration",
+        "tests/c4_ptr_array_iter.c4", true
     },
     {
         "Anonymous Local Struct Declarations (runtime)",

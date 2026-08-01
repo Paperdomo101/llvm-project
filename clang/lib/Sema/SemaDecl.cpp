@@ -8173,7 +8173,6 @@ NamedDecl *Sema::ActOnVariableDeclarator(
     // a zero-initialised default synthesised below.
     if (Expr *SizeExpr = D.getDeclSpec().getC4ArraySizeExpr()) {
       if (isC4ArrayType(NewVD->getType()) &&
-          D.getDeclSpec().getC4PointerDepth() == 0 &&
           !NewVD->isInvalidDecl()) {
 
         QualType StructTy = NewVD->getType();

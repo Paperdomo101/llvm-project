@@ -1,0 +1,62 @@
+// tests/c4_ptr_array_iter.c4
+// Regression test: C4 pointer arrays ([N] ^T arr;) declared without an
+// initializer were not zero-initialized, leaving .count/.capacity fields
+// as stack garbage.  This caused array iteration (for ^entry..arr) to loop
+// billions of times instead of exactly N times.
+//
+// Fix: removed the getC4PointerDepth() == 0 guard in ActOnVariableDeclarator
+// so that C4ArrayInfoAttr is attached to all sized C4 arrays, not just
+// value-typed ones.
+
+#include <stdio.h>
+
+// Helper: zero-initialize a pointer array via iteration
+Init (&[]^int table) {
+    for ^entry..table {
+        entry = NULL;
+    }
+}
+
+main () int {
+    const N := 5;
+    int errors = 0;
+
+    // Test 1: pointer array without initializer — must have count == N
+    [N] ^int arr1;
+    if (#.arr1 != N) {
+        printf("[FAIL] ptr array without init: count=%zu, expected %d\n",
+               (size_t)#.arr1, N);
+        errors++;
+    }
+
+    // Test 2: array iteration over pointer array — must iterate exactly N times
+    [N] ^int arr2;
+    arr2::Init();
+    int iter_count = 0;
+    for ^entry..arr2 {
+        iter_count++;
+        if (entry != NULL) {
+            printf("[FAIL] ptr array iter: entry[%d] = %p, expected NULL\n",
+                   iter_count - 1, (void *)entry);
+            errors++;
+        }
+    }
+    if (iter_count != N) {
+        printf("[FAIL] ptr array iter: iterated %d times, expected %d\n",
+               iter_count, N);
+        errors++;
+    }
+
+    // Test 3: plain value array without initializer — should still work
+    [N] int arr3;
+    if (#.arr3 != N) {
+        printf("[FAIL] value array without init: count=%zu, expected %d\n",
+               (size_t)#.arr3, N);
+        errors++;
+    }
+
+    if (errors == 0) {
+        printf("[PASS] C4 pointer array zero-init and array iteration\n");
+    }
+    return errors;
+}
