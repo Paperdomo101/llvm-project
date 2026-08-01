@@ -6686,6 +6686,11 @@ Sema::ConvertArgumentsForCall(CallExpr *Call, Expr *Fn,
 
 bool Sema::IsC4ReferenceReturnType(const FunctionDecl *FD) const {
   if (!FD || !FD->getReturnType()->isPointerType()) return false;
+  // C4 alias functions (e.g. Hash_Table_Find / find) have their return type
+  // set correctly by ActOnFunctionDeclarator.  The text-based &-scan uses
+  // FunctionTypeLoc which is stale after setType(); skip it.
+  if (getLangOpts().C4() && FD->hasAttr<C4AliasAttr>())
+    return false;
   FunctionTypeLoc FTL = FD->getFunctionTypeLoc();
   if (FTL.isNull()) return false;
   SourceLocation RParen = FTL.getRParenLoc();
