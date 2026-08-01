@@ -11806,7 +11806,15 @@ Sema::ActOnFunctionDeclarator(Scope *S, Declarator &D, DeclContext *DC,
           case DeclSpec::TST_char: Ty = Context.CharTy; break;
           case DeclSpec::TST_float: Ty = Context.FloatTy; break;
           case DeclSpec::TST_double: Ty = Context.DoubleTy; break;
-          default: Ty = Context.IntTy; break;
+          default:
+            if (!Fields[I].ResolvedBaseType.isNull()) {
+              Ty = Fields[I].ResolvedBaseType;
+              for (unsigned D = 0; D < Fields[I].C4PointerDepth; ++D)
+                Ty = Context.getPointerType(Ty);
+            }
+            if (Ty.isNull())
+              Ty = Context.IntTy;
+            break;
           }
         }
         FieldTypes.push_back(Ty);

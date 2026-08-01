@@ -3,18 +3,25 @@
 // Runtime regression tests for C4 multi-return, destructuring, and
 // related features.  All test helper functions are at file scope.
 //
-//   A. Named multi-return:           fn() int a, int b { ... }
-//   B. Anonymous multi-return:       fn() int, int { ... }
-//   C. Default initializers:         fn() int a = -1, bool b = true { ... }
-//   D. Explicit return:              return a, b, c;
-//   E. Destructuring (non-call):     a, b := {10, 20}
+//   A. Named multi-return:             fn() int a, int b { ... }
+//   B. Anonymous multi-return:         fn() int, int { ... }
+//   C. Default initializers:           fn() int a = -1, bool b = true { ... }
+//   D. Explicit return:                return a, b, c;
+//   E. Destructuring (non-call):       a, b := {10, 20}
 //   F. Variadic pack + multi-return
+//   G. Single-field named return with default  (e.g. result = NULL)
+//   H. Anonymous-first with trailing named fields  (int, ^Person result)
+//   I. String literal promotion to &[]char
+//   J. Multi-return in if-statement conditions
+//   K. Double-evaluation regression  (destructure calls once)
+//   L. Block-literal multi-return
 //
 // Exit 0 = all assertions passed.  A single failure exits 1 immediately.
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
+#include <string.h>
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -23,8 +30,14 @@ static void fail(const char *msg, int got, int expected) {
     printf("[FAIL] %s  (got %d, expected %d)\n", msg, got, expected);
     exit(1);
 }
+static void fail_str(const char *msg, const char *got, const char *expected) {
+    printf("[FAIL] %s  (got '%s', expected '%s')\n", msg, got, expected);
+    exit(1);
+}
 #define CHECK(actual, expected, msg) \
     do { if ((int)(actual) != (expected)) fail(msg, (int)(actual), (expected)); } while(0)
+#define CHECK_STR(actual, expected, msg) \
+    do { if (strcmp((actual), (expected)) != 0) fail_str(msg, (actual), (expected)); } while(0)
 
 // ===========================================================================
 // A. Named multi-return with explicit body assignments
@@ -40,7 +53,7 @@ static void test_named_fields() {
     CHECK(q, 3, "A1: quot 10/3");
     CHECK(r, 1, "A1: rem  10%3");
 
-    // Also verify via single assign (avoiding double-eval of call destructure)
+    // Also verify via single assign
     dr := divide(20, 7);
     CHECK(dr.quot, 2, "A2: single-assign quot");
     CHECK(dr.rem,  6, "A2: single-assign rem");
@@ -157,7 +170,6 @@ static void test_struct_destructure() {
 
 // ===========================================================================
 // F. Variadic pack size via single-assign multi-return
-//    (avoids double-eval from destructuring a function call)
 // ===========================================================================
 
 var_count(^int... nums) int count, int first_present {
@@ -173,96 +185,213 @@ static void test_variadic() {
 }
 
 // ===========================================================================
-// KNOWN ISSUES — tests that should work but currently fail or crash.
-// These are guarded with #if 0 to prevent breaking the test suite.
-// When a fix is implemented, move the test block to the active section
-// and unguard it.
+// G. Single-field named return with default initializer
+//    Regression: a single named-return field with a default (e.g.
+//    'result = NULL') was incorrectly treated as multi-return,
+//    wrapping the return type in a synthetic struct.
 // ===========================================================================
 
-#if 0
-// ---------------------------------------------------------------------------
-// ISSUE 1: Zero-parameter functions with multi-return.
-//   set_vals() int x, int y { x=42; y=99; }
-// Symptoms: Sema treats x and y as function types ('int ()')
-//           instead of as named return variables.
-// ---------------------------------------------------------------------------
-set_vals() int x, int y {
-    x = 42;
-    y = 99;
+get_optional(bool yes) int val = -1 {
+    if (yes) val = 99;
+    // implicit return of 'val'
 }
-static void test_issue_zero_params() {
-    vx, vy := set_vals();
-    CHECK(vx, 42, "ISSUE-1: zero-param multi-return x");
-    CHECK(vy, 99, "ISSUE-1: zero-param multi-return y");
-    printf("[FIXED] Issue 1: zero-param multi-return\n");
-}
-#endif
 
-#if 0
-// ---------------------------------------------------------------------------
-// ISSUE 2: Multi-return with bool fields crashes in BuildReturnStmt.
-//   triple() int, bool, int { return 1, true, 42; }
-// Symptoms: NULL type pointer assertion during codegen of the return
-//           statement, triggered by the bool anonymous field.
-// ---------------------------------------------------------------------------
-triple() int, bool, int {
-    return 1, true, 42;
+always_true() bool ok = true {
+    // implicit return of 'ok'
 }
-static void test_issue_bool_anon() {
-    t1, t2, t3 := triple();
-    CHECK(t1, 1,  "ISSUE-2: triple 1st (int)");
-    CHECK(t2, 1,  "ISSUE-2: triple 2nd (bool true)");
-    CHECK(t3, 42, "ISSUE-2: triple 3rd (int)");
-    printf("[FIXED] Issue 2: bool anonymous multi-return\n");
-}
-#endif
 
-#if 1
-// ---------------------------------------------------------------------------
-// ISSUE 3: Destructuring a multi-return function call evaluates the call
-//          once per LHS variable (N times for N fields).
-//   cnt, ok := some_func(...)   // func called twice for 2 fields
-// Workaround: use single assign then access fields.
-//   result := some_func(...)
-//   cnt := result._c4_r0; ok := result._c4_r1;
-// ---------------------------------------------------------------------------
+static void test_single_field_default() {
+    r1 := get_optional(true);
+    CHECK(r1, 99, "G1: single-field default, body sets to 99");
+
+    r2 := get_optional(false);
+    CHECK(r2, -1, "G2: single-field default preserved as -1");
+
+    ok := always_true();
+    CHECK(ok, 1, "G3: single-field bool default true");
+
+    printf("[PASS] G: single-field named return with default\n");
+}
+
+// ===========================================================================
+// H. Anonymous-first multi-return with trailing named fields
+//    Regression: 'int, ^Person result = NULL' didn't parse because
+//    ParseC4AnonymousReturnFields never checked for field names.
+// ===========================================================================
+
+anon_then_named(int x) int, int b = 200 {
+    b = x;
+    return x * 2, b;
+}
+
+anon_then_named2(int x) int, int b = 300 { return x, b; }
+
+static void test_anon_then_named() {
+    a, b := anon_then_named(10);
+    CHECK(a, 20, "H1: anon-first: first field (anon)");
+    CHECK(b, 10, "H1: anon-first: second field (named, default)");
+
+    // Also verify the default is used when body doesn't override
+    c, d := anon_then_named2(5);
+    CHECK(c, 5,   "H2: anon-first: explicit return first");
+    CHECK(d, 300, "H2: anon-first: default used for second");
+
+    printf("[PASS] H: anonymous-first with trailing named fields\n");
+}
+
+// ===========================================================================
+// H2. Pointer-type field in multi-return (regression: ^Person was mapped to int)
+// ===========================================================================
+
+typedef struct FieldPerson { int id; } FieldPerson;
+
+field_ptr_test(int id) int, ^FieldPerson result = NULL {
+    if (id > 0) {
+        static FieldPerson p;
+        p.id = id;
+        result = &p;
+    }
+    return id * 2, result;
+}
+
+static void test_pointer_field() {
+    a, p := field_ptr_test(42);
+    CHECK(a, 84, "H2a: pointer-field: first field (int)");
+    if (p == NULL) fail("H2b: pointer-field: result should be non-NULL", 0, 1);
+    CHECK(p.id, 42, "H2b: pointer-field: result->id");
+
+    b, p2 := field_ptr_test(0);
+    CHECK(b, 0, "H2c: pointer-field not-found: first field");
+    if (p2 != NULL) fail("H2c: pointer-field not-found: result should be NULL", 1, 0);
+
+    printf("[PASS] H2: pointer-type fields in multi-return\n");
+}
+
+// ===========================================================================
+// I. String literal promotion to &[]char parameters
+//    Passing a string literal like "hello" to an &[]char parameter
+//    now automatically promotes it to a C4 char array.
+// ===========================================================================
+
+c4_strlen(&[]char s) int len { return #.s; }
+
+c4_streq(&[]char a, &[]char b) bool {
+    return #.a == #.b && !strncmp(a.data, b.data, #.a);
+}
+
+static void test_string_promotion() {
+    // Direct string literal passed to &[]char
+    len := c4_strlen("hello");
+    CHECK(len, 5, "I1: strlen of promoted literal");
+
+    len2 := c4_strlen("");
+    CHECK(len2, 0, "I2: empty string promoted");
+
+    // Multiple string arguments
+    eq := c4_streq("abc", "abc");
+    CHECK(eq, 1, "I3: string equality via promoted literals");
+
+    neq := c4_streq("abc", "xyz");
+    CHECK(neq, 0, "I4: string inequality via promoted literals");
+
+    printf("[PASS] I: string literal promotion to &[]char\n");
+}
+
+// ===========================================================================
+// J. Multi-return destructuring in if-statement conditions
+//    Both parenthesized and unparenthesized forms are supported:
+//      if a, b := expr; a { ... }
+//      if (a, b := expr; a) { ... }
+// ===========================================================================
+
+lookup(int id) int val, bool ok {
+    if (id > 0) { return id * 10, true; }
+    return 0, false;
+}
+
+static void test_if_destructure() {
+    // Unparenthesized form
+    bool hit = false;
+    if v, found := lookup(7); found {
+        CHECK(v, 70, "J1: if-destructure unparen: value");
+        hit = true;
+    }
+    if (!hit) fail("J1: if-destructure unparen: should enter", 0, 1);
+
+    // Unparenthesized form — not-found branch
+    hit = false;
+    if v2, found2 := lookup(0); found2 {
+        fail("J2: if-destructure unparen: should NOT enter", 1, 0);
+    } or {
+        CHECK(v2, 0, "J2: if-destructure unparen: not-found value");
+        hit = true;
+    }
+    if (!hit) fail("J2: if-destructure unparen: should enter else", 0, 1);
+
+    // Parenthesized form
+    hit = false;
+    if (v3, found3 := lookup(3); found3) {
+        CHECK(v3, 30, "J3: if-destructure paren: value");
+        hit = true;
+    }
+    if (!hit) fail("J3: if-destructure paren: should enter", 0, 1);
+
+    // Parenthesized form — not-found branch
+    hit = false;
+    if (v4, found4 := lookup(-1); found4) {
+        fail("J4: if-destructure paren: should NOT enter", 1, 0);
+    } or {
+        CHECK(v4, 0, "J4: if-destructure paren: not-found value");
+        hit = true;
+    }
+    if (!hit) fail("J4: if-destructure paren: should enter else", 0, 1);
+
+    printf("[PASS] J: multi-return in if conditions\n");
+}
+
+// ===========================================================================
+// K. Double-evaluation regression — destructure evaluates call once
+//    Destructuring a multi-return function call (a, b := fn()) must
+//    evaluate the call exactly once, not once per LHS variable.
+// ===========================================================================
+
 call_once_test(^int... nums) int count, int first {
-    // If this function is called more than once the counter will be wrong.
     static int call_count = 0;
     call_count++;
     return call_count, (nums[0] != NULL) ? 1 : 0;
 }
-static void test_issue_double_call() {
-    // This destructure would call call_once_test twice.
-    c, f := call_once_test(^{10}, ^{20});
-    CHECK(c, 1, "ISSUE-3: function called exactly once (count)");
-    CHECK(f, 1, "ISSUE-3: function called exactly once (first)");
-    printf("[FIXED] Issue 3: destructure call evaluates once\n");
-}
-#endif
 
-#if 1
-// ---------------------------------------------------------------------------
-// ISSUE 4: Nested (local) functions with multi-return.
-//   Inside a function body:  split := ^(int x) int, int { ... }
-// Symptoms: The ^ block literal parser didn't handle multi-return
-//           fields after the trailing return type.
-// ---------------------------------------------------------------------------
-static void test_issue_nested_multi_return() {
+static void test_double_eval() {
+    c, f := call_once_test(^{10}, ^{20});
+    CHECK(c, 1, "K1: function called exactly once (field 1)");
+    CHECK(f, 1, "K1: function called exactly once (field 2)");
+
+    // Double-check: call_count should be 1 (single evaluation)
+    s := call_once_test(^{30});
+    CHECK(s.count, 2, "K2: subsequent call increments");
+
+    printf("[PASS] K: destructure call evaluates once\n");
+}
+
+// ===========================================================================
+// L. Block-literal (^) multi-return — named, anonymous, defaults
+// ===========================================================================
+
+static void test_block_multi_return() {
     divide := ^(int a, int b) int quot, int rem {
         quot = a / b;
         rem = a % b;
     }
     q, r := divide(10, 3);
-    CHECK(q, 3, "ISSUE-4a: nested named multi-return quot");
-    CHECK(r, 1, "ISSUE-4a: nested named multi-return rem");
+    CHECK(q, 3, "L1: block named multi-return quot");
+    CHECK(r, 1, "L1: block named multi-return rem");
 
     split := ^(int x) int, int {
         return x / 2, x % 2;
     }
     a, b := split(7);
-    CHECK(a, 3, "ISSUE-4b: nested anon multi-return first");
-    CHECK(b, 1, "ISSUE-4b: nested anon multi-return second");
+    CHECK(a, 3, "L2: block anon multi-return first");
+    CHECK(b, 1, "L2: block anon multi-return second");
 
     safe := ^(int a, int b) int quot = -1, int ok = 0 {
         if (b == 0) return;
@@ -270,12 +399,20 @@ static void test_issue_nested_multi_return() {
         ok = 1;
     }
     sq, so := safe(10, 0);
-    CHECK(sq, -1, "ISSUE-4c: nested default quot");
-    CHECK(so, 0,  "ISSUE-4c: nested default ok");
+    CHECK(sq, -1, "L3: block default quot");
+    CHECK(so, 0,  "L3: block default ok");
 
-    printf("[FIXED] Issue 4: nested function multi-return\n");
+    // Block with anon-first + named field
+    mix := ^(int x) int, int named = 999 {
+        named = x;
+        return x * 2, named;
+    }
+    e, f := mix(5);
+    CHECK(e, 10,  "L4: block anon-first: anon field");
+    CHECK(f, 5,   "L4: block anon-first: named field");
+
+    printf("[PASS] L: block-literal multi-return\n");
 }
-#endif
 
 // ===========================================================================
 // main
@@ -291,8 +428,13 @@ main () int {
     test_explicit_return();
     test_struct_destructure();
     test_variadic();
-    test_issue_double_call();
-    test_issue_nested_multi_return();
+    test_single_field_default();
+    test_anon_then_named();
+    test_pointer_field();
+    test_string_promotion();
+    test_if_destructure();
+    test_double_eval();
+    test_block_multi_return();
 
     printf("\n[SUCCESS] All multi-return & destructuring tests passed!\n");
     return 0;

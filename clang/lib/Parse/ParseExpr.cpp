@@ -5074,11 +5074,29 @@ ExprResult Parser::ParseBlockLiteralExpression() {
               DeclSpec NextDS(AttrFactory);
               ParsedTemplateInfo ET;
               ParseDeclarationSpecifiers(NextDS, ET, AS_none, DeclSpecContext::DSC_trailing);
-              llvm::SmallString<16> NB;
-              ("_c4_r" + Twine(ParamInfo.getC4NamedReturnFields().size())).toVector(NB);
-              IdentifierInfo *FN = &PP.getIdentifierTable().get(NB);
-              ParamInfo.addC4NamedReturnField(FN, NextDS.getTypeSpecTypeLoc(),
-                                               nullptr, NextDS.getTypeSpecType(),
+              IdentifierInfo *NextName = nullptr;
+              SourceLocation NextLoc;
+              ExprResult NextInit;
+              if (Tok.is(tok::identifier)) {
+                IdentifierInfo *CII = Tok.getIdentifierInfo();
+                if (!Actions.getTypeName(*CII, Tok.getLocation(), getCurScope())) {
+                  NextName = CII;
+                  NextLoc = ConsumeToken();
+                  if (Tok.is(tok::equal)) {
+                    ConsumeToken();
+                    NextInit = ParseAssignmentExpression();
+                  }
+                }
+              }
+              if (!NextName) {
+                llvm::SmallString<16> NB;
+                ("_c4_r" + Twine(ParamInfo.getC4NamedReturnFields().size())).toVector(NB);
+                NextName = &PP.getIdentifierTable().get(NB);
+                NextLoc = NextDS.getTypeSpecTypeLoc();
+              }
+              ParamInfo.addC4NamedReturnField(NextName, NextLoc,
+                                               NextInit.isUsable() ? NextInit.get() : nullptr,
+                                               NextDS.getTypeSpecType(),
                                                NextDS.getTypeSpecTypeLoc());
             } while (Tok.is(tok::comma) && (ConsumeToken(), true));
           }
@@ -5229,11 +5247,29 @@ ExprResult Parser::ParseBlockLiteralExpression() {
               DeclSpec NextDS(AttrFactory);
               ParsedTemplateInfo ET;
               ParseDeclarationSpecifiers(NextDS, ET, AS_none, DeclSpecContext::DSC_trailing);
-              llvm::SmallString<16> NB;
-              ("_c4_r" + Twine(ParamInfo.getC4NamedReturnFields().size())).toVector(NB);
-              IdentifierInfo *FN = &PP.getIdentifierTable().get(NB);
-              ParamInfo.addC4NamedReturnField(FN, NextDS.getTypeSpecTypeLoc(),
-                                               nullptr, NextDS.getTypeSpecType(),
+              IdentifierInfo *NextName = nullptr;
+              SourceLocation NextLoc;
+              ExprResult NextInit;
+              if (Tok.is(tok::identifier)) {
+                IdentifierInfo *CII = Tok.getIdentifierInfo();
+                if (!Actions.getTypeName(*CII, Tok.getLocation(), getCurScope())) {
+                  NextName = CII;
+                  NextLoc = ConsumeToken();
+                  if (Tok.is(tok::equal)) {
+                    ConsumeToken();
+                    NextInit = ParseAssignmentExpression();
+                  }
+                }
+              }
+              if (!NextName) {
+                llvm::SmallString<16> NB;
+                ("_c4_r" + Twine(ParamInfo.getC4NamedReturnFields().size())).toVector(NB);
+                NextName = &PP.getIdentifierTable().get(NB);
+                NextLoc = NextDS.getTypeSpecTypeLoc();
+              }
+              ParamInfo.addC4NamedReturnField(NextName, NextLoc,
+                                               NextInit.isUsable() ? NextInit.get() : nullptr,
+                                               NextDS.getTypeSpecType(),
                                                NextDS.getTypeSpecTypeLoc());
             } while (Tok.is(tok::comma) && (ConsumeToken(), true));
           }

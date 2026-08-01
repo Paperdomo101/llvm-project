@@ -6971,10 +6971,26 @@ void Parser::ParseC4NamedReturnFields(Declarator &D) {
         return;
       }
     }
+    // Resolve type for this field.
+    QualType ResolvedTy;
+    {
+      Declarator TypeDecl(NextDS, ParsedAttributesView::none(),
+                          DeclaratorContext::TypeName);
+      TypeResult TR = Actions.ActOnTypeName(TypeDecl);
+      if (!TR.isInvalid())
+        ResolvedTy = TR.get().get();
+    }
     D.addC4NamedReturnField(NextName, NextNameLoc,
                              NextInit.isUsable() ? NextInit.get() : nullptr,
                              NextDS.getTypeSpecType(),
-                             NextDS.getTypeSpecTypeLoc());
+                             NextDS.getTypeSpecTypeLoc(),
+                             QualType(),
+                             // Resolve the base type from the DeclSpec — pointer depth applied in Sema.
+                             [&]() -> QualType {
+                               ParsedType PT = NextDS.getRepAsTypeSafe();
+                               return PT ? QualType::getFromOpaquePtr(PT.getAsOpaquePtr()) : QualType();
+                             }(),
+                             NextDS.getC4PointerDepth());
   }
 
   // Single-field named returns always set C4NamedReturnII so Sema uses
@@ -6997,12 +7013,38 @@ void Parser::ParseC4AnonymousReturnFields(Declarator &D) {
     ParsedTemplateInfo EmptyTemplateInfo;
     ParseDeclarationSpecifiers(NextDS, EmptyTemplateInfo, AS_none,
                                 DeclSpecContext::DSC_trailing);
-    llvm::SmallString<16> NameBuf;
-    ("_c4_r" + Twine(D.getC4NamedReturnFields().size())).toVector(NameBuf);
-    IdentifierInfo *FieldName = &PP.getIdentifierTable().get(NameBuf);
-    D.addC4NamedReturnField(FieldName, NextDS.getTypeSpecTypeLoc(), nullptr,
+    IdentifierInfo *NextName = nullptr;
+    SourceLocation NextNameLoc;
+    ExprResult NextInit;
+    // Check for an optional field name (e.g. 'int, ^Person result = NULL').
+    if (Tok.is(tok::identifier)) {
+      IdentifierInfo *CandidateII = Tok.getIdentifierInfo();
+      if (!Actions.getTypeName(*CandidateII, Tok.getLocation(), getCurScope())) {
+        NextName = CandidateII;
+        NextNameLoc = ConsumeToken();
+        if (Tok.is(tok::equal)) {
+          ConsumeToken();
+          NextInit = ParseAssignmentExpression();
+        }
+      }
+    }
+    if (!NextName) {
+      llvm::SmallString<16> NameBuf;
+      ("_c4_r" + Twine(D.getC4NamedReturnFields().size())).toVector(NameBuf);
+      NextName = &PP.getIdentifierTable().get(NameBuf);
+      NextNameLoc = NextDS.getTypeSpecTypeLoc();
+    }
+    D.addC4NamedReturnField(NextName, NextNameLoc,
+                             NextInit.isUsable() ? NextInit.get() : nullptr,
                              NextDS.getTypeSpecType(),
-                             NextDS.getTypeSpecTypeLoc());
+                             NextDS.getTypeSpecTypeLoc(),
+                             QualType(),
+                             // Resolve the base type from the DeclSpec — pointer depth applied in Sema.
+                             [&]() -> QualType {
+                               ParsedType PT = NextDS.getRepAsTypeSafe();
+                               return PT ? QualType::getFromOpaquePtr(PT.getAsOpaquePtr()) : QualType();
+                             }(),
+                             NextDS.getC4PointerDepth());
   }
 }
 

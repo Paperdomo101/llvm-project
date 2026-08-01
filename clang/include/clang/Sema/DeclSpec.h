@@ -629,6 +629,12 @@ public:
     assert(isTypeRep((TST) TypeSpecType) && "DeclSpec does not store a type");
     return TypeRep;
   }
+  ParsedType getRepAsTypeSafe() const {
+    return isTypeRep((TST) TypeSpecType) ? TypeRep : ParsedType();
+  }
+  Decl *getRepAsDeclSafe() const {
+    return isDeclRep((TST) TypeSpecType) ? DeclRep : nullptr;
+  }
   Decl *getRepAsDecl() const {
     assert(isDeclRep((TST) TypeSpecType) && "DeclSpec does not store a decl");
     return DeclRep;
@@ -2158,9 +2164,11 @@ private:
     SourceLocation NameLoc;
     QualType Type;                  // resolved in Sema
     Expr *Init = nullptr;            // optional default value
-    // For fields after the first, we store the parsed type spec info.
     DeclSpec::TST TypeSpecType = DeclSpec::TST_unspecified;
     SourceLocation TypeSpecLoc;
+    // For complex types, the resolved base type and C4 pointer depth.
+    QualType ResolvedBaseType;
+    unsigned C4PointerDepth = 0;
   };
   llvm::SmallVector<C4NamedReturnField, 4> C4NamedReturnFields;
 
@@ -2911,13 +2919,19 @@ public:
 
   void addC4NamedReturnField(IdentifierInfo *Name, SourceLocation NameLoc,
                               Expr *Init, DeclSpec::TST TypeSpecType,
-                              SourceLocation TypeSpecLoc) {
+                              SourceLocation TypeSpecLoc,
+                              QualType ResolvedType = QualType(),
+                              QualType ResolvedBase = QualType(),
+                              unsigned PtrDepth = 0) {
     C4NamedReturnField F;
     F.Name = Name;
     F.NameLoc = NameLoc;
     F.Init = Init;
     F.TypeSpecType = TypeSpecType;
     F.TypeSpecLoc = TypeSpecLoc;
+    F.Type = ResolvedType;
+    F.ResolvedBaseType = ResolvedBase;
+    F.C4PointerDepth = PtrDepth;
     C4NamedReturnFields.push_back(F);
   }
   bool hasC4NamedReturnFields() const {
