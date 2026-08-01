@@ -2443,9 +2443,14 @@ StmtResult Parser::ParseSwitchStatement(SourceLocation *TrailingElseLoc,
             SourceLocation DotDotLoc;
             ExprResult RHS;
             bool HalfOpen = false;
-            if (Tok.is(tok::period) && NextToken().is(tok::period)) {
-              DotDotLoc = ConsumeToken();
-              ConsumeToken();
+            if ((Tok.is(tok::period) && NextToken().is(tok::period)) ||
+                Tok.is(tok::ellipsis)) {
+              if (Tok.is(tok::period)) {
+                DotDotLoc = ConsumeToken();
+                ConsumeToken();
+              } else {
+                DotDotLoc = ConsumeToken();
+              }
               if (Tok.is(tok::less)) {
                 HalfOpen = true;
                 ConsumeToken();

@@ -388,6 +388,10 @@ CompilerTest custom_test_suite[] = {
         "tests/enums_c4_runtime.c4", true
     },
     {
+        "Implicit .Member dot in brace initializers ({.RED}, {.color = .BLUE})",
+        "tests/implicit_dot_brace_init.c4", true
+    },
+    {
         "Anonymous C4 enums",
         "tests/anon_enum_runtime.c4", true
     },

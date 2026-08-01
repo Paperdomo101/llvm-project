@@ -987,7 +987,8 @@ Corrected:
       // We also allow this in C99 as an extension. However, this is not
       // allowed in all language modes as functions without prototypes may not
       // be supported.
-      if (getLangOpts().implicitFunctionsAllowed()) {
+      // C4: Also allow implicit definitions for out-of-order functions.
+      if (getLangOpts().implicitFunctionsAllowed() || getLangOpts().C4()) {
         if (NamedDecl *D = ImplicitlyDefineFunction(NameLoc, *Name, S))
           return NameClassification::NonType(D);
       }
@@ -18030,7 +18031,9 @@ void Sema::ActOnFinishDelayedAttribute(Scope *S, Decl *D,
 NamedDecl *Sema::ImplicitlyDefineFunction(SourceLocation Loc,
                                           IdentifierInfo &II, Scope *S) {
   // It is not valid to implicitly define a function in C23.
-  assert(LangOpts.implicitFunctionsAllowed() &&
+  // C4: Allow implicit function definitions for out-of-order function
+  // resolution, even in strict modes that normally forbid them.
+  assert((LangOpts.implicitFunctionsAllowed() || LangOpts.C4()) &&
          "Implicit function declarations aren't allowed in this language mode");
 
   // Find the scope in which the identifier is injected and the corresponding

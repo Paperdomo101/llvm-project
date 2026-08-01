@@ -3019,8 +3019,10 @@ ExprResult Sema::ActOnIdExpression(Scope *S, CXXScopeSpec &SS,
 
   // This could be an implicitly declared function reference if the language
   // mode allows it as a feature.
+  // C4: Always allow implicit functions for out-of-order function resolution,
+  // even in strict C23 mode where implicit declarations are normally forbidden.
   if (R.empty() && HasTrailingLParen && II &&
-      getLangOpts().implicitFunctionsAllowed()) {
+      (getLangOpts().implicitFunctionsAllowed() || getLangOpts().C4())) {
     NamedDecl *D = ImplicitlyDefineFunction(NameLoc, *II, S);
     if (D) {
       R.addDecl(D);

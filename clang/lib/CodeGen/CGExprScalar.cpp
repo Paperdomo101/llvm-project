@@ -1595,7 +1595,26 @@ Value *ScalarExprEmitter::EmitScalarCast(Value *Src, QualType SrcType,
   }
 
   if (isa<llvm::IntegerType>(DstElementTy)) {
-    assert(SrcElementTy->isFloatingPointTy() && "Unknown real conversion");
+    // Handle pointer-to-integer conversion that may not have been caught by
+    // earlier checks in EmitScalarConversion (e.g. when the Clang type is
+    // floating but the LLVM type is a pointer due to language extensions).
+    if (isa<llvm::PointerType>(SrcElementTy))
+      return Builder.CreatePtrToInt(Src, DstTy, "conv");
+    if (!SrcElementTy->isFloatingPointTy()) {
+      if (CGF.CurCast) {
+        std::string Msg;
+        llvm::raw_string_ostream OS(Msg);
+        OS << "conversion from ";
+        SrcElementTy->print(OS);
+        OS << " ('" << SrcElementType.getAsString() << "') to ";
+        DstElementTy->print(OS);
+        OS << " ('" << DstElementType.getAsString() << "')";
+        CGF.ErrorUnsupported(CGF.CurCast, Msg.c_str());
+      } else
+        llvm_unreachable("Conversion from non-floating-point LLVM type "
+                         "to integer LLVM type");
+      return llvm::UndefValue::get(DstTy);
+    }
     bool IsSigned = DstElementType->isSignedIntegerOrEnumerationType();
 
     // If we can't recognize overflow as undefined behavior, assume that

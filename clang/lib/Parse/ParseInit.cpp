@@ -467,7 +467,19 @@ ExprResult Parser::ParseBraceInitializer() {
     // If we know that this cannot be a designation, just parse the nested
     // initializer directly.
     ExprResult SubElt;
-    if (MayBeDesignationStart())
+    bool IsDesignation = MayBeDesignationStart();
+    // C4: A leading '.identifier' in a brace initializer is only a designator
+    // if followed by '=' or another '.' (e.g. .field = val or .sub.field = val).
+    // Otherwise treat as an expression (implicit-dot enum constant {.bang}).
+    if (IsDesignation && getLangOpts().C4() && Tok.is(tok::period)) {
+      Token AfterPeriod = NextToken();
+      if (AfterPeriod.is(tok::identifier)) {
+        Token AfterIdent = GetLookAheadToken(2);
+        if (!AfterIdent.isOneOf(tok::equal, tok::period))
+          IsDesignation = false;
+      }
+    }
+    if (IsDesignation)
       SubElt = ParseInitializerWithPotentialDesignator(DesignatorCompletion);
     else if (Tok.getKind() == tok::annot_embed)
       SubElt = createEmbedExpr();
