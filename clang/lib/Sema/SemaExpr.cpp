@@ -11342,6 +11342,26 @@ AssignConvertType Sema::CheckSingleAssignmentConstraints(QualType LHSType,
     Expr *RHSExpr = RHS.get();
     if (TryC4ResolveDotExpr(RHSExpr, LHSType.getUnqualifiedType()))
       RHS = RHSExpr;
+
+    // C4: resolve ^{ init } placeholders when the expected type is a pointer.
+    // This handles type-inferred address-of-brace-init inside designated
+    // initializers (e.g. .ptr = ^{ .x = 10 }) by looking up the field's
+    // pointee type and synthesising &(PointeeType){ init }.
+    if (LHSType->isPointerType()) {
+      Expr *Unwrapped = RHSExpr->IgnoreImplicit();
+      if (auto *OVE = dyn_cast<OpaqueValueExpr>(Unwrapped)) {
+        Expr *Src = OVE->getSourceExpr();
+        if (Src)
+          Src = Src->IgnoreImplicit();
+        if (auto *ILE = dyn_cast_or_null<InitListExpr>(Src)) {
+          QualType PointeeTy = LHSType->getPointeeType();
+          ExprResult Resolved = ActOnC4AddrOfBraceInit(
+              OVE->getLocation(), PointeeTy, ILE);
+          if (!Resolved.isInvalid())
+            RHS = Resolved.get();
+        }
+      }
+    }
   }
 
   // C4 enum type-safety: reject plain integers and non-enum values when
