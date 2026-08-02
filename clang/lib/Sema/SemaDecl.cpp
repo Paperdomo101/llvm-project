@@ -16940,7 +16940,7 @@ Sema::ActOnStartOfFunctionDef(Scope *FnBodyScope, Declarator &D,
             Context.getTrivialTypeSourceInfo(FieldTy, Fields[I].NameLoc),
             SC_None);
         if (Fields[I].Init)
-          NewVD->setInit(Fields[I].Init);
+          AddInitializerToDecl(NewVD, Fields[I].Init, /*DirectInit=*/false);
         else
           NewVD->setInit(new (Context) ImplicitValueInitExpr(FieldTy));
         PushOnScopeChains(NewVD, FnBodyScope);
@@ -16965,10 +16965,12 @@ Sema::ActOnStartOfFunctionDef(Scope *FnBodyScope, Declarator &D,
                                         Context.getTrivialTypeSourceInfo(FD->getReturnType(), D.getC4NamedReturnLoc()),
                                         SC_None);
         // Use the field's init expression if a single-field named return has one
-        // (e.g. '^Person result = NULL').
+        // (e.g. '^Person result = NULL').  Use AddInitializerToDecl so that
+        // type conversion and CodeGen setup run properly (needed for -O2).
         if (D.hasC4NamedReturnFields() && D.getC4NamedReturnFields().size() == 1 &&
             D.getC4NamedReturnFields()[0].Init) {
-          NewVD->setInit(D.getC4NamedReturnFields()[0].Init);
+          AddInitializerToDecl(NewVD, D.getC4NamedReturnFields()[0].Init,
+                               /*DirectInit=*/false);
         } else {
           ImplicitValueInitExpr *Init = new (Context) ImplicitValueInitExpr(FD->getReturnType());
           NewVD->setInit(Init);

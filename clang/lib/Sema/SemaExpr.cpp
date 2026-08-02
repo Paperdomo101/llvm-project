@@ -19792,7 +19792,8 @@ void Sema::ActOnBlockArguments(SourceLocation CaretLoc, Declarator &ParamInfo,
                                       SC_None);
       if (ParamInfo.hasC4NamedReturnFields() && ParamInfo.getC4NamedReturnFields().size() == 1 &&
           ParamInfo.getC4NamedReturnFields()[0].Init) {
-        NewVD->setInit(ParamInfo.getC4NamedReturnFields()[0].Init);
+        AddInitializerToDecl(NewVD, ParamInfo.getC4NamedReturnFields()[0].Init,
+                             /*DirectInit=*/false);
       } else {
         ImplicitValueInitExpr *Init = new (Context) ImplicitValueInitExpr(CurBlock->ReturnType);
         NewVD->setInit(Init);
@@ -19874,7 +19875,7 @@ void Sema::ActOnBlockArguments(SourceLocation CaretLoc, Declarator &ParamInfo,
           Context.getTrivialTypeSourceInfo(FieldTy, Fields[I].NameLoc),
           SC_None);
       if (Fields[I].Init)
-        NewVD->setInit(Fields[I].Init);
+        AddInitializerToDecl(NewVD, Fields[I].Init, /*DirectInit=*/false);
       else
         NewVD->setInit(new (Context) ImplicitValueInitExpr(FieldTy));
       PushOnScopeChains(NewVD, CurBlock->TheScope);
